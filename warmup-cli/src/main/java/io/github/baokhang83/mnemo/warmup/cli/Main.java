@@ -2,6 +2,7 @@ package io.github.baokhang83.mnemo.warmup.cli;
 
 import io.github.baokhang83.mnemo.warmup.core.CacheStrategy;
 import io.github.baokhang83.mnemo.warmup.core.CacheType;
+import io.github.baokhang83.mnemo.warmup.core.JarExtractor;
 import io.github.baokhang83.mnemo.warmup.core.JdkInfo;
 import java.nio.file.Path;
 import java.util.concurrent.Callable;
@@ -44,6 +45,15 @@ public class Main implements Runnable {
                 description = "auto (AOT on JDK 25+, AppCDS otherwise), appcds or aot. Default: ${DEFAULT-VALUE}.")
         String cacheType;
 
+        @Option(names = "--jar", description = "Application JAR to prepare (Spring Boot 3.3+ fat JARs are extracted).")
+        Path jar;
+
+        @Option(
+                names = "--work-dir",
+                defaultValue = ".mnemo-warmup",
+                description = "Where extracted files are written, under <work-dir>/app. Default: ${DEFAULT-VALUE}.")
+        Path workDir;
+
         @Override
         public Integer call() {
             var out = spec.commandLine().getOut();
@@ -53,6 +63,10 @@ public class Main implements Runnable {
                 CacheStrategy strategy = CacheType.parse(cacheType).resolve(jdk);
                 out.printf("Target JDK: %s %s (feature %d)%n", jdk.vendor(), jdk.version(), jdk.featureVersion());
                 out.printf("Cache: %s (.%s)%n", strategy, strategy.extension());
+                if (jar != null) {
+                    var app = new JarExtractor().prepare(jar, jdk, workDir.resolve("app"));
+                    out.printf("Application: %s -> %s%n", app.kind(), app.runnableJar());
+                }
             } catch (IllegalArgumentException | IllegalStateException e) {
                 err.println("error: " + e.getMessage());
                 return 2;

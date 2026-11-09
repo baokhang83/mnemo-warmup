@@ -63,6 +63,19 @@ public record JdkInfo(Path javaHome, String version, int featureVersion, String 
         return new JdkInfo(javaHome, parsed.version(), parsed.featureVersion(), parsed.vendor(), parsed.runtimeVersion());
     }
 
+    /**
+     * Path to this JDK's {@code java} launcher.
+     *
+     * @throws IllegalStateException if the Java home is unknown
+     * @throws IllegalArgumentException if there is no launcher under it
+     */
+    public Path javaExecutable() {
+        if (javaHome == null) {
+            throw new IllegalStateException("Java home of this JDK is unknown");
+        }
+        return resolveJavaExecutable(javaHome);
+    }
+
     /** Parses the output of {@code java -XshowSettings:properties -version}. */
     static JdkInfo parse(String settingsOutput) {
         Map<String, String> props = new HashMap<>();

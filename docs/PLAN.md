@@ -78,8 +78,22 @@ Components:
 - **cli**: `build`, `bench`, `fetch`, `run`.
 - **image**: container image bundling the CLI, used as init container and trainer.
 - **deploy/helm**: chart adding the init container, volume and trainer Job.
-- **webhook** (later): injects the above into labelled Deployments.
-- **operator / CRD**: only if real users need it.
+- **Injection into workloads:** lives in `mnemo-jvm-warden` (see below), not in this repo.
+
+## Relationship to mnemo-jvm-warden
+
+`mnemo-jvm-warden` (Java) already ships a controller, CRDs (`WardenPolicy`,
+`WardenBoost`), a sidecar and Helm charts, and publishes to Maven Central. Warden shrinks
+and grows running pods in place without restarts; warmup speeds up the pods that do start
+(deploys, scale-ups, node moves). They are complementary but separate:
+
+- Separate repos. Warmup is usable without warden (plain init-container snippet).
+- Integration is by library: warden depends on `warmup-core` (fingerprint and manifest
+  API) in-process, instead of shelling out to the CLI.
+- Injecting the init container into workloads is a warden feature (for example a
+  `WardenPolicy` field), so no second controller or webhook is built here.
+- Open technical question: which JVM flags change an archive's validity. If
+  `SoftMaxHeapSize` does not, one archive can survive warden's day/night resizes.
 
 ## Open decisions
 1. **Archive store:** OCI registry (easy auth, content-addressed) vs S3/GCS vs RWX PVC.
@@ -92,9 +106,10 @@ Components:
 
 ## Repo layout
 ```
-core/  cli/  image/  deploy/helm/  webhook/ (later)  examples/  docs/
+warmup-core/  warmup-cli/  image/  deploy/helm/  examples/  docs/
 ```
-Currently the modules are `mnemo-warmup-core` and `mnemo-warmup-cli`.
+Maven coordinates: groupId `io.github.baokhang83.mnemo` (same as warden), artifacts
+`warmup-core` and `warmup-cli`.
 
 ## Roadmap
 
@@ -115,20 +130,22 @@ Currently the modules are `mnemo-warmup-core` and `mnemo-warmup-cli`.
 - [ ] Example Spring Boot app, tested on kind with JDK 21 (AppCDS) and JDK 25 (AOT)
 
 ### Phase 3: automation and ecosystem (v0.3.0)
-- [ ] Mutating webhook: label a Deployment, init container and volume injected
-- [ ] Multi-profile archives (peak vs off-peak heap) for `mnemo-jvm-warden`
+- [ ] Publish `warmup-core` to Maven Central so warden can depend on it
+- [ ] Investigate which JVM flags invalidate an archive (e.g. `SoftMaxHeapSize` vs `-Xmx`)
+      and support multi-profile archives accordingly
+- [ ] Warden integration (implemented in the warden repo): inject the init container
 - [ ] Savings metrics exported (startup ms, RSS) for dashboards
 - [ ] JDK 24 two-step AOT flow, only if users ask
 
 ### Later
-- [ ] Operator with a cache CRD, if demand justifies it
 - [ ] Optional build-time integrations (Gradle, GitHub Action) for non-Kubernetes users
 
 ## Decisions made
 - Maven multi-module, `--release 21`, tested on JDK 25.
 - Base package `io.github.baokhang83.mnemo.warmup`; picocli in the CLI module only.
-- Java for the in-cluster components; Go only if an operator is built.
-- Start with Helm, then webhook, then operator.
+- Java for all components (warden is Java too); no controller or webhook in this repo.
+- Start with the standalone Helm chart; workload injection is done by warden.
+- Maven coordinates aligned with warden: groupId `io.github.baokhang83.mnemo`.
 - AOT from JDK 25 (single-step flags verified on 25.0.1); AppCDS for 21-24.
 
 ## Risks
@@ -138,4 +155,4 @@ Currently the modules are `mnemo-warmup-core` and `mnemo-warmup-cli`.
 - Archive size and storage cost (AOT caches are larger than CDS archives).
 - AppCDS behaviour on JDK 21-24 and the fingerprint rules are untested here; only JDK 25
   is installed locally.
-- Market is unproven; validate with a few JVM platform teams before the webhook phase.
+- Market is unproven; validate with a few JVM platform teams before the warden integration.

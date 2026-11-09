@@ -58,6 +58,14 @@ creation since JDK 25, JEP 514). Almost nobody runs them in production, because:
   AppCDS archive, then a plain JVM start. A cache problem never prevents the app from
   starting.
 
+## Relationship to mnemo-jvm-warden
+
+[`mnemo-jvm-warden`](https://github.com/baokhang83/mnemo-jvm-warden) resizes running pods
+in place; mnemo-warmup makes the pods that do start (deploys, scale-ups) boot faster. They
+are separate projects. Warmup works on its own; the planned integration is that warden
+depends on `warmup-core` as a library and handles injecting the init container into
+workloads, so this repo does not ship its own controller or webhook.
+
 ## Cache types
 
 AppCDS and the AOT cache are alternatives: the JVM is given one archive per run
@@ -95,9 +103,9 @@ mnemo-warmup run -- java -jar app.jar
 
 ## What works today
 
-- `CacheStrategy` in `mnemo-warmup-core`: picks AppCDS or AOT from the JDK feature version
+- `CacheStrategy` in `warmup-core`: picks AppCDS or AOT from the JDK feature version
   and produces the matching training and runtime JVM flags (unit tested).
-- `mnemo-warmup-cli`: a [picocli](https://picocli.info) application packaged as an
+- `warmup-cli`: a [picocli](https://picocli.info) application packaged as an
   executable JAR. `build` currently only prints the detected JDK and chosen cache type;
   `bench` is a stub.
 
@@ -111,20 +119,20 @@ on JDK 25.
 
 ```bash
 mvn verify
-java -jar mnemo-warmup-cli/target/mnemo-warmup.jar --version
-java -jar mnemo-warmup-cli/target/mnemo-warmup.jar build
+java -jar warmup-cli/target/mnemo-warmup.jar --version
+java -jar warmup-cli/target/mnemo-warmup.jar build
 ```
 
 ## Repository layout
 
 ```
-mnemo-warmup-core/   engine: JDK detection, cache type selection (more to come)
-mnemo-warmup-cli/    command-line interface
+warmup-core/   engine: JDK detection, cache type selection (more to come)
+warmup-cli/    command-line interface
 docs/PLAN.md         design, open decisions and roadmap
 ```
 
-Planned: `image/` (init-container and trainer image), `deploy/helm/` (chart),
-`examples/` (sample Spring Boot app), and later a mutating webhook.
+Planned: `image/` (init-container and trainer image), `deploy/helm/` (chart) and
+`examples/` (sample Spring Boot app).
 
 ## Roadmap
 
@@ -142,7 +150,8 @@ Planned: `image/` (init-container and trainer image), `deploy/helm/` (chart),
 - [ ] Example app tested on kind with JDK 21 and JDK 25
 
 **Phase 3: automation (v0.3.0)**
-- [ ] Mutating webhook, multi-profile archives for `mnemo-jvm-warden`, metrics
+- [ ] Publish `warmup-core` to Maven Central, investigate which JVM flags invalidate an archive (multi-profile archives), metrics
+- [ ] Warden integration (implemented in the warden repo)
 
 Open design questions (archive store, who runs training, training traffic) are tracked in
 [docs/PLAN.md](docs/PLAN.md).

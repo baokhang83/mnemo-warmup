@@ -115,9 +115,9 @@ Maven coordinates: groupId `io.github.baokhang83.mnemo` (same as warden), artifa
 
 ### Phase 1: engine and CLI (v0.1.0)
 - [x] Maven reactor scaffold, JDK detection and flag selection (`CacheStrategy`)
-- [ ] `cacheType` option (`auto`, `appcds`, `aot`) with validation against the JDK
-- [ ] Spring Boot fat-JAR extraction (`-Djarmode=tools extract`)
-- [ ] Training runner for both types, exit modes: `spring-refresh`, `http-probe`
+- [x] `cacheType` option (`auto`, `appcds`, `aot`) with validation against the JDK
+- [x] Spring Boot fat-JAR extraction (`-Djarmode=tools extract`)
+- [x] Training runner for both types, exit modes: `spring-refresh`, `http-probe`
 - [ ] Fingerprint and `mnemo-warmup.manifest.json` (includes cache type)
 - [ ] `mnemo-warmup bench`: 3 cold starts, none vs AppCDS vs AOT, Markdown savings table
 

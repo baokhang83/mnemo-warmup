@@ -9,8 +9,8 @@ init container, and fall back to a normal start whenever the cache doesn't match
 ![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)
 ![Java 21+](https://img.shields.io/badge/java-21%2B-informational)
 
-> **Status: pre-alpha.** The repository currently contains the project skeleton and the
-> JDK/cache-type selection logic. Training, fingerprinting, benchmarking and the
+> **Status: pre-alpha.** The command line can already extract a Spring Boot JAR and train
+> an AppCDS or AOT archive for it. The manifest/fingerprint, benchmarking and the
 > Kubernetes components are not implemented yet. See the [roadmap](#roadmap) and the
 > [project plan](docs/PLAN.md). Part of the Mnemo suite
 > (`mnemo-jvm-warden`, `mnemo-cache`, `mnemo-warmup`).
@@ -82,36 +82,69 @@ stores more.
 `cacheType: auto` (the default) chooses AOT on JDK 25+ and AppCDS otherwise. You can also
 force `appcds` or `aot`.
 
-## Planned usage
+## Usage
 
-> None of the commands below exist yet. They describe the intended interface.
+Build the CLI (see [Building from source](#building-from-source)), then train an archive:
 
 ```bash
-# Train an archive for a Spring Boot fat JAR and write the manifest
-mnemo-warmup build --jar app.jar --exit-mode spring-refresh
+# Spring Boot 3.3+ fat JAR: extract it, then let Spring end the run after the context refresh
+mnemo-warmup build --jar app.jar
 
-# Or drive the app through a health endpoint before shutting it down
+# Any framework: wait for a health endpoint, send some warmup traffic, then stop the app
 mnemo-warmup build --jar app.jar --exit-mode http-probe \
-    --url http://localhost:8080/actuator/health
+    --url http://localhost:8080/actuator/health \
+    --warmup-url /api/items --warmup-url /api/orders
 
-# Compare cold starts: no cache vs AppCDS vs AOT, printed as a Markdown table
-mnemo-warmup bench --jar app.jar
-
-# Kubernetes: init container fetches the archive, entrypoint validates and starts the JVM
-mnemo-warmup fetch --store <store-url> --out /cache
-mnemo-warmup run -- java -jar app.jar
+# Train for a different JDK than the one running the tool, and force a cache type
+mnemo-warmup build --jar app.jar --java-home /opt/jdk-21 --cache-type appcds
 ```
+
+The archive is written to `<work-dir>/app.aot` or `<work-dir>/app.jsa` (default work
+directory `.mnemo-warmup`). Run the application later with the same JDK, JAR and flags and
+pass `-XX:AOTCache=<file>` (AOT) or `-XX:SharedArchiveFile=<file>` (AppCDS).
+
+| Option | Meaning |
+|--------|---------|
+| `--jar` | Application JAR. Spring Boot 3.3+ fat JARs are extracted with `-Djarmode=tools`; other executable JARs are used as they are. |
+| `--java-home` | JDK of the target app. Defaults to `$JAVA_HOME`, then the JDK running the tool. |
+| `--cache-type` | `auto` (default), `appcds` or `aot`. `auto` picks AOT on JDK 25+, AppCDS otherwise. |
+| `--exit-mode` | `spring-refresh` (default) or `http-probe`. |
+| `--url` | `http-probe`: endpoint that must return 2xx. Required for that mode. |
+| `--warmup-url` | `http-probe`: GET request after the probe succeeds (repeatable; absolute URL or path). |
+| `--warmup-script` | `http-probe`: program run after the warmup requests; gets the base URL, must exit 0. |
+| `--poll-interval-millis` | `http-probe`: pause between probes (default 500). |
+| `--timeout-seconds` | How long the app may take to become ready (default 300). |
+| `--work-dir` | Where files are written (default `.mnemo-warmup`). |
+
+Exit codes: `0` success, `1` training failed (the message includes the app's last log
+lines), `2` invalid input. A failed run never leaves an archive behind.
+
+**Exit modes.** `spring-refresh` passes `-Dspring.context.exit=onRefresh`, so only the
+startup path is trained. `http-probe` also trains the classes used while serving the
+warmup requests you send, and works for any framework.
 
 ## What works today
 
-- `CacheStrategy` in `warmup-core`: picks AppCDS or AOT from the JDK feature version
-  and produces the matching training and runtime JVM flags (unit tested).
-- `warmup-cli`: a [picocli](https://picocli.info) application packaged as an
-  executable JAR. `build` currently only prints the detected JDK and chosen cache type;
-  `bench` is a stub.
+- Target-JDK detection (`--java-home`, `$JAVA_HOME`, or the running JVM) and the choice
+  between AppCDS and the AOT cache.
+- Spring Boot fat-JAR extraction on the target JDK.
+- The training runner: starts the app with the recording flag, waits for the exit mode,
+  stops it with SIGTERM so the JVM writes the archive, and verifies the archive exists.
+- Exit modes `spring-refresh` and `http-probe`.
 
-The AOT flags were verified against JDK 25.0.1. AppCDS on JDK 21-24 has not been tested
-yet.
+Not there yet: `mnemo-warmup.manifest.json` and the fingerprint, `bench`, `fetch`, `run`,
+the container image and the Helm chart (see the [roadmap](#roadmap)).
+
+## Limitations
+
+- **Linux and macOS only.** Stopping the app with SIGTERM is what makes the JVM write the
+  archive; Windows kills the process instead.
+- **AOT needs JDK 25+.** JDK 24 has the AOT cache but a two-step flow that is not
+  supported yet; it uses AppCDS.
+- **Tested with small apps, not yet with a real Spring Boot application.** The unit and
+  process-level tests use tiny JVM apps. To check your own Spring Boot 3.3+ JAR, run
+  `mvn verify -pl warmup-core -Dwarmup.test.springBootJar=/path/to/app.jar`.
+- AppCDS on JDK 21-24 is exercised by CI on 21 only.
 
 ## Building from source
 
@@ -121,14 +154,17 @@ on JDK 25.
 ```bash
 mvn verify
 java -jar warmup-cli/target/mnemo-warmup.jar --version
-java -jar warmup-cli/target/mnemo-warmup.jar build
+java -jar warmup-cli/target/mnemo-warmup.jar build --help
 ```
+
+The build produces a self-contained `warmup-cli/target/mnemo-warmup.jar`; the examples above
+call it as `mnemo-warmup`.
 
 ## Repository layout
 
 ```
-warmup-core/   engine: JDK detection, cache type selection (more to come)
-warmup-cli/    command-line interface
+warmup-core/   engine: JDK detection, JAR extraction, training runner, exit modes
+warmup-cli/    command-line interface (picocli)
 docs/PLAN.md         design, open decisions and roadmap
 ```
 
@@ -139,9 +175,9 @@ Planned: `image/` (init-container and trainer image), `deploy/helm/` (chart) and
 
 **Phase 1: engine and CLI (v0.1.0)**
 - [x] Project skeleton, JDK detection and flag selection
-- [ ] `cacheType` option with validation against the JDK
-- [ ] Spring Boot fat-JAR extraction
-- [ ] Training runner (`spring-refresh` and `http-probe` exit modes)
+- [x] `cacheType` option with validation against the JDK
+- [x] Spring Boot fat-JAR extraction
+- [x] Training runner (`spring-refresh` and `http-probe` exit modes)
 - [ ] Fingerprint and manifest
 - [ ] `bench`: none vs AppCDS vs AOT
 

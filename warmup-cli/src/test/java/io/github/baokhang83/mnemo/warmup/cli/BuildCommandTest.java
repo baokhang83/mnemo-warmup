@@ -91,6 +91,30 @@ class BuildCommandTest {
     }
 
     @Test
+    void httpProbeNeedsAUrl(@TempDir Path dir) throws Exception {
+        Path jar = Files.write(dir.resolve("a.jar"), new byte[0]);
+        Result r = run("build", "--java-home", HOME, "--jar", jar.toString(), "--exit-mode", "http-probe");
+        assertEquals(2, r.exit());
+        assertTrue(r.err().contains("--url"), r.err());
+    }
+
+    @Test
+    void httpProbeRejectsANonHttpUrl(@TempDir Path dir) throws Exception {
+        Path jar = Files.write(dir.resolve("a.jar"), new byte[0]);
+        Result r = run("build", "--java-home", HOME, "--jar", jar.toString(), "--exit-mode", "http-probe",
+                "--url", "ftp://host/x");
+        assertEquals(2, r.exit());
+        assertTrue(r.err().contains("http(s)"), r.err());
+    }
+
+    @Test
+    void subcommandsAnswerHelp() {
+        Result r = run("build", "--help");
+        assertEquals(0, r.exit());
+        assertTrue(r.out().contains("--exit-mode"), r.out());
+    }
+
+    @Test
     void withoutAJarThereIsNothingToTrain() {
         Result r = run("build", "--java-home", HOME);
         assertEquals(0, r.exit());

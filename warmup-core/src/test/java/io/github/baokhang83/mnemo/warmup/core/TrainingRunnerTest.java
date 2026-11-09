@@ -126,6 +126,22 @@ class TrainingRunnerTest {
     }
 
     @Test
+    void aFailingReadyConditionStopsTheApplication() throws IOException {
+        Process[] started = new Process[1];
+        var spec = spec(TestApps.SLEEPER, "sleeper")
+                .ready((process, timeout) -> {
+                    started[0] = process;
+                    throw new IllegalStateException("warmup exploded");
+                })
+                .build();
+
+        TrainingException e = assertThrows(TrainingException.class, () -> runner.run(spec));
+
+        assertTrue(e.getMessage().contains("warmup exploded"), e.getMessage());
+        assertFalse(started[0].isAlive(), "the application must not be left running");
+    }
+
+    @Test
     void anUnstartableJavaIsReported() {
         var spec = TrainingSpec.builder(dir.resolve("no-java"), auto, archive())
                 .appArgs("-version")

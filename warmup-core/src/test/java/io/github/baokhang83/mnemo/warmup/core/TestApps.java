@@ -32,6 +32,31 @@ final class TestApps {
                     + " System.out.println(\"refreshed\"); return; }"
                     + " System.out.println(\"waiting\"); Thread.sleep(600_000); } }";
 
+    /** An HTTP server on -Dport: /health is 503 for the first second, then 200; /warm logs each call. */
+    static final String HTTP_SERVER = """
+            import com.sun.net.httpserver.HttpServer;
+            import java.net.InetSocketAddress;
+            public class Main {
+                public static void main(String[] a) throws Exception {
+                    int port = Integer.getInteger("port");
+                    long readyAt = System.currentTimeMillis() + 1000;
+                    HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
+                    server.createContext("/health", ex -> {
+                        ex.sendResponseHeaders(System.currentTimeMillis() >= readyAt ? 200 : 503, -1);
+                        ex.close();
+                    });
+                    server.createContext("/warm", ex -> {
+                        System.out.println("WARM " + ex.getRequestURI());
+                        System.out.flush();
+                        ex.sendResponseHeaders(200, -1);
+                        ex.close();
+                    });
+                    server.start();
+                    System.out.println("listening");
+                }
+            }
+            """;
+
     /** Fails right away. */
     static final String CRASH =
             "public class Main { public static void main(String[] a) {"

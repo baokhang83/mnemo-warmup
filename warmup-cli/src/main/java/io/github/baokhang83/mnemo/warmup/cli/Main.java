@@ -4,11 +4,15 @@ import io.github.baokhang83.mnemo.warmup.core.CacheStrategy;
 import io.github.baokhang83.mnemo.warmup.core.AppTrainer;
 import io.github.baokhang83.mnemo.warmup.core.CacheType;
 import io.github.baokhang83.mnemo.warmup.core.ExitMode;
+import io.github.baokhang83.mnemo.warmup.core.HttpProbeExitMode;
 import io.github.baokhang83.mnemo.warmup.core.JarExtractor;
 import io.github.baokhang83.mnemo.warmup.core.JdkInfo;
 import io.github.baokhang83.mnemo.warmup.core.TrainingException;
+import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -32,7 +36,9 @@ public class Main implements Runnable {
         spec.commandLine().usage(spec.commandLine().getOut());
     }
 
-    @Command(name = "build", description = "Run a training run and produce the archive + manifest.")
+    @Command(name = "build",
+            mixinStandardHelpOptions = true,
+            description = "Run a training run and produce the archive + manifest.")
     static class Build implements Callable<Integer> {
 
         @Spec
@@ -61,7 +67,7 @@ public class Main implements Runnable {
         @Option(
                 names = "--exit-mode",
                 defaultValue = "spring-refresh",
-                description = "How the training run ends: spring-refresh. Default: ${DEFAULT-VALUE}.")
+                description = "How the training run ends: spring-refresh or http-probe. Default: ${DEFAULT-VALUE}.")
         String exitMode;
 
         @Option(
@@ -69,6 +75,22 @@ public class Main implements Runnable {
                 defaultValue = "300",
                 description = "How long the application may take to reach its ready state. Default: ${DEFAULT-VALUE}.")
         long timeoutSeconds;
+
+        @Option(names = "--url", description = "http-probe: endpoint that returns 2xx when the app is ready, e.g. http://localhost:8080/actuator/health.")
+        URI url;
+
+        @Option(names = "--poll-interval-millis", defaultValue = "500", description = "http-probe: pause between probes. Default: ${DEFAULT-VALUE}.")
+        long pollIntervalMillis;
+
+        @Option(
+                names = "--warmup-url",
+                description = "http-probe: GET request made once the app is ready (absolute URL or a path such as /api/items). Repeatable.")
+        List<String> warmupUrls = new ArrayList<>();
+
+        @Option(
+                names = "--warmup-script",
+                description = "http-probe: program run after the warmup requests; gets the base URL as its argument and must exit 0.")
+        Path warmupScript;
 
         @Override
         public Integer call() {
@@ -83,10 +105,14 @@ public class Main implements Runnable {
                     err.println("build: no --jar given, nothing to train");
                     return 0;
                 }
-                ExitMode mode = ExitMode.parse(exitMode);
                 if (timeoutSeconds <= 0) {
                     throw new IllegalArgumentException("--timeout-seconds must be positive");
                 }
+                var probe = url == null
+                        ? null
+                        : new HttpProbeExitMode.Settings(
+                                url, Duration.ofMillis(pollIntervalMillis), warmupUrls, warmupScript);
+                ExitMode mode = ExitMode.parse(exitMode, probe);
                 var app = new JarExtractor().prepare(jar, jdk, workDir.resolve("app"));
                 out.printf("Application: %s -> %s%n", app.kind(), app.runnableJar());
 
@@ -108,7 +134,9 @@ public class Main implements Runnable {
         }
     }
 
-    @Command(name = "bench", description = "Compare cold starts with and without the archive.")
+    @Command(name = "bench",
+            mixinStandardHelpOptions = true,
+            description = "Compare cold starts with and without the archive.")
     static class Bench implements Runnable {
         @Spec
         CommandSpec spec;

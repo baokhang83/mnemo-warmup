@@ -64,6 +64,9 @@ public final class TrainingRunner {
                 terminate(process, spec.shutdownGrace());
                 throw new TrainingException(
                         "Training timed out after " + spec.timeout() + ": " + e.getMessage() + tail(log), log, e);
+            } catch (RuntimeException e) {
+                terminate(process, spec.shutdownGrace());
+                throw new TrainingException("Training failed: " + e.getMessage() + tail(log), log, e);
             }
             if (process.isAlive()) {
                 stoppedByUs = true;

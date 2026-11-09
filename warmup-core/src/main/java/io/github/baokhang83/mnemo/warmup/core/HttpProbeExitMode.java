@@ -53,6 +53,10 @@ public final class HttpProbeExitMode implements ExitMode {
             return new Settings(url, Duration.ofMillis(500), List.of(), null);
         }
 
+        public Settings withPollInterval(Duration interval) {
+            return new Settings(url, interval, warmupRequests, warmupScript);
+        }
+
         URI baseUrl() {
             return URI.create(url.getScheme() + "://" + url.getAuthority());
         }

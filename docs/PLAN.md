@@ -124,7 +124,7 @@ Maven coordinates: groupId `io.github.baokhang83.mnemo` (same as warden), artifa
 - [x] Spring Boot fat-JAR extraction (`-Djarmode=tools extract`)
 - [x] Training runner for both types, exit modes: `spring-refresh`, `http-probe`
 - [x] Fingerprint and `mnemo-warmup.manifest.json` (includes cache type)
-- [ ] `mnemo-warmup bench`: 3 cold starts, none vs AppCDS vs AOT, Markdown savings table
+- [x] `mnemo-warmup bench`: 3 cold starts, none vs AppCDS vs AOT, Markdown savings table
 
 ### Phase 2: Kubernetes delivery (v0.2.0)
 - [ ] `mnemo-warmup fetch` (init container): look up by fingerprint, verify, copy to

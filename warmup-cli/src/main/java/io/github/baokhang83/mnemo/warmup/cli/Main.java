@@ -2,6 +2,7 @@ package io.github.baokhang83.mnemo.warmup.cli;
 
 import io.github.baokhang83.mnemo.warmup.core.CacheStrategy;
 import io.github.baokhang83.mnemo.warmup.core.AppTrainer;
+import io.github.baokhang83.mnemo.warmup.core.ArchiveManifest;
 import io.github.baokhang83.mnemo.warmup.core.CacheType;
 import io.github.baokhang83.mnemo.warmup.core.ExitMode;
 import io.github.baokhang83.mnemo.warmup.core.HttpProbeExitMode;
@@ -76,6 +77,14 @@ public class Main implements Runnable {
                 description = "How long the application may take to reach its ready state. Default: ${DEFAULT-VALUE}.")
         long timeoutSeconds;
 
+        @Option(
+                names = "--jvm-arg",
+                description = "JVM option for the training run, e.g. --jvm-arg=-Xmx512m. Repeatable. Use the options the app will run with: the archive is only valid for them.")
+        List<String> jvmArgs = new ArrayList<>();
+
+        @Option(names = "--image-digest", description = "Container image digest to record in the fingerprint, e.g. sha256:abc...")
+        String imageDigest;
+
         @Option(names = "--url", description = "http-probe: endpoint that returns 2xx when the app is ready, e.g. http://localhost:8080/actuator/health.")
         URI url;
 
@@ -119,10 +128,17 @@ public class Main implements Runnable {
                 Path archive = workDir.resolve("app." + strategy.extension());
                 out.printf("Training with exit mode %s ...%n", mode.name());
                 var result = new AppTrainer()
-                        .train(app, jdk, strategy, mode, archive, Duration.ofSeconds(timeoutSeconds));
+                        .train(app, jdk, strategy, mode, archive, Duration.ofSeconds(timeoutSeconds), jvmArgs);
                 out.printf(
                         "Archive: %s (%.1f MB) in %.1f s%n",
                         result.archive(), result.sizeBytes() / 1_048_576.0, result.elapsed().toMillis() / 1000.0);
+
+                var manifest = ArchiveManifest.describe(app, jdk, strategy, jvmArgs, System.getenv(), imageDigest)
+                        .withArchive(result.archive());
+                Path manifestFile = result.archive().resolveSibling(ArchiveManifest.FILE_NAME);
+                manifest.write(manifestFile);
+                out.printf("Manifest: %s%n", manifestFile);
+                out.printf("Fingerprint: %s%n", manifest.fingerprint());
                 return 0;
             } catch (IllegalArgumentException | IllegalStateException e) {
                 err.println("error: " + e.getMessage());

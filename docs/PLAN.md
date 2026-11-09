@@ -103,6 +103,11 @@ and grows running pods in place without restarts; warmup speeds up the pods that
 4. **App pickup:** `mnemo-warmup run` entrypoint only, or also `JAVA_TOOL_OPTIONS`.
 5. **AppCDS flavour:** dynamic archive on top of the JDK default archive vs static
    dump. Dynamic is simpler; confirm it behaves with our fingerprint on 21.
+6. **JAR modification times:** the JVM validates the size and modification time of the
+   classpath JARs when it maps an archive, but the fingerprint ignores mtimes (they differ
+   between a fresh extraction and an image layer with identical bytes). Decide how `run`
+   and `fetch` handle this, e.g. extract once at image build time so trainer and runtime
+   share the same files. Measure it together with #10 and #20.
 
 ## Repo layout
 ```
@@ -118,7 +123,7 @@ Maven coordinates: groupId `io.github.baokhang83.mnemo` (same as warden), artifa
 - [x] `cacheType` option (`auto`, `appcds`, `aot`) with validation against the JDK
 - [x] Spring Boot fat-JAR extraction (`-Djarmode=tools extract`)
 - [x] Training runner for both types, exit modes: `spring-refresh`, `http-probe`
-- [ ] Fingerprint and `mnemo-warmup.manifest.json` (includes cache type)
+- [x] Fingerprint and `mnemo-warmup.manifest.json` (includes cache type)
 - [ ] `mnemo-warmup bench`: 3 cold starts, none vs AppCDS vs AOT, Markdown savings table
 
 ### Phase 2: Kubernetes delivery (v0.2.0)

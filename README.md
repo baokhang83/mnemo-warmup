@@ -100,7 +100,7 @@ mnemo-warmup build --jar app.jar --java-home /opt/jdk-21 --cache-type appcds
 ```
 
 The archive is written to `<work-dir>/app.aot` or `<work-dir>/app.jsa` (default work
-directory `.mnemo-warmup`). Run the application later with the same JDK, JAR and flags and
+directory `.mnemo-warmup`), next to a `mnemo-warmup.manifest.json` (see below). Run the application later with the same JDK, JAR and flags and
 pass `-XX:AOTCache=<file>` (AOT) or `-XX:SharedArchiveFile=<file>` (AppCDS).
 
 | Option | Meaning |
@@ -114,6 +114,8 @@ pass `-XX:AOTCache=<file>` (AOT) or `-XX:SharedArchiveFile=<file>` (AppCDS).
 | `--warmup-script` | `http-probe`: program run after the warmup requests; gets the base URL, must exit 0. |
 | `--poll-interval-millis` | `http-probe`: pause between probes (default 500). |
 | `--timeout-seconds` | How long the app may take to become ready (default 300). |
+| `--jvm-arg` | JVM option for the training run, e.g. `--jvm-arg=-Xmx512m` (repeatable). Use the options the app will run with. |
+| `--image-digest` | Container image digest to record in the fingerprint. |
 | `--work-dir` | Where files are written (default `.mnemo-warmup`). |
 
 Exit codes: `0` success, `1` training failed (the message includes the app's last log
@@ -123,6 +125,25 @@ lines), `2` invalid input. A failed run never leaves an archive behind.
 startup path is trained. `http-probe` also trains the classes used while serving the
 warmup requests you send, and works for any framework.
 
+## The manifest and fingerprint
+
+`build` writes `mnemo-warmup.manifest.json` next to the archive. It records what the archive
+was trained against, and a `fingerprint` (`sha256:...`) derived from it:
+
+- the cache type and the JDK vendor and full build,
+- the optional `--image-digest`,
+- the JVM options that can invalidate an archive: heap size and percentages, GC choice,
+  `ObjectAlignmentInBytes`, compressed oops/class pointers, compact object headers. This is a
+  deliberately conservative list (it also reads `JAVA_TOOL_OPTIONS` and `JDK_JAVA_OPTIONS`);
+  [#20](https://github.com/baokhang83/mnemo-warmup/issues/20) will measure which of these really
+  matter, and others such as `-D` properties are ignored,
+- every classpath entry in order, with its size and SHA-256 (the launched JAR plus what its
+  `Class-Path` lists, which is the `lib/` directory for an extracted Spring Boot JAR).
+
+File modification times and the JDK's install path are recorded or ignored but are not part of
+the fingerprint. Editing the file by hand makes it fail to load, because the recorded
+fingerprint no longer matches. The manifest also stores the archive's size and SHA-256.
+
 ## What works today
 
 - Target-JDK detection (`--java-home`, `$JAVA_HOME`, or the running JVM) and the choice
@@ -131,9 +152,10 @@ warmup requests you send, and works for any framework.
 - The training runner: starts the app with the recording flag, waits for the exit mode,
   stops it with SIGTERM so the JVM writes the archive, and verifies the archive exists.
 - Exit modes `spring-refresh` and `http-probe`.
+- The manifest and fingerprint, including a function that explains how two environments
+  differ (used by the upcoming `run` and `fetch`).
 
-Not there yet: `mnemo-warmup.manifest.json` and the fingerprint, `bench`, `fetch`, `run`,
-the container image and the Helm chart (see the [roadmap](#roadmap)).
+Not there yet: `bench`, `fetch`, `run`, the container image and the Helm chart (see the [roadmap](#roadmap)).
 
 ## Limitations
 
@@ -178,7 +200,7 @@ Planned: `image/` (init-container and trainer image), `deploy/helm/` (chart) and
 - [x] `cacheType` option with validation against the JDK
 - [x] Spring Boot fat-JAR extraction
 - [x] Training runner (`spring-refresh` and `http-probe` exit modes)
-- [ ] Fingerprint and manifest
+- [x] Fingerprint and manifest
 - [ ] `bench`: none vs AppCDS vs AOT
 
 **Phase 2: Kubernetes delivery (v0.2.0)**

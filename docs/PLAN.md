@@ -102,7 +102,7 @@ and grows running pods in place without restarts; warmup speeds up the pods that
 3. **Training traffic:** startup only, probe-driven, or user warmup script.
 4. **App pickup:** `mnemo-warmup run` entrypoint only, or also `JAVA_TOOL_OPTIONS`.
 5. **AppCDS flavour:** dynamic archive on top of the JDK default archive vs static
-   dump. Dynamic is simpler; confirm it behaves with our fingerprint on 21.
+   dump. Dynamic is simpler. Verified on 21-24: see `docs/appcds-jdk-matrix.md`.
 6. **JAR modification times:** the JVM validates the size and modification time of the
    classpath JARs when it maps an archive, but the fingerprint ignores mtimes (they differ
    between a fresh extraction and an image layer with identical bytes). Decide how `run`
@@ -158,6 +158,6 @@ Maven coordinates: groupId `io.github.baokhang83.mnemo` (same as warden), artifa
   flags in 25); keep the value in cluster-aware sharing, fingerprinting and safe
   fallback, not in wrapping flags.
 - Archive size and storage cost (AOT caches are larger than CDS archives).
-- AppCDS behaviour on JDK 21-24 and the fingerprint rules are untested here; only JDK 25
-  is installed locally.
+- AppCDS behaviour on JDK 21-24 is verified (`docs/appcds-jdk-matrix.md`); the fingerprint
+  rules (issue #20) are not yet measured with a real application.
 - Market is unproven; validate with a few JVM platform teams before the warden integration.

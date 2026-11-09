@@ -2,6 +2,7 @@ package io.github.baokhang83.mnemo.warmup.core;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 
 /** Trains an archive for a prepared application using an {@link ExitMode}. */
 public final class AppTrainer {
@@ -25,6 +26,21 @@ public final class AppTrainer {
             ExitMode mode,
             Path archive,
             Duration timeout) {
+        return train(app, jdk, strategy, mode, archive, timeout, List.of());
+    }
+
+    /**
+     * As above, with extra JVM options (heap, GC, system properties) for the training run. They
+     * must be the options the application will run with, because the archive is only valid for them.
+     */
+    public TrainingRunner.Result train(
+            JarExtractor.ExtractedApp app,
+            JdkInfo jdk,
+            CacheStrategy strategy,
+            ExitMode mode,
+            Path archive,
+            Duration timeout,
+            List<String> extraJvmArgs) {
         if (!mode.supports(app.kind())) {
             throw new IllegalArgumentException("Exit mode '" + mode.name() + "' does not support "
                     + app.kind() + " applications (" + app.runnableJar() + ")");
@@ -33,6 +49,7 @@ public final class AppTrainer {
                 .appArgs("-jar", app.runnableJar().toString())
                 .ready(mode.readyCondition())
                 .timeout(timeout);
+        extraJvmArgs.forEach(spec::jvmArg);
         mode.jvmArgs().forEach(spec::jvmArg);
         return runner.run(spec.build());
     }

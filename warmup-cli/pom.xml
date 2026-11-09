@@ -11,6 +11,11 @@
   <artifactId>warmup-cli</artifactId>
   <name>warmup-cli</name>
 
+  <properties>
+    <!-- Only warmup-core (and the parent it needs) go to Maven Central; the CLI ships in the container image. -->
+    <central.skip.publishing>true</central.skip.publishing>
+  </properties>
+
   <dependencies>
     <dependency>
       <groupId>io.github.baokhang83.mnemo</groupId>

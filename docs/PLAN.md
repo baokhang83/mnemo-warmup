@@ -1,11 +1,12 @@
-# mnemo-warmup: project plan (v2, Kubernetes-first)
+# mnemo-warmup: project plan (v3, Kubernetes init container, AppCDS and/or AOT)
 
-Self-healing AppCDS / Project Leyden AOT caches for JVM workloads on Kubernetes.
+Cluster-aware startup caches for JVM workloads on Kubernetes: AppCDS (`.jsa`) and
+Project Leyden AOT cache (`.aot`), trained once and shared by every replica through an
+init container, with a safe fallback to a normal start.
 Part of the Mnemo suite (`mnemo-jvm-warden`, `mnemo-cache`, `mnemo-warmup`).
 
-> Changes from v1: the Maven plugin is dropped. The primary delivery is an
-> init-container plus Helm chart, with a mutating webhook later. The CLI and core
-> engine stay, because they run inside the cluster images.
+> History: v2 dropped the Maven plugin for a Kubernetes-first design. v3 makes the
+> cache type explicit: AppCDS and AOT are both first-class, selected per workload.
 
 ## Problem
 AppCDS / Leyden AOT caches cut JVM startup 30-60%, but are rarely used:
@@ -16,31 +17,64 @@ AppCDS / Leyden AOT caches cut JVM startup 30-60%, but are rarely used:
 - Nobody measures the savings.
 
 ## Core idea
-Train once per `(image digest + JDK build + JVM flags)` in the real cluster, store the
-archive, and have every replica fetch it before the app starts. If no valid archive
+Train once per fingerprint in the real cluster, store the archive, and have every
+replica fetch it in an init container before the app starts. If no valid archive
 exists, the pod boots normally. Never crash because of a cache.
+
+Fingerprint = `(image digest, JDK vendor and build, cache type, classpath hashes, GC and heap flags)`.
+
+## Cache types
+
+AppCDS and the Leyden AOT cache are alternatives, not layers: the JVM is given one
+archive per run (`-XX:SharedArchiveFile` or `-XX:AOTCache`). The AOT cache builds on the
+CDS machinery and stores more (linked classes, and on JDK 25+ method profiles).
+
+| JDK | AppCDS (`.jsa`) | AOT cache (`.aot`) |
+|---|---|---|
+| 21-23 | Supported (dynamic archive) | Not available |
+| 24 | Supported | Exists, but needs two-step record/create; **not supported in v1** |
+| 25+ | Supported (fallback) | **Preferred**, single step via `-XX:AOTCacheOutput` (JEP 514) |
+
+- `cacheType: auto` (default): AOT on JDK 25+, AppCDS otherwise.
+- `cacheType: appcds` or `aot`: force one. Forcing `aot` on JDK < 25 is a config error
+  reported by the trainer and init container, and the app still starts uncached.
+- Both can be trained for the same image (separate fingerprints). This lets `bench`
+  compare them, and lets a rollout fall back from AOT to AppCDS if the AOT archive is
+  rejected.
+- The type is part of the fingerprint and the manifest.
+
+Fallback chain at pod start: matching AOT archive, then matching AppCDS archive, then
+plain JVM start. The JVM's own default behaviour on a mismatched archive is to ignore it
+and continue; we never set flags that make a bad archive fatal.
 
 ## Architecture
 
 ```
-            +-------------------+
- first pod  |  trainer Job      |  runs app with training flags, clean exit
- or Job --> |  (mnemo-warmup build)|-------------------+
-            +-------------------+                   v
-                                           +----------------+
-                                           | archive store  |  key = fingerprint
-                                           | (OCI / S3 / PVC)|
-                                           +----------------+
-                                                    |
- every pod:  init container (mnemo-warmup fetch) ----->|  lookup, verify manifest
-                |                                   
-                v  copies archive to emptyDir
-          app container: java -XX:SharedArchiveFile / -XX:AOTCache  (or fallback)
+            +-----------------------+
+ trainer    | trainer Job           |  runs app with training flags, clean exit
+ (once per  | (mnemo-warmup build)  |--------------------+
+ fingerprint)+----------------------+                    v
+                                             +------------------------+
+                                             | archive store          |
+                                             | key = fingerprint      |
+                                             | (OCI / S3 / PVC)       |
+                                             +------------------------+
+                                                         |
+ every pod:  init container (mnemo-warmup fetch) <-------+  lookup, verify manifest
+                |
+                v  writes archive + env file to shared emptyDir
+          app container: java <archive flag> ...   (or plain start if nothing matched)
 ```
 
+How the app picks up the archive: the init container writes the archive and a small
+flags file into the `emptyDir`. The app container either runs through
+`mnemo-warmup run` (preferred; validates the manifest against live JDK and flags, then
+execs `java`) or sets `JAVA_TOOL_OPTIONS` from the flags file (no entrypoint change, less
+validation).
+
 Components:
-- **core** (Java 21+): JDK detection, strategy selection (AppCDS on 21-24, Leyden AOT on 25+ (single-step JEP 514 flags)),
-  fat-JAR extraction, training runner, fingerprint and manifest, bench.
+- **core** (Java 21+): JDK detection, cache type selection, fat-JAR extraction, training
+  runner, fingerprint and manifest, bench.
 - **cli**: `build`, `bench`, `fetch`, `run`.
 - **image**: container image bundling the CLI, used as init container and trainer.
 - **deploy/helm**: chart adding the init container, volume and trainer Job.
@@ -52,7 +86,9 @@ Components:
    Leaning OCI or S3; archives are hundreds of MB and RWX is not universal.
 2. **Who trains:** one-off Job per fingerprint vs first pod to start.
 3. **Training traffic:** startup only, probe-driven, or user warmup script.
-4. **Fingerprint contents:** JDK vendor/build, classpath hashes, GC and heap flags.
+4. **App pickup:** `mnemo-warmup run` entrypoint only, or also `JAVA_TOOL_OPTIONS`.
+5. **AppCDS flavour:** dynamic archive on top of the JDK default archive vs static
+   dump. Dynamic is simpler; confirm it behaves with our fingerprint on 21.
 
 ## Repo layout
 ```
@@ -64,25 +100,28 @@ Currently the modules are `mnemo-warmup-core` and `mnemo-warmup-cli`.
 
 ### Phase 1: engine and CLI (v0.1.0)
 - [x] Maven reactor scaffold, JDK detection and flag selection (`CacheStrategy`)
+- [ ] `cacheType` option (`auto`, `appcds`, `aot`) with validation against the JDK
 - [ ] Spring Boot fat-JAR extraction (`-Djarmode=tools extract`)
-- [ ] Training runner, exit modes: `spring-refresh`, `http-probe`
-- [ ] Fingerprint and `mnemo-warmup.manifest.json`
-- [ ] `mnemo-warmup bench`: 3 cold starts with vs without, Markdown savings table
+- [ ] Training runner for both types, exit modes: `spring-refresh`, `http-probe`
+- [ ] Fingerprint and `mnemo-warmup.manifest.json` (includes cache type)
+- [ ] `mnemo-warmup bench`: 3 cold starts, none vs AppCDS vs AOT, Markdown savings table
 
 ### Phase 2: Kubernetes delivery (v0.2.0)
-- [ ] `mnemo-warmup fetch` (init container): look up by fingerprint, verify, copy to emptyDir
-- [ ] `mnemo-warmup run` (entrypoint): validate manifest, add archive flag or fall back cleanly
-- [ ] Archive store backend (pick from open decision 1), including upload from trainer
-- [ ] Container image, trainer Job template, Helm chart
-- [ ] Example Spring Boot app, tested on kind
+- [ ] `mnemo-warmup fetch` (init container): look up by fingerprint, verify, copy to
+      emptyDir; try AOT, then AppCDS, then give up cleanly
+- [ ] `mnemo-warmup run` (entrypoint): validate manifest, add archive flag or fall back
+- [ ] Archive store backend (open decision 1), including upload from trainer
+- [ ] Container image, trainer Job template, Helm chart with `cacheType` value
+- [ ] Example Spring Boot app, tested on kind with JDK 21 (AppCDS) and JDK 25 (AOT)
 
 ### Phase 3: automation and ecosystem (v0.3.0)
 - [ ] Mutating webhook: label a Deployment, init container and volume injected
 - [ ] Multi-profile archives (peak vs off-peak heap) for `mnemo-jvm-warden`
 - [ ] Savings metrics exported (startup ms, RSS) for dashboards
+- [ ] JDK 24 two-step AOT flow, only if users ask
 
 ### Later
-- [ ] Operator with an `AotCache` CRD, if demand justifies it
+- [ ] Operator with a cache CRD, if demand justifies it
 - [ ] Optional build-time integrations (Gradle, GitHub Action) for non-Kubernetes users
 
 ## Decisions made
@@ -90,9 +129,13 @@ Currently the modules are `mnemo-warmup-core` and `mnemo-warmup-cli`.
 - Base package `io.github.baokhang83.mnemo.warmup`; picocli in the CLI module only.
 - Java for the in-cluster components; Go only if an operator is built.
 - Start with Helm, then webhook, then operator.
+- AOT from JDK 25 (single-step flags verified on 25.0.1); AppCDS for 21-24.
 
 ## Risks
-- Spring Boot and JDK 26 (JEP 514) are making this easier natively; keep the value in
-  cluster-aware sharing and safe fallback, not in wrapping flags.
-- Archive size and storage cost.
+- The JDK and Spring Boot are making this easier natively (JEP 514 already simplified the
+  flags in 25); keep the value in cluster-aware sharing, fingerprinting and safe
+  fallback, not in wrapping flags.
+- Archive size and storage cost (AOT caches are larger than CDS archives).
+- AppCDS behaviour on JDK 21-24 and the fingerprint rules are untested here; only JDK 25
+  is installed locally.
 - Market is unproven; validate with a few JVM platform teams before the webhook phase.

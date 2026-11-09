@@ -1,9 +1,9 @@
 {
   "schema_version": "1",
-  "feature": "10-verify-appcds-dynamic-archive-behaviour-on-jdk-21-through",
-  "branch": "feature/10-verify-appcds-dynamic-archive-behaviour-on-jdk-21-through",
+  "feature": "8-add-bench-command-comparing-none-vs-appcds-vs-aot-cold-sta",
+  "branch": "feature/8-add-bench-command-comparing-none-vs-appcds-vs-aot-cold-sta",
   "stage": "build",
-  "last_session": "001-verify-dynamic-appcds-on-jdk-21-24-in-docker-and-record",
+  "last_session": "001-add-startupbench-benchreport-and-the-bench-command",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

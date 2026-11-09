@@ -1,8 +1,15 @@
 package io.github.baokhang83.mnemo.warmup.cli;
 
 import io.github.baokhang83.mnemo.warmup.core.CacheStrategy;
+import io.github.baokhang83.mnemo.warmup.core.CacheType;
+import io.github.baokhang83.mnemo.warmup.core.JdkInfo;
+import java.nio.file.Path;
+import java.util.concurrent.Callable;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
+import picocli.CommandLine.Model.CommandSpec;
+import picocli.CommandLine.Option;
+import picocli.CommandLine.Spec;
 
 @Command(
         name = "mnemo-warmup",
@@ -12,30 +19,65 @@ import picocli.CommandLine.Command;
         subcommands = {Main.Build.class, Main.Bench.class})
 public class Main implements Runnable {
 
+    @Spec
+    CommandSpec spec;
+
     @Override
     public void run() {
-        new CommandLine(this).usage(System.out);
+        spec.commandLine().usage(spec.commandLine().getOut());
     }
 
     @Command(name = "build", description = "Run a training run and produce the archive + manifest.")
-    static class Build implements Runnable {
+    static class Build implements Callable<Integer> {
+
+        @Spec
+        CommandSpec spec;
+
+        @Option(
+                names = "--java-home",
+                description = "JDK of the target application. Defaults to $JAVA_HOME, then the JDK running this tool.")
+        Path javaHome;
+
+        @Option(
+                names = "--cache-type",
+                defaultValue = "auto",
+                description = "auto (AOT on JDK 25+, AppCDS otherwise), appcds or aot. Default: ${DEFAULT-VALUE}.")
+        String cacheType;
+
         @Override
-        public void run() {
-            int feature = Runtime.version().feature();
-            System.out.println("Detected JDK " + feature + " -> " + CacheStrategy.forFeatureVersion(feature));
-            System.err.println("build: not implemented yet");
+        public Integer call() {
+            var out = spec.commandLine().getOut();
+            var err = spec.commandLine().getErr();
+            try {
+                JdkInfo jdk = JdkInfo.detect(javaHome, System.getenv());
+                CacheStrategy strategy = CacheType.parse(cacheType).resolve(jdk);
+                out.printf("Target JDK: %s %s (feature %d)%n", jdk.vendor(), jdk.version(), jdk.featureVersion());
+                out.printf("Cache: %s (.%s)%n", strategy, strategy.extension());
+            } catch (IllegalArgumentException | IllegalStateException e) {
+                err.println("error: " + e.getMessage());
+                return 2;
+            }
+            err.println("build: training is not implemented yet");
+            return 0;
         }
     }
 
     @Command(name = "bench", description = "Compare cold starts with and without the archive.")
     static class Bench implements Runnable {
+        @Spec
+        CommandSpec spec;
+
         @Override
         public void run() {
-            System.err.println("bench: not implemented yet");
+            spec.commandLine().getErr().println("bench: not implemented yet");
         }
     }
 
+    static CommandLine commandLine() {
+        return new CommandLine(new Main());
+    }
+
     public static void main(String[] args) {
-        System.exit(new CommandLine(new Main()).execute(args));
+        System.exit(commandLine().execute(args));
     }
 }

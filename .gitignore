@@ -2,3 +2,6 @@ target/
 .idea/
 *.iml
 .DS_Store
+
+# FluencyLoop: calibration is per-developer and never committed
+.fluencyloop/**/calibration.md

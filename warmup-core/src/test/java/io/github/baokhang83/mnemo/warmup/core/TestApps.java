@@ -25,6 +25,13 @@ final class TestApps {
             "public class Main { public static void main(String[] a) throws Exception {"
                     + " System.out.println(\"up\"); Thread.sleep(600_000); } }";
 
+    /** Behaves like Spring with spring.context.exit=onRefresh: exits by itself only if told to. */
+    static final String EXITS_ON_PROPERTY =
+            "public class Main { public static void main(String[] a) throws Exception {"
+                    + " if (\"onRefresh\".equals(System.getProperty(\"spring.context.exit\"))) {"
+                    + " System.out.println(\"refreshed\"); return; }"
+                    + " System.out.println(\"waiting\"); Thread.sleep(600_000); } }";
+
     /** Fails right away. */
     static final String CRASH =
             "public class Main { public static void main(String[] a) {"

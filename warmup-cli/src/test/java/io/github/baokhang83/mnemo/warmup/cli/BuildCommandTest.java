@@ -65,7 +65,7 @@ class BuildCommandTest {
     }
 
     @Test
-    void preparesAnExecutableJar(@TempDir Path dir) throws Exception {
+    void springRefreshRejectsANonSpringJar(@TempDir Path dir) throws Exception {
         Manifest manifest = new Manifest();
         manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
         manifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, "com.acme.Main");
@@ -77,9 +77,24 @@ class BuildCommandTest {
 
         Result r = run("build", "--java-home", HOME, "--jar", jar.toString(), "--work-dir", dir.resolve("w").toString());
 
-        assertEquals(0, r.exit());
+        assertEquals(2, r.exit());
         assertTrue(r.out().contains("Application: EXECUTABLE_JAR"), r.out());
-        assertTrue(r.out().contains(jar.toString()), r.out());
+        assertTrue(r.err().contains("spring-refresh"), r.err());
+    }
+
+    @Test
+    void unknownExitModeIsAUsageError(@TempDir Path dir) throws Exception {
+        Path jar = Files.write(dir.resolve("a.jar"), new byte[0]);
+        Result r = run("build", "--java-home", HOME, "--jar", jar.toString(), "--exit-mode", "magic");
+        assertEquals(2, r.exit());
+        assertTrue(r.err().contains("Unknown exit mode"), r.err());
+    }
+
+    @Test
+    void withoutAJarThereIsNothingToTrain() {
+        Result r = run("build", "--java-home", HOME);
+        assertEquals(0, r.exit());
+        assertTrue(r.err().contains("nothing to train"), r.err());
     }
 
     @Test

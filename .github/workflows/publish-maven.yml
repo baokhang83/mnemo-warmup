@@ -1,0 +1,78 @@
+name: publish-maven
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing tag to publish (for example v0.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    name: publish to maven central
+    steps:
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Expected a release tag such as v0.1.0"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      # Stamp the version from the tag so the poms and the tag can never drift.
+      - name: Set version from tag
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: mvn -B -ntp versions:set -DnewVersion="${RELEASE_TAG#v}" -DgenerateBackupPoms=false
+
+      - name: Import GPG key
+        run: |
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+          gpg --list-secret-keys
+
+      - name: Configure Maven settings
+        uses: whelk-io/maven-settings-xml-action@v21
+        with:
+          servers: |
+            [
+              {
+                "id": "ossrh",
+                "username": "${{ secrets.OSSRH_USERNAME }}",
+                "password": "${{ secrets.OSSRH_TOKEN }}"
+              }
+            ]
+          profiles: |
+            [
+              {
+                "id": "release",
+                "properties": {
+                  "gpg.executable": "gpg",
+                  "gpg.passphrase": "${{ secrets.GPG_PASSPHRASE }}"
+                }
+              }
+            ]
+
+      - name: Deploy to Maven Central
+        run: mvn -B -ntp deploy -Prelease
+        env:
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}

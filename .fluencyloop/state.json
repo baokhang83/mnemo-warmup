@@ -1,0 +1,11 @@
+{
+  "schema_version": "1",
+  "feature": "10-verify-appcds-dynamic-archive-behaviour-on-jdk-21-through",
+  "branch": "feature/10-verify-appcds-dynamic-archive-behaviour-on-jdk-21-through",
+  "stage": "build",
+  "last_session": "001-verify-dynamic-appcds-on-jdk-21-24-in-docker-and-record",
+  "base_ref": "main",
+  "feature_dir": "",
+  "plan": "",
+  "updated": "2026-11-09"
+}

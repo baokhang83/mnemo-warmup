@@ -36,7 +36,11 @@ _No stance recorded yet._
 
 ## Principles
 
-_None yet — principles are added from developer-stated positions and grow as the project evolves._
+### §1 A bad cache never stops an application
+
+**Rule:** A bad or missing cache archive must never stop an application from starting. Never pass `-Xshare:on` or any flag that makes the JVM fail on an archive mismatch.
+
+**Why:** The archive is an optimisation. A stale archive in a pod would otherwise turn a slow start into an outage. Verified on JDK 21-24 in `docs/appcds-jdk-matrix.md`.
 
 <!-- Real principles land here, numbered §1, §2, … (features cite these numbers in their
 `constitution:` fields). Each: a short title, the non-negotiable in a sentence or two, and the

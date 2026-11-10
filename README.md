@@ -264,7 +264,8 @@ application image, plus the ServiceAccount, Role and RoleBinding it needs. It is
 hook, so a failing trainer can never fail or roll back a release. Each run executes
 `mnemo-warmup train`: compute the fingerprint, stop if the store already has it, otherwise take a Kubernetes
 `Lease` named after the fingerprint (so two trainers never train the same archive; an expired lease from a crashed
-trainer is taken over), train, upload, release. It exits 0 for every outcome and logs which one happened.
+trainer is taken over), train, upload, release. A tag whose entry is incomplete (for example a missing blob) is
+replaced rather than treated as done. It exits 0 for every outcome and logs which one happened.
 
 The chart does **not** render your Deployment. Your own chart includes its named templates to add the init
 containers, volumes, environment and the exec-wrapper entrypoint to your pod template (the chart's README has the

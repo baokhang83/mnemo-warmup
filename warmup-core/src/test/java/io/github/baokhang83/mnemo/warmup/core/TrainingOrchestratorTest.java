@@ -37,18 +37,30 @@ class TrainingOrchestratorTest {
         RuntimeException existsFailure;
         RuntimeException putFailure;
         Runnable afterFirstExists = () -> {};
-        private int existsCalls;
+        final Set<String> broken = new HashSet<>();
+        Runnable afterPut = () -> {};
+        private int inspectCalls;
+
+        @Override
+        public Inspection inspect(String fingerprint) {
+            if (existsFailure != null) {
+                throw existsFailure;
+            }
+            Inspection answer = broken.contains(fingerprint)
+                    ? Inspection.broken("the archive blob is missing")
+                    : stored.contains(fingerprint) ? Inspection.usable() : Inspection.absent();
+            if (inspectCalls++ == 0) {
+                afterFirstExists.run(); // "right after the trainer's first look at the store"
+            }
+            return answer;
+        }
 
         @Override
         public boolean exists(String fingerprint) {
             if (existsFailure != null) {
                 throw existsFailure;
             }
-            boolean answer = stored.contains(fingerprint);
-            if (existsCalls++ == 0) {
-                afterFirstExists.run();
-            }
-            return answer;
+            return stored.contains(fingerprint);
         }
 
         @Override
@@ -58,6 +70,8 @@ class TrainingOrchestratorTest {
             }
             events.add("put");
             stored.add(manifest.fingerprint());
+            broken.remove(manifest.fingerprint());
+            afterPut.run();
         }
 
         @Override
@@ -225,5 +239,53 @@ class TrainingOrchestratorTest {
         var second = new TrainingOrchestrator().ensure(LIVE, store2, lock, this::archive);
         assertEquals(TrainingOrchestrator.Status.FAILED, second.status());
         assertTrue(second.detail().contains("cannot take the training lock"), second.detail());
+    }
+
+    @Test
+    void aTagWhoseEntryIsBrokenIsReplacedNotReportedAsDone() {
+        var store = new MemoryStore();
+        store.stored.add(LIVE.fingerprint());
+        store.broken.add(LIVE.fingerprint());
+        var lock = new RecordingLock(store.events);
+
+        var outcome = new TrainingOrchestrator().ensure(LIVE, store, lock, () -> {
+            store.events.add("train");
+            return archive();
+        });
+
+        assertEquals(TrainingOrchestrator.Status.TRAINED, outcome.status(), outcome.detail());
+        assertTrue(outcome.detail().contains("replacing a broken entry") && outcome.detail().contains("blob is missing"), outcome.detail());
+        assertEquals(List.of("acquire", "train", "put", "release"), store.events);
+        assertTrue(store.broken.isEmpty(), "the repaired entry is complete again");
+    }
+
+    @Test
+    void aBrokenEntryThatAnotherTrainerRepairedWhileWeWaitedIsNotRetrained() {
+        var store = new MemoryStore();
+        store.stored.add(LIVE.fingerprint());
+        store.broken.add(LIVE.fingerprint());
+        var lock = new RecordingLock(store.events);
+        store.afterFirstExists = () -> store.broken.clear(); // the other trainer finishes the repair after our first look
+        var trained = new AtomicInteger();
+
+        var outcome = new TrainingOrchestrator().ensure(LIVE, store, lock, () -> {
+            trained.incrementAndGet();
+            return archive();
+        });
+
+        assertEquals(TrainingOrchestrator.Status.ALREADY_STORED, outcome.status(), outcome.detail());
+        assertEquals(0, trained.get());
+    }
+
+    @Test
+    void losingTheLockDuringTheUploadIsReportedButIsNotAFailure() {
+        var store = new MemoryStore();
+        var lock = new RecordingLock(store.events);
+        store.afterPut = () -> lock.lost = true;
+
+        var outcome = new TrainingOrchestrator().ensure(LIVE, store, lock, this::archive);
+
+        assertEquals(TrainingOrchestrator.Status.TRAINED, outcome.status());
+        assertTrue(outcome.detail().contains("lock was lost during the upload"), outcome.detail());
     }
 }

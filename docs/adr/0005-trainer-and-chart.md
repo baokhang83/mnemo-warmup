@@ -16,9 +16,22 @@ reported and exits 0, because the trainer is not on the pod start path and the n
 `--strict` makes `FAILED` exit 1. Usage errors exit 2 so a misconfigured CronJob is visible. It requires the extracted
 layout (ADR 0003). With `spring-refresh` it treats an extracted Spring Boot JAR as a Spring Boot app.
 
+**An entry must be complete, not just present.** `ArchiveStore.inspect` (cheap, no archive download) checks that the
+tag's manifest is ours, the config blob matches its digest and describes this fingerprint, and the archive blob exists
+with the declared size. A tag whose entry is incomplete is `BROKEN`: the trainer trains again and `put` replaces it
+(re-uploading missing blobs, rewriting the tag), so a damaged entry is repaired instead of being reported as done
+forever. Same-length damage inside the archive is not detected here; `fetch` verifies the bytes before any pod uses them.
+If the registry makes tags immutable, the rewrite is refused and the run reports `FAILED`: disable tag immutability for
+the archive repository, or delete the broken tag.
+
 **The lock is a Kubernetes `Lease`** named `mnemo-warmup-<fingerprint hex>` (`KubernetesLeaseLock`). Create is atomic;
 an unrenewed lease expires and is taken over with an update that carries the resourceVersion, so one taker wins;
-the holder renews every third of the duration and does not publish if it finds it lost the lease. The client uses the
+the holder renews every third of the duration. It trusts itself for only two thirds of the duration after the last
+successful renewal (monotonic clock), so a partition makes it stop claiming the lease before it can expire and be taken;
+a definite loss (lease deleted, another holder, a conflicting update) is permanent, a transient API error is not. It does
+not publish if the lock is lost. The lock is advisory: if it is lost during the upload, a second trainer may publish too,
+which is harmless because each entry is a digest-verified manifest and archive pair written by one atomic tag update, and the
+trainer reports it. The client uses the
 JDK HTTP client and the pod's service-account token (no dependency), pinned to HTTP/1.1. `--lock none` disables it.
 
 **The chart owns the trainer, not your Deployment.** `deploy/helm/mnemo-warmup` renders a ServiceAccount, a Role and

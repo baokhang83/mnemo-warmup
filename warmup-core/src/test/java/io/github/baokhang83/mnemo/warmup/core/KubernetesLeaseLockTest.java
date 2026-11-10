@@ -160,6 +160,37 @@ class KubernetesLeaseLockTest {
     }
 
     @Test
+    void ownershipExpiresLocallyBeforeTheLeaseCanBeTakenWhenRenewalsFailAndReturnsWhenTheyRecover() throws Exception {
+        try (var fake = new FakeKubeApi()) {
+            var handle = lock(fake, "a", Clock.systemUTC(), 3).tryAcquire(KEY).orElseThrow(); // trusts itself for 2 s
+            fake.forceStatus = 503; // a partition / API outage: renewals fail
+            Thread.sleep(1200);
+            assertTrue(handle.held(), "one missed renewal is still within the trust window");
+            Thread.sleep(1400);
+            assertFalse(handle.held(), "after two missed renewals it must stop claiming the lease, before it can expire");
+
+            fake.forceStatus = 0; // the API is back and the lease is still ours: transient errors are not a loss
+            Thread.sleep(1500);
+            assertTrue(handle.held(), "a successful renewal restores ownership");
+            handle.close();
+        }
+    }
+
+    @Test
+    void aLeaseThatWasDeletedUnderUsIsLostForGood() throws Exception {
+        try (var fake = new FakeKubeApi()) {
+            var handle = lock(fake, "a", Clock.systemUTC(), 3).tryAcquire(KEY).orElseThrow();
+            fake.leases.remove(NAME);
+            Thread.sleep(1500);
+            assertFalse(handle.held());
+            fake.forceStatus = 0;
+            Thread.sleep(1200);
+            assertFalse(handle.held(), "a definite loss must not be undone by later renewals");
+            handle.close();
+        }
+    }
+
+    @Test
     void noneAlwaysAcquires() {
         assertTrue(TrainingLock.none().tryAcquire(KEY).orElseThrow().held());
     }

@@ -3,7 +3,7 @@
   "feature": "17-trainer-cronjob-train-command-with-lease-and-helm-chart",
   "branch": "feature/17-trainer-cronjob-train-command-with-lease-and-helm-chart",
   "stage": "build",
-  "last_session": "001-lease-lock-train-command-helm-chart-and-chart-checks",
+  "last_session": "002-address-review-lease-ownership-expiry-repair-of-broken-e",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

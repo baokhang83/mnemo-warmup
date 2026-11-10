@@ -16,6 +16,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * A {@link TrainingLock} on a Kubernetes {@code Lease} named after the fingerprint (ADR 0002).
@@ -170,10 +171,20 @@ public final class KubernetesLeaseLock implements TrainingLock {
         return o instanceof String s ? s : null;
     }
 
-    /** Renews in the background every third of the lease duration; deletes the lease on close. */
+    /**
+     * Renews in the background every third of the lease duration; deletes the lease on close.
+     *
+     * <p>{@link #held()} is only true while the last successful renewal (or the acquisition) is recent: after two
+     * missed renewals, two thirds of the duration, ownership is reported lost, well before the lease can expire and
+     * be taken by another trainer. A partition therefore cannot leave a trainer believing it still holds a lease
+     * that someone else already owns. Only a definite answer (lease gone, another holder, a conflicting update)
+     * loses it for good; a transient API error just does not count as a renewal.
+     */
     private final class LeaseHandle implements Handle {
         private final String name;
-        private final AtomicBoolean held = new AtomicBoolean(true);
+        private final AtomicBoolean lost = new AtomicBoolean(false);
+        private final AtomicLong lastRenewedNanos = new AtomicLong(System.nanoTime());
+        private final long trustNanos = leaseDuration.toNanos() * 2 / 3;
         private final ScheduledExecutorService renewer;
 
         LeaseHandle(String name) {
@@ -190,28 +201,34 @@ public final class KubernetesLeaseLock implements TrainingLock {
         private void renew() {
             try {
                 KubeApi.Response current = api.request("GET", item(name), null);
-                if (current.status() != 200) {
-                    held.set(false);
+                if (current.status() == 404) {
+                    lost.set(true); // deleted under us
                     return;
+                }
+                if (current.status() != 200) {
+                    return; // transient: not a renewal, but not a loss either
                 }
                 Map<String, Object> existing = current.json();
                 Map<String, Object> spec = map(existing.get("spec"));
                 if (!holder.equals(string(spec.get("holderIdentity")))) {
-                    held.set(false);
+                    lost.set(true); // taken over
                     return;
                 }
                 String rv = string(map(existing.get("metadata")).get("resourceVersion"));
-                if (api.request("PUT", item(name), lease(name, rv, string(spec.get("acquireTime")))).status() != 200) {
-                    held.set(false);
+                int status = api.request("PUT", item(name), lease(name, rv, string(spec.get("acquireTime")))).status();
+                if (status == 200) {
+                    lastRenewedNanos.set(System.nanoTime());
+                } else if (status == 409) {
+                    lost.set(true); // someone changed it between our read and our write
                 }
             } catch (RuntimeException e) {
-                // a transient API error: keep going, the lease only expires after its full duration
+                // unreachable API server: not a renewal; held() turns false once the trust window passes
             }
         }
 
         @Override
         public boolean held() {
-            return held.get();
+            return !lost.get() && System.nanoTime() - lastRenewedNanos.get() < trustNanos;
         }
 
         @Override
@@ -229,7 +246,7 @@ public final class KubernetesLeaseLock implements TrainingLock {
             } catch (RuntimeException e) {
                 // best effort: an undeleted lease simply expires
             }
-            held.set(false);
+            lost.set(true);
         }
     }
 }

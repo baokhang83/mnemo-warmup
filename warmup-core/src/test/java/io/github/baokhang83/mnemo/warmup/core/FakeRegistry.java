@@ -145,6 +145,9 @@ final class FakeRegistry implements AutoCloseable {
 
     private static void reply(HttpExchange ex, int status, byte[] body) throws IOException {
         boolean head = ex.getRequestMethod().equals("HEAD");
+        if (head) {
+            ex.getResponseHeaders().set("Content-Length", String.valueOf(body.length));
+        }
         ex.sendResponseHeaders(status, head ? -1 : (body.length == 0 ? -1 : body.length));
         if (!head && body.length > 0) {
             try (OutputStream out = ex.getResponseBody()) {

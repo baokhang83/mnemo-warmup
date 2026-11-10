@@ -184,7 +184,12 @@ class RunCommandTest {
         assumeTrue(Files.isExecutable(Path.of("/bin/sh")));
         Path marker = dir.resolve("done");
         Path ready = dir.resolve("ready");
-        String script = "trap 'sleep 1; echo done > \"" + marker + "\"; exit 0' TERM; echo up > \"" + ready + "\"; while :; do sleep 0.1; done";
+        Path childLog = dir.resolve("child.log");
+        Path wrapperLog = dir.resolve("wrapper.log");
+        // The child logs each step with a timestamp, so a failure shows whether its trap ran and when.
+        String script = "log() { echo \"$(date +%s) $1\" >> \"" + childLog + "\"; };"
+                + " trap 'log trap-fired; sleep 1; echo done > \"" + marker + "\"; log marker-written; exit 0' TERM;"
+                + " log started; echo up > \"" + ready + "\"; while :; do sleep 0.1; done";
         Process wrapper = new ProcessBuilder(
                         Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                         "-cp", System.getProperty("java.class.path"),
@@ -192,13 +197,39 @@ class RunCommandTest {
                         "run", "--spawn", "--cache-dir", dir.resolve("cache").toString(), "--stop-timeout-seconds", "15",
                         "--", "/bin/sh", "-c", script)
                 .redirectErrorStream(true)
-                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectOutput(wrapperLog.toFile())
                 .start();
         awaitFile(ready);
 
+        long signalled = System.nanoTime();
         wrapper.destroy(); // SIGTERM, as Kubernetes sends to PID 1
 
-        assertTrue(wrapper.waitFor(30, TimeUnit.SECONDS));
-        assertTrue(Files.exists(marker), "the JVM exited before its child finished shutting down");
+        boolean exited = wrapper.waitFor(30, TimeUnit.SECONDS);
+        long exitMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - signalled);
+        java.util.function.Supplier<String> why = () -> "wrapper exited=" + exited + " exitValue=" + (exited ? wrapper.exitValue() : "n/a")
+                + " after " + exitMillis + " ms (expected >= ~1000 ms: the child needs 1 s)"
+                + "\n/bin/sh -> " + shell()
+                + "\njava " + System.getProperty("java.version") + " on " + System.getProperty("os.name") + " " + System.getProperty("os.arch")
+                + "\n--- wrapper output ---\n" + read(wrapperLog)
+                + "\n--- child log (epoch seconds) ---\n" + read(childLog)
+                + "\nmarker exists: " + Files.exists(marker);
+        assertTrue(exited, why);
+        assertTrue(Files.exists(marker), () -> "the JVM exited before its child finished shutting down: " + why.get());
+    }
+
+    private static String read(Path file) {
+        try {
+            return Files.exists(file) ? Files.readString(file).strip() : "(no file)";
+        } catch (java.io.IOException e) {
+            return "(unreadable: " + e + ")";
+        }
+    }
+
+    private static String shell() {
+        try {
+            return Files.isSymbolicLink(Path.of("/bin/sh")) ? Files.readSymbolicLink(Path.of("/bin/sh")).toString() : "regular file";
+        } catch (java.io.IOException e) {
+            return "unknown";
+        }
     }
 }

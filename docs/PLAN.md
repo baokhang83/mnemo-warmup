@@ -129,10 +129,10 @@ Maven coordinates: groupId `io.github.baokhang83.mnemo` (same as warden), artifa
 - [x] `mnemo-warmup bench`: 3 cold starts, none vs AppCDS vs AOT, Markdown savings table
 
 ### Phase 2: Kubernetes delivery (v0.2.0)
-- [ ] `mnemo-warmup fetch` (init container): look up by fingerprint, verify, copy to
+- [x] `mnemo-warmup fetch` (init container): look up by fingerprint, verify, copy to
       emptyDir; try AOT, then AppCDS, then give up cleanly
 - [ ] `mnemo-warmup run` (entrypoint): validate manifest, add archive flag or fall back
-- [ ] Archive store backend (open decision 1), including upload from trainer
+- [x] Archive store backend (open decision 1), including upload from trainer
 - [ ] Container image, trainer Job template, Helm chart with `cacheType` value
 - [ ] Example Spring Boot app, tested on kind with JDK 21 (AppCDS) and JDK 25 (AOT)
 

@@ -2,6 +2,7 @@ package io.github.baokhang83.mnemo.warmup.cli;
 
 import io.github.baokhang83.mnemo.warmup.core.CacheStrategy;
 import io.github.baokhang83.mnemo.warmup.core.AppTrainer;
+import io.github.baokhang83.mnemo.warmup.core.ArchiveFetcher;
 import io.github.baokhang83.mnemo.warmup.core.ArchiveManifest;
 import io.github.baokhang83.mnemo.warmup.core.BenchReport;
 import io.github.baokhang83.mnemo.warmup.core.StartupBench;
@@ -33,7 +34,7 @@ import picocli.CommandLine.Spec;
         mixinStandardHelpOptions = true,
         version = "mnemo-warmup 0.1.0-SNAPSHOT",
         description = "Build, validate and benchmark AppCDS / Leyden AOT caches.",
-        subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class})
+        subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class, Main.Fetch.class})
 public class Main implements Runnable {
 
     @Spec
@@ -164,6 +165,18 @@ public class Main implements Runnable {
         }
     }
 
+    /** The store named by {@code --store}, with the login from {@code --registry-auth} or the environment, if any. */
+    static OciArchiveStore openStore(String store, Path registryAuth, boolean plainHttp, long timeoutSeconds) {
+        Path auth = registryAuth;
+        if (auth == null && System.getenv("MNEMO_WARMUP_REGISTRY_AUTH") != null) {
+            auth = Path.of(System.getenv("MNEMO_WARMUP_REGISTRY_AUTH"));
+        }
+        RegistryCredentials credentials = auth == null
+                ? null
+                : RegistryCredentials.fromDockerConfig(auth, OciArchiveStore.registryHost(store)).orElse(null);
+        return OciArchiveStore.of(store, plainHttp, credentials, Duration.ofSeconds(timeoutSeconds));
+    }
+
     @Command(name = "push",
             mixinStandardHelpOptions = true,
             description = "Upload the archive and manifest produced by build to an OCI registry, tagged by fingerprint.")
@@ -215,14 +228,7 @@ public class Main implements Runnable {
                 if (timeoutSeconds <= 0) {
                     throw new IllegalArgumentException("--timeout-seconds must be positive");
                 }
-                Path auth = registryAuth;
-                if (auth == null && System.getenv("MNEMO_WARMUP_REGISTRY_AUTH") != null) {
-                    auth = Path.of(System.getenv("MNEMO_WARMUP_REGISTRY_AUTH"));
-                }
-                RegistryCredentials credentials = auth == null
-                        ? null
-                        : RegistryCredentials.fromDockerConfig(auth, OciArchiveStore.registryHost(store)).orElse(null);
-                var target = OciArchiveStore.of(store, plainHttp, credentials, Duration.ofSeconds(timeoutSeconds));
+                var target = openStore(store, registryAuth, plainHttp, timeoutSeconds);
                 out.printf("Uploading %s (%.1f MB) to %s%n", archive, manifest.archive().sizeBytes() / 1_048_576.0, store);
                 target.put(manifest, archive);
                 out.printf("Stored fingerprint %s as tag %s%n", manifest.fingerprint(), OciArchiveStore.tagFor(manifest.fingerprint()));
@@ -234,6 +240,164 @@ public class Main implements Runnable {
                 err.println("error: " + e.getMessage());
                 return 1;
             }
+        }
+    }
+
+    @Command(name = "fetch",
+            mixinStandardHelpOptions = true,
+            description = "Init container: look up the archive for this JDK, classpath and options, verify it and write it with a flags file. "
+                    + "Always exits 0 unless --strict, so a missing or bad archive never stops the pod.")
+    static class Fetch implements Callable<Integer> {
+
+        @Spec
+        CommandSpec spec;
+
+        @Mixin
+        AppOptions opts;
+
+        @Option(names = "--store", description = "Archive store: oci://host[:port]/repository.")
+        String store;
+
+        @Option(
+                names = "--out",
+                defaultValue = ".mnemo-warmup/cache",
+                description = "Directory that receives the archive, manifest and " + ArchiveFetcher.FLAGS_FILE + ". Default: ${DEFAULT-VALUE}.")
+        Path out;
+
+        @Option(
+                names = "--cache-type",
+                defaultValue = "auto",
+                description = "auto (try AOT on JDK 25+, then AppCDS), appcds or aot. Default: ${DEFAULT-VALUE}.")
+        String cacheType;
+
+        @Option(names = "--image-digest", description = "Container image digest, as given to build.")
+        String imageDigest;
+
+        @Option(
+                names = "--registry-auth",
+                description = "Docker-config style JSON with the registry login (pull scope). Defaults to $MNEMO_WARMUP_REGISTRY_AUTH, then anonymous.")
+        Path registryAuth;
+
+        @Option(names = "--plain-http", description = "Talk to the registry over http instead of https (local registries only).")
+        boolean plainHttp;
+
+        @Option(names = "--store-timeout-seconds", defaultValue = "120", description = "Per registry request and download stall. Default: ${DEFAULT-VALUE}.")
+        long storeTimeoutSeconds;
+
+        @Option(names = "--strict", description = "Exit 1 on a store problem and 2 on bad arguments instead of 0. For CI and debugging only.")
+        boolean strict;
+
+        @Override
+        public Integer call() {
+            var o = spec.commandLine().getOut();
+            var e = spec.commandLine().getErr();
+            try {
+                ArchiveFetcher.clear(out);
+            } catch (RuntimeException ex) {
+                return fail(e, "warning: " + ex.getMessage(), 1);
+            }
+            try {
+                if (store == null || opts.jar == null) {
+                    throw new IllegalArgumentException("fetch needs --store and --jar");
+                }
+                if (storeTimeoutSeconds <= 0) {
+                    throw new IllegalArgumentException("--store-timeout-seconds must be positive");
+                }
+                JdkInfo jdk = JdkInfo.detect(opts.javaHome, System.getenv());
+                List<CacheStrategy> order = candidates(jdk);
+                // Extraction (needed to hash a Spring Boot fat JAR's libraries) goes to a fresh directory every
+                // time, because JarExtractor refuses a non-empty destination and fetch must be repeatable,
+                // for example after an init container restart on a shared volume. The fingerprint uses entry
+                // names and content, never the extraction path.
+                Path scratch;
+                try {
+                    Files.createDirectories(opts.workDir);
+                    scratch = Files.createTempDirectory(opts.workDir, "fetch-");
+                } catch (java.io.IOException io) {
+                    throw new IllegalStateException("Cannot create scratch space in " + opts.workDir + ": " + io.getMessage(), io);
+                }
+                List<ArchiveManifest> live = new ArrayList<>();
+                try {
+                    var app = new JarExtractor().prepare(opts.jar, jdk, scratch.resolve("app"));
+                    for (CacheStrategy strategy : order) {
+                        live.add(ArchiveManifest.describe(app, jdk, strategy, opts.jvmArgs, System.getenv(), imageDigest));
+                    }
+                } finally {
+                    deleteTree(scratch);
+                }
+                var archiveStore = openStore(store, registryAuth, plainHttp, storeTimeoutSeconds);
+                var result = new ArchiveFetcher().fetch(archiveStore, live, out);
+                result.notes().forEach(n -> e.println("fetch: " + n));
+                if (result.outcome() == ArchiveFetcher.Outcome.HIT) {
+                    o.printf("Archive: %s (%s), fingerprint %s%n", result.archive(), result.cacheType(), result.fingerprint());
+                    o.printf("Flags: %s%n", result.flagsFile());
+                    return 0;
+                }
+                o.println("No usable archive; the application will start without one.");
+                return strict ? 1 : 0;
+            } catch (IllegalArgumentException | IllegalStateException ex) {
+                return fail(e, "warning: " + ex.getMessage(), 2);
+            } catch (RuntimeException ex) {
+                return fail(e, "warning: " + ex.getMessage(), 1);
+            }
+        }
+
+        private static void deleteTree(Path root) {
+            try (var paths = Files.walk(root)) {
+                paths.sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
+            } catch (java.io.IOException | RuntimeException ignored) {
+                // best effort: the directory is scratch space
+            }
+        }
+
+        /**
+         * Picocli rejects bad options before call() runs, so this is the fail-open path for them: it
+         * withdraws any stale flags (best effort, from --out if it can be found) and exits 0 unless
+         * --strict was given.
+         */
+        static int failOpenOnParseError(CommandLine.ParameterException ex, String[] args) {
+            var err = ex.getCommandLine().getErr();
+            boolean strict = java.util.Arrays.asList(args).contains("--strict");
+            err.println("warning: " + ex.getMessage());
+            Path outDir = Path.of(".mnemo-warmup/cache");
+            for (int i = 0; i < args.length; i++) {
+                if (args[i].equals("--out") && i + 1 < args.length) {
+                    outDir = Path.of(args[i + 1]);
+                } else if (args[i].startsWith("--out=")) {
+                    outDir = Path.of(args[i].substring("--out=".length()));
+                }
+            }
+            try {
+                ArchiveFetcher.clear(outDir);
+            } catch (RuntimeException clearFailure) {
+                err.println("warning: " + clearFailure.getMessage());
+            }
+            err.println("fetch: continuing without an archive" + (strict ? " (--strict: failing)" : ""));
+            return strict ? 2 : 0;
+        }
+
+        static int failOpenOnUnexpectedError(Exception ex, CommandLine commandLine) {
+            var err = commandLine.getErr();
+            boolean strict = commandLine.getCommand() instanceof Fetch f && f.strict;
+            err.println("warning: unexpected error: " + ex);
+            err.println("fetch: continuing without an archive" + (strict ? " (--strict: failing)" : ""));
+            return strict ? 1 : 0;
+        }
+
+        private List<CacheStrategy> candidates(JdkInfo jdk) {
+            return switch (CacheType.parse(cacheType)) {
+                case AUTO -> jdk.featureVersion() >= CacheStrategy.LEYDEN_MIN_FEATURE
+                        ? List.of(CacheStrategy.LEYDEN_AOT, CacheStrategy.APP_CDS)
+                        : List.of(CacheStrategy.APP_CDS);
+                case APPCDS -> List.of(CacheStrategy.APP_CDS);
+                case AOT -> List.of(CacheType.AOT.resolve(jdk));
+            };
+        }
+
+        private int fail(java.io.PrintWriter err, String message, int strictExit) {
+            err.println(message);
+            err.println("fetch: continuing without an archive" + (strict ? " (--strict: failing)" : ""));
+            return strict ? strictExit : 0;
         }
     }
 
@@ -330,7 +494,17 @@ public class Main implements Runnable {
     }
 
     static CommandLine commandLine() {
-        return new CommandLine(new Main());
+        var cmd = new CommandLine(new Main());
+        // fetch runs as an init container: a bad option or an unexpected error must not stop the pod (§3).
+        var defaultParseHandler = cmd.getParameterExceptionHandler();
+        cmd.setParameterExceptionHandler((ex, args) -> "fetch".equals(ex.getCommandLine().getCommandName())
+                ? Fetch.failOpenOnParseError(ex, args)
+                : defaultParseHandler.handleParseException(ex, args));
+        var defaultExecutionHandler = cmd.getExecutionExceptionHandler();
+        cmd.setExecutionExceptionHandler((ex, commandLine, parseResult) -> "fetch".equals(commandLine.getCommandName())
+                ? Fetch.failOpenOnUnexpectedError(ex, commandLine)
+                : defaultExecutionHandler.handleExecutionException(ex, commandLine, parseResult));
+        return cmd;
     }
 
     public static void main(String[] args) {

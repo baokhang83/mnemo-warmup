@@ -1,9 +1,9 @@
 {
   "schema_version": "1",
-  "feature": "15-archive-store-backend-oci-registry-client-put-get-exists",
-  "branch": "feature/15-archive-store-backend-oci-registry-client-put-get-exists",
+  "feature": "13-fetch-command-init-container-looks-up-verifies-and-writes",
+  "branch": "feature/13-fetch-command-init-container-looks-up-verifies-and-writes",
   "stage": "build",
-  "last_session": "002-address-review-upload-location-stall-bound-https-downgra",
+  "last_session": "002-address-review-repeatable-extraction-parse-errors-flags",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

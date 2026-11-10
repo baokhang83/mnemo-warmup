@@ -40,7 +40,8 @@ public record ArchiveManifest(
         String imageDigest,
         List<String> jvmFlags,
         List<ClasspathEntry> classpath,
-        ArchiveInfo archive) {
+        ArchiveInfo archive,
+        String launchDir) {
 
     public static final String FILE_NAME = "mnemo-warmup.manifest.json";
     public static final int SCHEMA_VERSION = 1;
@@ -58,6 +59,18 @@ public record ArchiveManifest(
     public record ClasspathEntry(String name, long sizeBytes, String sha256, Instant lastModified) {}
 
     public record ArchiveInfo(String file, long sizeBytes, String sha256) {}
+
+    /** A manifest without a recorded launch directory (see {@link #launchDir()}). */
+    public ArchiveManifest(
+            int schemaVersion,
+            CacheStrategy cacheType,
+            Jdk jdk,
+            String imageDigest,
+            List<String> jvmFlags,
+            List<ClasspathEntry> classpath,
+            ArchiveInfo archive) {
+        this(schemaVersion, cacheType, jdk, imageDigest, jvmFlags, classpath, archive, null);
+    }
 
     public ArchiveManifest {
         Objects.requireNonNull(cacheType, "cacheType");
@@ -91,7 +104,8 @@ public record ArchiveManifest(
                 imageDigest,
                 JvmFlags.relevant(jvmArgs, environment),
                 classpathOf(app.runnableJar()),
-                null);
+                null,
+                app.runnableJar().toAbsolutePath().getParent().toString());
     }
 
     /** A copy that also records the written archive's name, size and SHA-256. */
@@ -99,7 +113,7 @@ public record ArchiveManifest(
         try {
             ArchiveInfo info = new ArchiveInfo(
                     archiveFile.getFileName().toString(), Files.size(archiveFile), sha256(archiveFile));
-            return new ArchiveManifest(schemaVersion, cacheType, jdk, imageDigest, jvmFlags, classpath, info);
+            return new ArchiveManifest(schemaVersion, cacheType, jdk, imageDigest, jvmFlags, classpath, info, launchDir);
         } catch (IOException e) {
             throw new IllegalStateException("Cannot read archive " + archiveFile + ": " + e.getMessage(), e);
         }
@@ -154,6 +168,42 @@ public record ArchiveManifest(
         return problems;
     }
 
+    /**
+     * The JVM also checks each classpath JAR's modification time when it maps an archive, which
+     * {@link #mismatches} deliberately ignores (the fingerprint must survive re-created layers with
+     * identical bytes). Compared to whole seconds, as the JVM does. Empty means the times agree.
+     */
+    public List<String> modificationTimeMismatches(ArchiveManifest live) {
+        List<String> problems = new ArrayList<>();
+        for (int i = 0; i < Math.min(classpath.size(), live.classpath.size()); i++) {
+            ClasspathEntry a = classpath.get(i);
+            ClasspathEntry b = live.classpath.get(i);
+            if (a.name().equals(b.name())
+                    && a.lastModified() != null
+                    && b.lastModified() != null
+                    && a.lastModified().getEpochSecond() != b.lastModified().getEpochSecond()) {
+                problems.add("'" + a.name() + "' was modified at " + b.lastModified() + ", the archive was trained at " + a.lastModified());
+            }
+        }
+        return problems;
+    }
+
+    /**
+     * The JVM records the paths of the classpath JARs, so an archive trained from {@code /app-a} is
+     * not used from {@code /app-b} even when every byte and time agrees. {@code mismatches} and
+     * {@link #modificationTimeMismatches} cannot see that (names are relative), so this compares the
+     * directory the launched JAR was in. A manifest without one cannot be checked, which counts as a mismatch.
+     */
+    public List<String> locationMismatches(ArchiveManifest live) {
+        if (launchDir == null) {
+            return List.of("the manifest does not record where it was trained (retrain with this version)");
+        }
+        if (live.launchDir != null && !launchDir.equals(live.launchDir)) {
+            return List.of("trained from " + launchDir + " but launched from " + live.launchDir);
+        }
+        return List.of();
+    }
+
     private void compareClasspath(ArchiveManifest live, List<String> problems) {
         if (classpath.size() != live.classpath.size()) {
             problems.add("classpath has " + classpath.size() + " entries vs " + live.classpath.size());
@@ -194,6 +244,9 @@ public record ArchiveManifest(
             cp.add(entry);
         }
         root.put("classpath", cp);
+        if (launchDir != null) {
+            root.put("launchDir", launchDir);
+        }
         if (archive != null) {
             Map<String, Object> a = new LinkedHashMap<>();
             a.put("file", archive.file());
@@ -252,7 +305,8 @@ public record ArchiveManifest(
         }
         Object digest = root.get("imageDigest");
         ArchiveManifest manifest = new ArchiveManifest(
-                schema, cacheType, jdk, digest == null ? null : asString(digest, "imageDigest"), flags, cp, archive);
+                schema, cacheType, jdk, digest == null ? null : asString(digest, "imageDigest"), flags, cp, archive,
+                root.get("launchDir") == null ? null : asString(root.get("launchDir"), "launchDir"));
         String recorded = string(root, "fingerprint");
         if (!manifest.fingerprint().equals(recorded)) {
             throw new IllegalArgumentException(

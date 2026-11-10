@@ -6,7 +6,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
+import java.time.Duration;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -57,8 +62,13 @@ public record JdkInfo(Path javaHome, String version, int featureVersion, String 
 
     /** Probes {@code <javaHome>/bin/java} by asking it for its system properties. */
     public static JdkInfo fromJavaHome(Path javaHome) {
+        return fromJavaHome(javaHome, Duration.ofSeconds(PROBE_TIMEOUT_SECONDS));
+    }
+
+    /** As {@link #fromJavaHome(Path)}, but the whole probe (start, output, exit) must finish within {@code timeout}. */
+    public static JdkInfo fromJavaHome(Path javaHome, Duration timeout) {
         Path java = resolveJavaExecutable(javaHome);
-        String output = run(java);
+        String output = run(java, timeout);
         JdkInfo parsed = parse(output);
         return new JdkInfo(javaHome, parsed.version(), parsed.featureVersion(), parsed.vendor(), parsed.runtimeVersion());
     }
@@ -121,26 +131,46 @@ public record JdkInfo(Path javaHome, String version, int featureVersion, String 
         throw new IllegalArgumentException("No java executable found under " + javaHome.resolve("bin"));
     }
 
-    private static String run(Path java) {
+    private static String run(Path java, Duration timeout) {
+        Process process;
         try {
-            Process process = new ProcessBuilder(java.toString(), "-XshowSettings:properties", "-version")
+            process = new ProcessBuilder(java.toString(), "-XshowSettings:properties", "-version")
                     .redirectErrorStream(true)
                     .start();
-            // The JVM writes the settings to stderr; merged into stdout above.
-            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-            if (!process.waitFor(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                process.destroyForcibly();
-                throw new IllegalStateException("Timed out probing " + java);
+        } catch (IOException e) {
+            throw new IllegalStateException("Cannot run " + java, e);
+        }
+        // Read on another thread: a launcher (or an agent from JAVA_TOOL_OPTIONS) that hangs while holding
+        // the stream open must not hold us past the timeout, so the wait covers the reading too.
+        // The JVM writes the settings to stderr; merged into stdout above.
+        var reader = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "jdk-probe-reader");
+            t.setDaemon(true);
+            return t;
+        });
+        try {
+            Future<byte[]> output = reader.submit(() -> process.getInputStream().readAllBytes());
+            byte[] bytes;
+            try {
+                bytes = output.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            } catch (TimeoutException e) {
+                throw new IllegalStateException("Timed out probing " + java + " after " + timeout.toSeconds() + " s");
+            } catch (ExecutionException e) {
+                throw new IllegalStateException("Cannot read the output of " + java + ": " + e.getCause(), e.getCause());
+            }
+            if (!process.waitFor(Math.max(1, timeout.toSeconds()), TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Timed out probing " + java + " after " + timeout.toSeconds() + " s");
             }
             if (process.exitValue() != 0) {
                 throw new IllegalStateException("Probing " + java + " failed with exit code " + process.exitValue());
             }
-            return output;
-        } catch (IOException e) {
-            throw new IllegalStateException("Cannot run " + java, e);
+            return new String(bytes, StandardCharsets.UTF_8);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted while probing " + java, e);
+        } finally {
+            process.destroyForcibly();
+            reader.shutdownNow();
         }
     }
 }

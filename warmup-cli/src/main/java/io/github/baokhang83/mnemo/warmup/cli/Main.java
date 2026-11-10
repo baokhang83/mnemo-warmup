@@ -13,6 +13,7 @@ import io.github.baokhang83.mnemo.warmup.core.JarExtractor;
 import io.github.baokhang83.mnemo.warmup.core.JdkInfo;
 import io.github.baokhang83.mnemo.warmup.core.OciArchiveStore;
 import io.github.baokhang83.mnemo.warmup.core.RegistryCredentials;
+import io.github.baokhang83.mnemo.warmup.core.RunPlanner;
 import io.github.baokhang83.mnemo.warmup.core.StoreException;
 import io.github.baokhang83.mnemo.warmup.core.TrainingException;
 import java.net.URI;
@@ -27,6 +28,7 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Mixin;
 import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Option;
+import picocli.CommandLine.Parameters;
 import picocli.CommandLine.Spec;
 
 @Command(
@@ -34,7 +36,7 @@ import picocli.CommandLine.Spec;
         mixinStandardHelpOptions = true,
         version = "mnemo-warmup 0.1.0-SNAPSHOT",
         description = "Build, validate and benchmark AppCDS / Leyden AOT caches.",
-        subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class, Main.Fetch.class})
+        subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class, Main.Fetch.class, Main.Run.class})
 public class Main implements Runnable {
 
     @Spec
@@ -401,6 +403,154 @@ public class Main implements Runnable {
         }
     }
 
+    @Command(name = "run",
+            mixinStandardHelpOptions = true,
+            description = "Application entrypoint: start 'java ... -jar app.jar' with the fetched archive if it still matches this exact "
+                    + "launch, otherwise exactly as given. Put the command after --.",
+            footer = "%nExample: mnemo-warmup run --print -- java -Xmx512m -jar /app/app.jar")
+    static class Run implements Callable<Integer> {
+
+        @Spec
+        CommandSpec spec;
+
+        @Option(
+                names = "--cache-dir",
+                defaultValue = "${MNEMO_WARMUP_CACHE_DIR:-.mnemo-warmup/cache}",
+                description = "Directory written by fetch --out. Default: $MNEMO_WARMUP_CACHE_DIR, then ${DEFAULT-VALUE}.")
+        Path cacheDir;
+
+        @Option(
+                names = "--image-digest",
+                defaultValue = "${MNEMO_WARMUP_IMAGE_DIGEST:-}",
+                description = "Container image digest, as given to build. Default: $MNEMO_WARMUP_IMAGE_DIGEST.")
+        String imageDigest;
+
+        @Option(names = "--print", description = "Print the final command, shell-quoted on one line, and exit 0, so a shell can exec it "
+                + "(scripts/mnemo-warmup-exec). The JVM is then PID 1 with no wrapper process.")
+        boolean print;
+
+        @Option(names = "--spawn", description = "Start the command as a child process, forward SIGTERM to it and exit with its status. "
+                + "Keeps this JVM resident (about 40-60 MB); for images without /bin/sh. This is the default without --print.")
+        boolean spawn;
+
+        @Option(
+                names = "--stop-timeout-seconds",
+                defaultValue = "25",
+                description = "--spawn: after SIGTERM, how long to wait for the command to exit before killing it. "
+                        + "Keep it below the pod's terminationGracePeriodSeconds. Default: ${DEFAULT-VALUE}.")
+        long stopTimeoutSeconds;
+
+        @Parameters(arity = "1..*", paramLabel = "COMMAND", description = "The command to start, after --.")
+        List<String> command = new ArrayList<>();
+
+        @Override
+        public Integer call() {
+            var err = spec.commandLine().getErr();
+            if (print && spawn) {
+                err.println("error: --print and --spawn are exclusive");
+                return 2;
+            }
+            String digest = imageDigest == null || imageDigest.isBlank() ? null : imageDigest;
+            var plan = new RunPlanner().plan(command, cacheDir, System.getenv(), digest);
+            plan.notes().forEach(n -> err.println("run: " + n));
+            return launch(spec.commandLine(), plan.command(), print, Duration.ofSeconds(Math.max(1, stopTimeoutSeconds)));
+        }
+
+        static int launch(CommandLine cmd, List<String> command, boolean print, Duration stopTimeout) {
+            if (print) {
+                cmd.getOut().println(shellQuote(command));
+                return 0;
+            }
+            // The hook is registered BEFORE the child starts: a SIGTERM that arrives while the child is
+            // still coming up (or while this JVM is still linking the hook) must not be lost, or this JVM
+            // would exit at once and leave the child running with no grace period.
+            var child = new java.util.concurrent.atomic.AtomicReference<Process>();
+            var terminating = new java.util.concurrent.atomic.AtomicBoolean();
+            Thread forwarder = new Thread(() -> {
+                terminating.set(true);
+                Process running = child.get();
+                if (running != null) {
+                    stop(running, stopTimeout);
+                }
+            }, "run-signal-forwarder");
+            Runtime.getRuntime().addShutdownHook(forwarder);
+            try {
+                Process process = new ProcessBuilder(command).inheritIO().start();
+                child.set(process);
+                if (terminating.get()) {
+                    // the hook ran before the child existed: stop it ourselves, and wait for it
+                    stop(process, stopTimeout);
+                }
+                try {
+                    return process.waitFor();
+                } catch (InterruptedException e) {
+                    process.destroy();
+                    Thread.currentThread().interrupt();
+                    return 130;
+                }
+            } catch (java.io.IOException e) {
+                cmd.getErr().println("error: cannot start " + command.get(0) + ": " + e.getMessage());
+                return 127;
+            } finally {
+                try {
+                    Runtime.getRuntime().removeShutdownHook(forwarder);
+                } catch (IllegalStateException ignored) {
+                    // JVM is already shutting down
+                }
+            }
+        }
+
+        /**
+         * Forwards SIGTERM to the child and WAITS for it. When this JVM is PID 1 it must not exit while the
+         * child is still running its shutdown hooks, or the container runtime kills the child at once
+         * instead of giving it the grace period. Falls back to SIGKILL after {@code timeout}.
+         *
+         * @return whether the child exited on its own within the timeout
+         */
+        static boolean stop(Process process, Duration timeout) {
+            process.destroy();
+            try {
+                if (process.waitFor(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    return true;
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            process.destroyForcibly();
+            return false;
+        }
+
+        /** {@code 'a' 'b c' 'it'\''s'}: safe for {@code eval} in any POSIX shell. */
+        static String shellQuote(List<String> command) {
+            var sb = new StringBuilder();
+            for (String arg : command) {
+                if (sb.length() > 0) {
+                    sb.append(' ');
+                }
+                sb.append('\'').append(arg.replace("'", "'\\''")).append('\'');
+            }
+            return sb.toString();
+        }
+
+        /**
+         * A bad option to {@code run} must not stop the application: whatever follows {@code --} is still
+         * the command to start, so start it unchanged (or print it, with --print).
+         */
+        static int failOpenOnParseError(CommandLine.ParameterException ex, String[] args) {
+            var cmd = ex.getCommandLine();
+            int dashes = java.util.Arrays.asList(args).indexOf("--");
+            if (dashes < 0 || dashes == args.length - 1) {
+                cmd.getErr().println("error: " + ex.getMessage());
+                cmd.getErr().println("usage: mnemo-warmup run [--print|--spawn] -- <command>");
+                return 2;
+            }
+            cmd.getErr().println("warning: " + ex.getMessage() + "; starting the command unchanged");
+            List<String> original = List.of(args).subList(dashes + 1, args.length);
+            boolean print = java.util.Arrays.asList(args).subList(0, dashes).contains("--print");
+            return launch(cmd, original, print, Duration.ofSeconds(25));
+        }
+    }
+
     @Command(name = "bench",
             mixinStandardHelpOptions = true,
             description = "Compare cold starts with no archive, AppCDS and AOT, and print a Markdown table.")
@@ -497,9 +647,11 @@ public class Main implements Runnable {
         var cmd = new CommandLine(new Main());
         // fetch runs as an init container: a bad option or an unexpected error must not stop the pod (§3).
         var defaultParseHandler = cmd.getParameterExceptionHandler();
-        cmd.setParameterExceptionHandler((ex, args) -> "fetch".equals(ex.getCommandLine().getCommandName())
-                ? Fetch.failOpenOnParseError(ex, args)
-                : defaultParseHandler.handleParseException(ex, args));
+        cmd.setParameterExceptionHandler((ex, args) -> switch (ex.getCommandLine().getCommandName()) {
+            case "fetch" -> Fetch.failOpenOnParseError(ex, args);
+            case "run" -> Run.failOpenOnParseError(ex, args);
+            default -> defaultParseHandler.handleParseException(ex, args);
+        });
         var defaultExecutionHandler = cmd.getExecutionExceptionHandler();
         cmd.setExecutionExceptionHandler((ex, commandLine, parseResult) -> "fetch".equals(commandLine.getCommandName())
                 ? Fetch.failOpenOnUnexpectedError(ex, commandLine)

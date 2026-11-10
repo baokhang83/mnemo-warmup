@@ -102,14 +102,12 @@ and grows running pods in place without restarts; warmup speeds up the pods that
    `docs/adr/0002-training-trigger-and-traffic.md`).
 3. **Training traffic:** DECIDED: `spring-refresh` default, `http-probe` opt-in, no warmup
    script in v0.2.0 (same ADR).
-4. **App pickup:** `mnemo-warmup run` entrypoint only, or also `JAVA_TOOL_OPTIONS`.
+4. **App pickup:** DECIDED: `run` is supported; `JAVA_TOOL_OPTIONS` from the flags file works
+   but is unvalidated (see `docs/adr/0003-run-exec-model-and-layout.md`).
 5. **AppCDS flavour:** dynamic archive on top of the JDK default archive vs static
    dump. Dynamic is simpler. Verified on 21-24: see `docs/appcds-jdk-matrix.md`.
-6. **JAR modification times:** the JVM validates the size and modification time of the
-   classpath JARs when it maps an archive, but the fingerprint ignores mtimes (they differ
-   between a fresh extraction and an image layer with identical bytes). Decide how `run`
-   and `fetch` handle this, e.g. extract once at image build time so trainer and runtime
-   share the same files. Measure it together with #10 and #20.
+6. **JAR modification times:** DECIDED: extract at image build time so trainer and runtime share
+   the same files; `run` compares modification times and starts plain on a difference (same ADR).
 
 ## Repo layout
 ```
@@ -131,7 +129,7 @@ Maven coordinates: groupId `io.github.baokhang83.mnemo` (same as warden), artifa
 ### Phase 2: Kubernetes delivery (v0.2.0)
 - [x] `mnemo-warmup fetch` (init container): look up by fingerprint, verify, copy to
       emptyDir; try AOT, then AppCDS, then give up cleanly
-- [ ] `mnemo-warmup run` (entrypoint): validate manifest, add archive flag or fall back
+- [x] `mnemo-warmup run` (entrypoint): validate manifest, add archive flag or fall back
 - [x] Archive store backend (open decision 1), including upload from trainer
 - [ ] Container image, trainer Job template, Helm chart with `cacheType` value
 - [ ] Example Spring Boot app, tested on kind with JDK 21 (AppCDS) and JDK 25 (AOT)

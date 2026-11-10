@@ -1,0 +1,18 @@
+#!/bin/sh
+# Entrypoint wrapper for the application container:
+#
+#   ENTRYPOINT ["/opt/mnemo-warmup/mnemo-warmup-exec"]
+#   CMD ["java", "-jar", "/app/app.jar"]
+#
+# `mnemo-warmup run --print` decides whether the fetched archive still fits this exact launch and
+# prints the final command. This shell then REPLACES ITSELF with it (exec), so the JVM is PID 1 and
+# receives SIGTERM directly, with no second JVM kept resident. If mnemo-warmup is missing or fails
+# in any way, the original command is exec'd unchanged: a cache problem never stops the application.
+#
+# Environment (read by mnemo-warmup run): MNEMO_WARMUP_CACHE_DIR (default /mnemo-cache),
+# MNEMO_WARMUP_IMAGE_DIGEST (the digest given to `build`).
+
+if cmd=$(mnemo-warmup run --print -- "$@") && [ -n "$cmd" ]; then
+  eval "exec $cmd"
+fi
+exec "$@"

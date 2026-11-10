@@ -279,4 +279,27 @@ class ArchiveManifestTest {
         // what a later step would compute in the same environment matches
         assertEquals(List.of(), manifest.mismatches(ArchiveManifest.describe(app, jdk, strategy, jvmArgs, Map.of(), null)));
     }
+
+    @Test
+    void launchDirSurvivesJsonAndIsNotPartOfTheFingerprint() {
+        var base = new ArchiveManifest(
+                ArchiveManifest.SCHEMA_VERSION, CacheStrategy.APP_CDS, new ArchiveManifest.Jdk("V", "21.0.5", "21.0.5+11", 21),
+                null, List.of(), List.of(new ArchiveManifest.ClasspathEntry("app.jar", 1, "ab".repeat(32), Instant.EPOCH)), null, "/app");
+        var elsewhere = new ArchiveManifest(
+                base.schemaVersion(), base.cacheType(), base.jdk(), null, base.jvmFlags(), base.classpath(), null, "/other");
+
+        assertEquals("/app", ArchiveManifest.fromJson(base.toJson()).launchDir());
+        assertEquals(base.fingerprint(), elsewhere.fingerprint());
+        assertEquals(List.of(), base.locationMismatches(base));
+        assertEquals(1, base.locationMismatches(elsewhere).size());
+    }
+
+    @Test
+    void aManifestWithoutALaunchDirCannotBeLocationChecked() {
+        var legacy = new ArchiveManifest(
+                ArchiveManifest.SCHEMA_VERSION, CacheStrategy.APP_CDS, new ArchiveManifest.Jdk("V", "21.0.5", "21.0.5+11", 21),
+                null, List.of(), List.of(), null);
+        assertNull(ArchiveManifest.fromJson(legacy.toJson()).launchDir());
+        assertEquals(1, legacy.locationMismatches(legacy).size());
+    }
 }

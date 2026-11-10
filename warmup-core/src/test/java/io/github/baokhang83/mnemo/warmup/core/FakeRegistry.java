@@ -25,6 +25,9 @@ final class FakeRegistry implements AutoCloseable {
     final AtomicInteger tokenRequests = new AtomicInteger();
     volatile boolean requireAuth;
     volatile boolean redirectBlobs;
+    volatile boolean stallBlobs;
+    /** absolute-path (default), relative ("u1") or query ("?_state=x"). */
+    volatile String locationStyle = "absolute-path";
     private final HttpServer server;
 
     FakeRegistry() throws IOException {
@@ -72,7 +75,12 @@ final class FakeRegistry implements AutoCloseable {
                 return;
             }
             if (path.endsWith("/blobs/uploads/") && method.equals("POST")) {
-                ex.getResponseHeaders().add("Location", "/v2/test/archives/blobs/uploads/u1");
+                String location = switch (locationStyle) {
+                    case "relative" -> "u1";
+                    case "query" -> "?_state=x";
+                    default -> "/v2/test/archives/blobs/uploads/u1";
+                };
+                ex.getResponseHeaders().add("Location", location);
                 reply(ex, 202, new byte[0]);
             } else if (path.contains("/blobs/uploads/") && method.equals("PUT")) {
                 String digest = query(ex, "digest");
@@ -113,6 +121,14 @@ final class FakeRegistry implements AutoCloseable {
         } else if (redirect && method.equals("GET")) {
             ex.getResponseHeaders().add("Location", "/redirected/" + digest);
             reply(ex, 307, new byte[0]);
+        } else if (stallBlobs && method.equals("GET") && blob.length > 1000) {
+            ex.sendResponseHeaders(200, blob.length);
+            ex.getResponseBody().flush();
+            try {
+                Thread.sleep(8000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         } else {
             reply(ex, 200, blob);
         }

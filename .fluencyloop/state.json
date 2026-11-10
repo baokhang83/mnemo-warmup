@@ -3,7 +3,7 @@
   "feature": "15-archive-store-backend-oci-registry-client-put-get-exists",
   "branch": "feature/15-archive-store-backend-oci-registry-client-put-get-exists",
   "stage": "build",
-  "last_session": "001-oci-archive-store-client-docker-config-credentials-push",
+  "last_session": "002-address-review-upload-location-stall-bound-https-downgra",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

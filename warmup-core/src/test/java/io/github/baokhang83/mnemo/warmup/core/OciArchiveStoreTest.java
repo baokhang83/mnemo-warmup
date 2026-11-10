@@ -192,4 +192,63 @@ class OciArchiveStoreTest {
         Files.writeString(bad, "not json");
         assertThrows(StoreException.class, () -> RegistryCredentials.fromDockerConfig(bad, "h"));
     }
+
+    @Test
+    void relativeAndQueryOnlyUploadLocationsAreResolvedAgainstTheUploadUrl() throws Exception {
+        for (String style : List.of("relative", "query")) {
+            try (var registry = new FakeRegistry()) {
+                registry.locationStyle = style;
+                Path file = archive("location-" + style);
+                ArchiveManifest manifest = manifestFor(file);
+                var store = store(registry, null);
+                store.put(manifest, file);
+                assertTrue(store.exists(manifest.fingerprint()), style);
+                assertEquals(2, registry.blobs.size(), style);
+            }
+        }
+    }
+
+    @Test
+    void aStalledDownloadFailsWithinTheTimeoutAndLeavesNoFile() throws Exception {
+        try (var registry = new FakeRegistry()) {
+            Path file = archive("s".repeat(50_000));
+            ArchiveManifest manifest = manifestFor(file);
+            OciArchiveStore.of(registry.reference("test/archives"), true, null, Duration.ofSeconds(5)).put(manifest, file);
+            registry.stallBlobs = true;
+
+            var shortTimeout = OciArchiveStore.of(registry.reference("test/archives"), true, null, Duration.ofSeconds(1));
+            Path out = Files.createDirectory(tmp.resolve("out"));
+            long started = System.nanoTime();
+            var ex = assertThrows(StoreException.class, () -> shortTimeout.get(manifest.fingerprint(), out));
+            assertTrue(Duration.ofNanos(System.nanoTime() - started).toSeconds() < 6, "must not wait for the server");
+            assertTrue(ex.getMessage().contains("stalled") || ex.getMessage().contains("Cannot"), ex.getMessage());
+            try (var files = Files.list(out)) {
+                assertEquals(0, files.count());
+            }
+        }
+    }
+
+    @Test
+    void httpsRegistriesNeverFollowAnythingToPlainHttp() {
+        var https = java.net.URI.create("https://registry.example");
+        assertThrows(StoreException.class, () -> OciArchiveStore.checkTransport(https, java.net.URI.create("http://registry.example/v2/")));
+        OciArchiveStore.checkTransport(https, java.net.URI.create("https://storage.example/blob"));
+        OciArchiveStore.checkTransport(java.net.URI.create("http://127.0.0.1:5000"), java.net.URI.create("http://127.0.0.1:5000/x"));
+        assertFalse(OciArchiveStore.sameOrigin(https, java.net.URI.create("http://registry.example")));
+        assertFalse(OciArchiveStore.sameOrigin(https, java.net.URI.create("https://registry.example:8443")));
+        assertTrue(OciArchiveStore.sameOrigin(https, java.net.URI.create("https://REGISTRY.example/other")));
+    }
+
+    @Test
+    void putRejectsAnArchiveThatDoesNotMatchItsManifest() throws Exception {
+        try (var registry = new FakeRegistry()) {
+            Path file = archive("what-the-manifest-describes");
+            ArchiveManifest manifest = manifestFor(file);
+            Files.writeString(file, "replaced-after-build");
+            var store = store(registry, null);
+            assertThrows(IllegalArgumentException.class, () -> store.put(manifest, file));
+            assertEquals(0, registry.blobs.size());
+            assertEquals(0, registry.manifests.size());
+        }
+    }
 }

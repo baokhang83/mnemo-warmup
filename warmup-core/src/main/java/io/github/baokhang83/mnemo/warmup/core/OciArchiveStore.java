@@ -143,8 +143,14 @@ public final class OciArchiveStore implements ArchiveStore {
         try {
             byte[] config = manifest.toJson().getBytes(StandardCharsets.UTF_8);
             String configDigest = "sha256:" + hex(config);
-            String archiveDigest = "sha256:" + hex(archiveFile);
+            String archiveHex = hex(archiveFile);
+            String archiveDigest = "sha256:" + archiveHex;
             long archiveSize = Files.size(archiveFile);
+            ArchiveManifest.ArchiveInfo declared = manifest.archive();
+            if (declared == null || declared.sizeBytes() != archiveSize || !declared.sha256().equals(archiveHex)) {
+                throw new IllegalArgumentException(
+                        "Archive " + archiveFile + " does not match its manifest (size or SHA-256 differs); rebuild before pushing");
+            }
 
             uploadBlob(configDigest, () -> BodyPublishers.ofByteArray(config));
             uploadBlob(archiveDigest, () -> {
@@ -243,14 +249,15 @@ public final class OciArchiveStore implements ArchiveStore {
         if (head.statusCode() == 200) {
             return;
         }
+        URI startUri = uri("/v2/" + repository + "/blobs/uploads/");
         HttpResponse<byte[]> start = call(
-                "POST", uri("/v2/" + repository + "/blobs/uploads/"), Map.of(), () -> BodyPublishers.noBody(), BodyHandlers.ofByteArray(), "pull,push");
+                "POST", startUri, Map.of(), () -> BodyPublishers.noBody(), BodyHandlers.ofByteArray(), "pull,push");
         if (start.statusCode() != 202) {
             throw failure("start upload", start);
         }
         String location = start.headers().firstValue("Location").orElseThrow(
                 () -> new StoreException("Registry did not return an upload Location"));
-        URI target = base.resolve(location);
+        URI target = startUri.resolve(location);
         String joined = target + (target.getRawQuery() == null ? "?" : "&") + "digest=" + URLEncoder.encode(digest, StandardCharsets.UTF_8);
         HttpResponse<byte[]> put = call("PUT", URI.create(joined), Map.of("Content-Type", "application/octet-stream"), body, BodyHandlers.ofByteArray(), "pull,push");
         if (put.statusCode() != 201) {
@@ -269,10 +276,7 @@ public final class OciArchiveStore implements ArchiveStore {
                 throw failure("download archive", r);
             }
             MessageDigest md = sha256();
-            long written;
-            try (InputStream in = new DigestInputStream(r.body(), md)) {
-                written = Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING);
-            }
+            long written = copyWithIdleLimit(new DigestInputStream(r.body(), md), tmp, size);
             if (written != size || !digest.equals("sha256:" + HexFormat.of().formatHex(md.digest()))) {
                 throw new StoreException("Downloaded archive failed verification (size or digest mismatch)");
             }
@@ -289,6 +293,52 @@ public final class OciArchiveStore implements ArchiveStore {
                 }
             }
         }
+    }
+
+    /**
+     * Copies the body to {@code target}, closing the stream if no byte arrives for {@link #timeout}
+     * (a server that sends headers and then stalls must not hold the init container forever), and
+     * refusing more than {@code expectedSize} bytes.
+     */
+    private long copyWithIdleLimit(InputStream in, Path target, long expectedSize) throws IOException {
+        long[] lastProgress = {System.nanoTime()};
+        boolean[] stalled = {false};
+        var watchdog = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "oci-download-watchdog");
+            t.setDaemon(true);
+            return t;
+        });
+        long period = Math.max(50, Math.min(1000, timeout.toMillis() / 4));
+        watchdog.scheduleAtFixedRate(() -> {
+            if (System.nanoTime() - lastProgress[0] > timeout.toNanos()) {
+                stalled[0] = true;
+                try {
+                    in.close();
+                } catch (IOException ignored) {
+                    // the read below fails and reports the stall
+                }
+            }
+        }, period, period, java.util.concurrent.TimeUnit.MILLISECONDS);
+        long total = 0;
+        try (in; var out = Files.newOutputStream(target)) {
+            byte[] buffer = new byte[64 * 1024];
+            for (int n; (n = in.read(buffer)) >= 0; ) {
+                lastProgress[0] = System.nanoTime();
+                total += n;
+                if (total > expectedSize) {
+                    throw new StoreException("Registry sent more bytes than the manifest declares");
+                }
+                out.write(buffer, 0, n);
+            }
+        } catch (IOException e) {
+            if (stalled[0]) {
+                throw new StoreException("Download stalled: no data for " + timeout.toSeconds() + " s", e);
+            }
+            throw e;
+        } finally {
+            watchdog.shutdownNow();
+        }
+        return total;
     }
 
     private static Map<String, Object> descriptor(String mediaType, String digest, long size) {
@@ -330,7 +380,8 @@ public final class OciArchiveStore implements ArchiveStore {
         URI current = uri;
         boolean authenticated = false;
         for (int hops = 0; hops <= MAX_REDIRECTS; hops++) {
-            boolean sameHost = current.getAuthority().equals(base.getAuthority());
+            checkTransport(base, current);
+            boolean sameHost = sameOrigin(base, current);
             HttpResponse<T> r = send(method, current, headers, body, handler, sameHost);
             int status = r.statusCode();
             if (status == 401 && sameHost && !authenticated) {
@@ -359,6 +410,19 @@ public final class OciArchiveStore implements ArchiveStore {
         throw new StoreException("Too many redirects from " + base.getAuthority());
     }
 
+    /** Same scheme, host and port: the only place the registry's Authorization header may go. */
+    static boolean sameOrigin(URI registry, URI other) {
+        return registry.getScheme().equalsIgnoreCase(other.getScheme())
+                && registry.getAuthority().equalsIgnoreCase(other.getAuthority());
+    }
+
+    /** An https registry may never send us to a plain-http URL (redirect, upload location or token realm). */
+    static void checkTransport(URI registry, URI target) {
+        if ("https".equalsIgnoreCase(registry.getScheme()) && !"https".equalsIgnoreCase(target.getScheme())) {
+            throw new StoreException("Refusing to follow " + registry.getAuthority() + " to a non-https URL");
+        }
+    }
+
     private <T> HttpResponse<T> send(
             String method, URI uri, Map<String, String> headers, Supplier<BodyPublisher> body, BodyHandler<T> handler, boolean sendAuth) {
         HttpRequest.Builder b = HttpRequest.newBuilder(uri).timeout(timeout);
@@ -368,11 +432,21 @@ public final class OciArchiveStore implements ArchiveStore {
             b.header("Authorization", auth);
         }
         b.method(method, body == null ? BodyPublishers.noBody() : body.get());
+        return await(http.sendAsync(b.build(), handler), uri);
+    }
+
+    /** Waits for the whole exchange (including a buffered body) for at most {@link #timeout}. */
+    private <T> HttpResponse<T> await(java.util.concurrent.CompletableFuture<HttpResponse<T>> future, URI uri) {
         try {
-            return http.send(b.build(), handler);
-        } catch (IOException e) {
-            throw new StoreException("Cannot reach registry " + uri.getAuthority() + ": " + e.getMessage(), e);
+            return future.get(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (java.util.concurrent.TimeoutException e) {
+            future.cancel(true);
+            throw new StoreException("Registry " + uri.getAuthority() + " did not answer within " + timeout.toSeconds() + " s", e);
+        } catch (java.util.concurrent.ExecutionException e) {
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            throw new StoreException("Cannot reach registry " + uri.getAuthority() + ": " + cause.getMessage(), cause);
         } catch (InterruptedException e) {
+            future.cancel(true);
             Thread.currentThread().interrupt();
             throw new StoreException("Interrupted while talking to registry " + uri.getAuthority(), e);
         }
@@ -390,6 +464,7 @@ public final class OciArchiveStore implements ArchiveStore {
             if (realm == null) {
                 throw new StoreException("Registry sent a Bearer challenge without a realm");
             }
+            checkTransport(base, URI.create(realm));
             String scope = params.getOrDefault("scope", "repository:" + repository + ":" + actions);
             StringBuilder url = new StringBuilder(realm).append(realm.contains("?") ? '&' : '?');
             if (params.containsKey("service")) {
@@ -400,15 +475,8 @@ public final class OciArchiveStore implements ArchiveStore {
             if (credentials != null) {
                 b.header("Authorization", credentials.basicHeader());
             }
-            HttpResponse<byte[]> r;
-            try {
-                r = http.send(b.GET().build(), BodyHandlers.ofByteArray());
-            } catch (IOException e) {
-                throw new StoreException("Cannot reach the registry token service: " + e.getMessage(), e);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new StoreException("Interrupted while requesting a registry token", e);
-            }
+            HttpResponse<byte[]> r = await(
+                    http.sendAsync(b.GET().build(), BodyHandlers.ofByteArray()), URI.create(realm));
             if (r.statusCode() != 200) {
                 throw new StoreException("Registry token service refused the request (HTTP " + r.statusCode() + ")"
                         + (credentials == null ? "; no credentials were provided" : ""));

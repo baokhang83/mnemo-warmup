@@ -42,11 +42,10 @@ Check these first; they decide whether the setup below fits your application.
 
 ## How it works
 
-```
- trainer CronJob (your app image)                     every pod (your Deployment)
-   computes the fingerprint                             init container: fetch  -- looks up the archive, verifies it
-   trains if the registry has none   ---> registry <--- app container:   run    -- uses it only if it fits this exact launch
-```
+
+<div align="center">
+  <img width="1114" height="627" alt="image" src="https://github.com/user-attachments/assets/6e775dcb-7c3f-42ec-8e26-cc7403750373" />
+</div>
 
 - A **fingerprint** identifies what an archive is valid for: the JDK build, the classpath JAR contents, and the heap and GC options.
 - A **trainer CronJob** runs your application image with the tool, trains an archive for the fingerprint and uploads it, once.

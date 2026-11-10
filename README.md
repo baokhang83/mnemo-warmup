@@ -5,6 +5,7 @@ Train an AppCDS or Project Leyden AOT cache once, share it with every replica th
 init container, and fall back to a normal start whenever the cache doesn't match.
 
 [![build](https://github.com/baokhang83/mnemo-warmup/actions/workflows/build.yml/badge.svg)](https://github.com/baokhang83/mnemo-warmup/actions/workflows/build.yml)
+[![coverage](https://raw.githubusercontent.com/baokhang83/mnemo-warmup/refs/heads/gh-pages/badges/jacoco.svg)](https://baokhang83.github.io/mnemo-warmup/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 ![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)
 ![Java 21+](https://img.shields.io/badge/java-21%2B-informational)

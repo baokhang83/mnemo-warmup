@@ -71,8 +71,8 @@ minutes. Read [`examples/`](examples/README.md) to see how the pieces fit before
 
 What the setup below needs from your application and your cluster.
 
-- **Application image:** Java **21 or newer**, and **`/bin/sh`** (the chart's launcher and wrapper are shell scripts, so shell-free images such
-  as distroless are not supported by the chart).
+- **Application image:** Java **21 or newer**. The Helm chart also needs **`/bin/sh`** (its launcher and wrapper are shell scripts); shell-free
+  images such as distroless work with the [offline injector](docs/offline-injector.md), which uses the native launcher.
 - **Launch command:** `java [options] -jar <jar> [args]`. Launches with `-cp` and a main class are left to start normally, without a cache.
 - **JARs fixed at build time:** a Spring Boot **3.3+** application extracted with `-Djarmode=tools extract` (step 1), or another executable JAR
   whose dependencies are listed in its `Class-Path`.
@@ -253,7 +253,7 @@ Failures **looking up or validating** the archive never stop a pod: it runs with
 
 - a `warmup.store.pullSecret` / `pushSecret` that does not exist in the namespace (the pod waits for the missing volume);
 - the tools image or the application image cannot be pulled;
-- the application image has no `/bin/sh` (the init container cannot start);
+- with the Helm chart, an application image without `/bin/sh` (the init container cannot start; the offline injector does not need a shell);
 - a Deployment edit that gets the entrypoint or arguments wrong (the app command fails as it would anyway).
 
 ## Disable or remove it
@@ -273,7 +273,7 @@ using the cache:
 bundled example); an anonymous plain-HTTP `registry:2`. CI runs the whole chain on a real cluster. More applications, registries and architectures are being added.
 
 - Alpha: command-line options, chart values and the manifest format may still change.
-- The application image needs **Java 21+ and `/bin/sh`**, and the JARs must be fixed at build time (step 1).
+- The application image needs **Java 21+** (and `/bin/sh` with the Helm chart, not with the offline injector), and the JARs must be fixed at build time (step 1).
 - The first archive appears after the trainer's first run (up to one schedule interval, unless you start a job by hand).
 - Registry login supports Docker-config basic and token auth; cloud credential helpers and workload identity are not implemented.
 

@@ -162,6 +162,9 @@ done
 
 out=$(dl -- exec -- "$L" which-java 2>&1) && rc=0 || rc=$?
 if [ "$rc" = 0 ] && grep -q "^/usr/bin/java$" <<<"$out" && grep -q "not a java command" <<<"$out"; then ok "unsupported command runs unchanged"; else fail "distroless unsupported command"; fi
+# the launcher gets exact argv from the jar, byte for byte, including UTF-8 (e-acute c3a9, check mark e29c93)
+hex=$(dl -- jar run --print --format nul -- java "-Dg=h$(printf '\303\251')llo$(printf '\342\234\223')" -jar x.jar 2>/dev/null | od -An -tx1 | tr -d ' \n')
+if grep -q "c3a96c6c6fe29c93" <<<"$hex"; then ok "UTF-8 arguments pass through unchanged"; else fail "UTF-8 arguments were altered: $hex"; fi
 dl -- exec -- java -jar /nonexistent.jar >/dev/null 2>&1 && rc=0 || rc=$?
 if [ "$rc" = 1 ]; then ok "the JVM's exit status is the container's"; else fail "exit status was $rc, want 1"; fi
 

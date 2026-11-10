@@ -76,8 +76,8 @@ Components:
 - **core** (Java 21+): JDK detection, cache type selection, fat-JAR extraction, training
   runner, fingerprint and manifest, bench.
 - **cli**: `build`, `bench`, `fetch`, `run`.
-- **image**: JDK-free tools image carrying the CLI, launcher and exec wrapper into the application
-  image (`docs/adr/0004-tools-image.md`); the tool runs inside the app image.
+- **image**: JDK-free tools image carrying the CLI, the shell launcher and exec wrapper, and the static native
+  launcher (`launcher/`) for shell-free images into the application image (`docs/adr/0004-tools-image.md`); the tool runs inside the app image.
 - **deploy/helm**: chart adding the init container, volume and trainer Job.
 - **Injection into workloads:** lives in `mnemo-jvm-warden` (see below), not in this repo.
 

@@ -1,0 +1,3 @@
+# Offline workload injection
+
+Instead of running something in the cluster that rewrites pods, the injector is a function over the rendered manifests: YAML in, YAML out. It finds Deployments that opted in with annotations, wraps their launch so the wrapper can decide on the cache, and adds the trainer's resources next to them. It leaves a small marker holding the original launch, so running it again gives the same result and switching it off puts the original launch back. If anything is wrong, or something it owns was edited by hand, it stops and prints nothing, so the deploy fails instead of applying a half-changed stream.

@@ -18,6 +18,11 @@
 
   <dependencies>
     <dependency>
+      <groupId>org.yaml</groupId>
+      <artifactId>snakeyaml</artifactId>
+      <version>2.4</version>
+    </dependency>
+    <dependency>
       <groupId>io.github.baokhang83.mnemo</groupId>
       <artifactId>warmup-core</artifactId>
     </dependency>

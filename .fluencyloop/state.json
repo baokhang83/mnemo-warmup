@@ -1,11 +1,11 @@
 {
   "schema_version": "1",
-  "feature": "18-example-spring-boot-app-example-chart-and-a-kind-end-to-e",
-  "branch": "feature/18-example-spring-boot-app-example-chart-and-a-kind-end-to-e",
+  "feature": "55-implement-offline-workload-injection-and-reviewable-previ",
+  "branch": "feature/55-implement-offline-workload-injection-and-reviewable-previ",
   "stage": "build",
-  "last_session": "004-chart-publishing-classic-helm-repo-version-release",
-  "base_ref": "main",
+  "last_session": "010-verify-on-a-real-cluster-derive-the-tools-image-from-the",
+  "base_ref": "chore/disable-sigterm-e2e-test",
   "feature_dir": "",
-  "plan": "",
+  "plan": "v0-2-5-simplify-workload-adoption-with-offline-injection-clo",
   "updated": "2026-11-10"
 }

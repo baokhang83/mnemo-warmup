@@ -1,0 +1,3 @@
+#!/bin/sh
+# Helm post-renderer adapter; install mnemo-warmup on PATH.
+exec mnemo-warmup inject "$@"

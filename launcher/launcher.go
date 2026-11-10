@@ -55,6 +55,8 @@ func (l launcher) run(args []string) int {
 			return l.usage()
 		}
 		return l.execApp(cmd)
+	case "jar":
+		return l.jarTool(args[1:])
 	case "which-java":
 		if java := l.locator.find(""); java != "" {
 			fmt.Fprintln(l.stdout, java)
@@ -67,7 +69,7 @@ func (l launcher) run(args []string) int {
 }
 
 func (l launcher) usage() int {
-	fmt.Fprintln(l.stderr, "usage: mnemo-launcher install <dir> | fetch [options] | exec -- <command> [args...] | which-java")
+	fmt.Fprintln(l.stderr, "usage: mnemo-launcher install <dir> | fetch [options] | exec -- <command> [args...] | jar <args...> | which-java")
 	return 2
 }
 
@@ -113,6 +115,18 @@ func (l launcher) fetchFailed(strict bool, code int, why string) int {
 	}
 	l.note("%s; continuing without an archive", why)
 	return 0
+}
+
+// jarTool runs any other mnemo-warmup command (the trainer uses `train`) as
+// `java -jar mnemo-warmup.jar <args>`, replacing this process. There is no fallback: the command
+// is the work itself, so without a java it fails visibly.
+func (l launcher) jarTool(args []string) int {
+	java := l.locator.find("")
+	if java == "" {
+		l.note("no java found; run this inside the application image (Java 21+)")
+		return 127
+	}
+	return l.replaceWith(append([]string{java, "-jar", l.jar()}, args...))
 }
 
 // execApp replaces this process with the application. Replacing (not spawning) makes the JVM

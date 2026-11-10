@@ -216,3 +216,16 @@ func TestInstallReportsAFailure(t *testing.T) {
 		t.Fatalf("exit %d, want 1", got)
 	}
 }
+
+func TestJarToolReplacesTheProcessWithTheJar(t *testing.T) {
+	h := newHarness(t, true)
+	h.l.jarTool([]string{"train", "--store", "oci://r/x"})
+	want := []string{h.java, h.java, "-jar", "/tools/mnemo-warmup.jar", "train", "--store", "oci://r/x"}
+	if !reflect.DeepEqual(*h.execed, want) {
+		t.Fatalf("exec %q, want %q", *h.execed, want)
+	}
+	h = newHarness(t, false)
+	if got := h.l.jarTool([]string{"train"}); got != 127 {
+		t.Fatalf("exit %d, want 127 without java", got)
+	}
+}

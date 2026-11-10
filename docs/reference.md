@@ -6,10 +6,9 @@ with the README.
 
 ## Why
 
-The JVM can start much faster when it reuses an archive of already-loaded and linked
-classes. Depending on the application, startup improvements of 30-60% are commonly
-reported for **AppCDS** (JDK 13+) and **Project Leyden's AOT cache** (JDK 24+; single-step
-creation since JDK 25, JEP 514). Almost nobody runs them in production, because:
+The JVM can start faster when it reuses an archive of already-loaded and linked classes: **AppCDS** (JDK 13+) and
+**Project Leyden's AOT cache** (JDK 24+; single-step creation since JDK 25, JEP 514). How much faster depends on the
+application; this project's own (small) measurements are in the README. Using them in practice is awkward, because:
 
 1. **Training is a ceremony.** You unpack the JAR, run the app, exercise it, and stop it
    cleanly so the archive is written.

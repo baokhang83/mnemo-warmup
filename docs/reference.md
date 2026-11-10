@@ -269,7 +269,7 @@ longer matches. The manifest also stores the archive's size and SHA-256.
   as `io.github.baokhang83.mnemo:warmup-core`.
 
 Not there yet: a published Helm chart (use `deploy/helm/mnemo-warmup` from this repository), results on amd64, and
-more than one application (see the [roadmap](../README.md#roadmap)).
+more than one application (see the [project plan](PLAN.md)).
 
 ## Limitations
 

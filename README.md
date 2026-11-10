@@ -18,7 +18,7 @@ wrong, the pod simply starts the normal way.
 
 > **Status: alpha.** The whole chain is verified on a real kind cluster with JDK 21 (AppCDS) and JDK 25 (AOT). Not proven yet: amd64
 > runs, more than one application, private-registry login. The Helm chart is not published (use it from this repository), and
-> options and formats may still change. Details in [Limitations](#limitations) and the [roadmap](#roadmap).
+> options and formats may still change. Details in [Limitations](#limitations) and the [project plan](docs/PLAN.md).
 
 ## How it works
 
@@ -159,7 +159,7 @@ The pod always starts. It runs without the archive, and says why in its log:
 
 - [Reference](docs/reference.md): every command and option, the cache types, the manifest and fingerprint, the container image, the trainer and chart in detail.
 - [Example](examples/README.md): a Spring Boot app, an example chart, and `scripts/e2e-kind.sh`, which runs the whole chain on a kind cluster.
-- [Design decisions](docs/adr/) and the [project plan](docs/PLAN.md).
+- [Design decisions](docs/adr/) and the [project plan and roadmap](docs/PLAN.md).
 - Related: [`mnemo-jvm-warden`](https://github.com/baokhang83/mnemo-jvm-warden) resizes running pods in place; the planned integration is that warden injects the init containers (not built yet). `warmup-core` is on Maven Central (`io.github.baokhang83.mnemo:warmup-core`).
 
 ## Building from source
@@ -175,30 +175,6 @@ java -jar warmup-cli/target/mnemo-warmup.jar build --help
 
 The build produces a self-contained `warmup-cli/target/mnemo-warmup.jar`; the examples above
 call it as `mnemo-warmup`.
-
-## Roadmap
-
-**Phase 1: engine and CLI (v0.1.0, released)**
-- [x] Project skeleton, JDK detection and flag selection
-- [x] `cacheType` option with validation against the JDK
-- [x] Spring Boot fat-JAR extraction
-- [x] Training runner (`spring-refresh` and `http-probe` exit modes)
-- [x] Fingerprint and manifest
-- [x] `bench`: none vs AppCDS vs AOT
-
-**Phase 2: Kubernetes delivery (v0.2.0)**
-- [x] Decisions: archive store (OCI), training trigger (CronJob + Lease), run/exec model
-- [x] Archive store backend with `push`
-- [x] `fetch` (init container) and `run` (entrypoint)
-- [x] Tools image (JDK-free, runs inside the application image), checked end to end in Docker
-- [x] `train` command with a Kubernetes Lease, trainer CronJob and Helm chart (rendered, accepted by a real API server, and run in a kind cluster)
-- [x] Example Spring Boot app, tested on kind with JDK 21 (AppCDS) and JDK 25 (AOT) by `scripts/e2e-kind.sh`
-
-**Phase 3: automation (v0.3.0)**
-- [ ] Investigate which JVM flags invalidate an archive (multi-profile archives), metrics
-- [ ] Warden integration (implemented in the warden repo)
-
-Design decisions and their reasons are in [docs/PLAN.md](docs/PLAN.md) and [docs/adr/](docs/adr/).
 
 ## Contributing
 

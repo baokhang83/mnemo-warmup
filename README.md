@@ -84,8 +84,8 @@ What the setup below needs from your application and your cluster.
 
 ## Configure it on a cluster
 
-The Helm chart is part of the [v0.2.0 release](https://github.com/baokhang83/mnemo-warmup/releases/tag/v0.2.0); it is not published to a chart
-repository yet. Pick the release that matches the image tag in the chart's defaults.
+The chart is published as a Helm repository, and its version is the release version: chart 0.2.0 deploys the 0.2.0 tools image
+([release notes](https://github.com/baokhang83/mnemo-warmup/releases/tag/v0.2.0)).
 
 ### 1. Fix the JARs when you build the image
 
@@ -103,20 +103,17 @@ Build one image per JDK you run: the image's JDK decides the cache type (AppCDS 
 
 ### 2. Add the chart to your application's chart
 
-The layout you want is two sibling directories, `your-chart/` and `mnemo-warmup/`:
-
-
 ```bash
-git clone --depth 1 --branch v0.2.0 https://github.com/baokhang83/mnemo-warmup.git mnemo-warmup-src
-cp -R mnemo-warmup-src/deploy/helm/mnemo-warmup ./mnemo-warmup      # beside your-chart/; its defaults point at the 0.2.0 tools image
+helm repo add mnemo-warmup https://baokhang83.github.io/mnemo-warmup/
+helm search repo mnemo-warmup              # mnemo-warmup/mnemo-warmup  0.2.0
 ```
 
 ```yaml
 # your-chart/Chart.yaml
 dependencies:
   - name: mnemo-warmup
-    version: 0.1.0
-    repository: file://../mnemo-warmup
+    version: 0.2.0
+    repository: https://baokhang83.github.io/mnemo-warmup/
     alias: warmup
 ```
 
@@ -279,7 +276,6 @@ bundled example); an anonymous plain-HTTP `registry:2`. CI runs the whole chain 
 - The application image needs **Java 21+ and `/bin/sh`**, and the JARs must be fixed at build time (step 1).
 - The first archive appears after the trainer's first run (up to one schedule interval, unless you start a job by hand).
 - Registry login supports Docker-config basic and token auth; cloud credential helpers and workload identity are not implemented.
-- The Helm chart is not published; use it from this repository.
 
 ## More
 

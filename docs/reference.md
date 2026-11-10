@@ -171,7 +171,7 @@ ENTRYPOINT ["/opt/mnemo-warmup/bin/mnemo-warmup-exec"]
 CMD ["java", "-jar", "/app/app.jar"]
 ```
 
-or copy it at deploy time with an init container (what the Helm chart will do):
+or copy it at deploy time with an init container (what the Helm chart does):
 
 ```yaml
 initContainers:
@@ -211,7 +211,7 @@ snippet, and [`deploy/helm/tests/parent`](../deploy/helm/tests/parent) is a work
 
 ```yaml
 dependencies:
-  - { name: mnemo-warmup, version: 0.1.0, repository: "file://path/to/mnemo-warmup/deploy/helm/mnemo-warmup", alias: warmup }
+  - { name: mnemo-warmup, version: 0.2.0, repository: "https://baokhang83.github.io/mnemo-warmup/", alias: warmup }
 ```
 
 The values that must match your Deployment are `app.image`, `app.jar`, `app.jvmArgs` and `app.env`: an archive is only
@@ -295,7 +295,7 @@ more than one application (see the [project plan](PLAN.md)).
   published for each release tag. It is the only way the CLI is distributed; build from source to run it elsewhere.
 - **As a library:** `warmup-core` is on Maven Central (`io.github.baokhang83.mnemo:warmup-core`), for example for
   mnemo-jvm-warden.
-- **The Helm chart:** `deploy/helm/mnemo-warmup` in this repository (not published to a chart repository yet).
+- **The Helm chart:** a Helm repository, `helm repo add mnemo-warmup https://baokhang83.github.io/mnemo-warmup/`; the chart version is the release version.
 
 `mnemo-warmup --version` prints the version of the jar you run.
 

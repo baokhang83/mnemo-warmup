@@ -12,18 +12,24 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 JDKS=("$@"); [ ${#JDKS[@]} -gt 0 ] || JDKS=(21 25)
-TAG=mnemo-warmup-tools:verify
-NET=mw-verify-net
-REG=mw-verify-registry
+# Every resource name carries a per-run id, and only what this run created is removed, so the script is
+# safe on a developer machine (other volumes, a concurrent run) and in CI.
+RUN="$$-$(date +%s)"
+TAG="mnemo-warmup-tools:verify-$RUN"
+NET="mw-verify-$RUN-net"
+REG="mw-verify-$RUN-registry"
+VOLUMES=()
 failures=0
+
+# NOTE: names are registered in this shell, never inside $(...) (a subshell would lose the registration).
 
 cleanup() {
   docker rm -f "$REG" >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
-  for v in $(docker volume ls -q --filter name=mw-verify-); do docker volume rm -f "$v" >/dev/null 2>&1 || true; done
+  for v in ${VOLUMES[@]+"${VOLUMES[@]}"}; do docker volume rm -f "$v" >/dev/null 2>&1 || true; done
+  docker image rm -f "$TAG" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
-cleanup
 
 ok()   { echo "  ok:   $1"; }
 fail() { echo "  FAIL: $1"; failures=$((failures + 1)); }
@@ -38,7 +44,8 @@ for n in "${JDKS[@]}"; do
   echo "== JDK $n"
   app=eclipse-temurin:$n-jre
   jdk=eclipse-temurin:$n-jdk
-  tools=mw-verify-tools-$n; appvol=mw-verify-app-$n; work=mw-verify-work-$n; cache=mw-verify-cache-$n
+  tools=mw-verify-$RUN-tools-$n; appvol=mw-verify-$RUN-app-$n; work=mw-verify-$RUN-work-$n; cache=mw-verify-$RUN-cache-$n
+  VOLUMES+=("$tools" "$appvol" "$work" "$cache")
   store=oci://$REG:5000/mnemo/verify-$n
 
   # init-container pattern: copy the tools into a shared volume
@@ -85,12 +92,19 @@ for n in "${JDKS[@]}"; do
 done
 
 echo "== launcher guards"
-docker run --rm -v mw-verify-tools-guard:/mnemo-tools "$TAG" cp -a /opt/mnemo-warmup/. /mnemo-tools/
+guard=mw-verify-$RUN-tools-guard
+VOLUMES+=("$guard")
+docker run --rm -v "$guard":/mnemo-tools "$TAG" cp -a /opt/mnemo-warmup/. /mnemo-tools/
 old=eclipse-temurin:17-jre
-if docker run --rm -v mw-verify-tools-guard:/mnemo-tools:ro "$old" /mnemo-tools/bin/mnemo-warmup fetch --strict >/dev/null 2>&1; then
+if docker run --rm -v "$guard":/mnemo-tools:ro "$old" /mnemo-tools/bin/mnemo-warmup fetch --strict >/dev/null 2>&1; then
   ok "fetch skips itself with exit 0 on Java 17"; else fail "fetch on Java 17 must exit 0"; fi
-printed=$(docker run --rm -v mw-verify-tools-guard:/mnemo-tools:ro "$old" /mnemo-tools/bin/mnemo-warmup run --print -- java -jar x.jar 2>/dev/null) || true
+printed=$(docker run --rm -v "$guard":/mnemo-tools:ro "$old" /mnemo-tools/bin/mnemo-warmup run --print -- java -jar x.jar 2>/dev/null) || true
 if [ -z "$printed" ]; then ok "run prints nothing on Java 17, so the wrapper keeps the original command"; else fail "run must print nothing on Java 17"; fi
+# direct run (no --print): the original command must still start, unchanged, on an old Java
+direct=$(docker run --rm -v "$guard":/mnemo-tools:ro "$old" /mnemo-tools/bin/mnemo-warmup run --cache-dir /nowhere -- java -version 2>&1) || true
+if grep -q 'openjdk version "17' <<<"$direct"; then ok "run (no --print) starts the original command on Java 17"; else fail "run on Java 17 must start the command"; fi
+direct=$(docker run --rm -v "$guard":/mnemo-tools:ro "$old" /mnemo-tools/bin/mnemo-warmup run --spawn -- java -version 2>&1) || true
+if grep -q 'openjdk version "17' <<<"$direct"; then ok "run --spawn starts the original command on Java 17"; else fail "run --spawn on Java 17 must start the command"; fi
 if docker run --rm "$TAG" /opt/mnemo-warmup/bin/mnemo-warmup fetch >/dev/null 2>&1; then
   ok "fetch exits 0 when the image has no java"; else fail "fetch without java must exit 0"; fi
 

@@ -243,13 +243,16 @@ initContainers:
     volumeMounts: [{ name: mnemo-tools, mountPath: /mnemo-tools }]
   - name: mnemo-warmup-fetch
     image: my-app:1.0            # the application image itself
-    command: ["java", "-jar", "/mnemo-tools/mnemo-warmup.jar", "fetch", "--jar", "/app/app.jar",
+    command: ["/mnemo-tools/bin/mnemo-warmup", "fetch", "--jar", "/app/app.jar",
               "--store", "oci://registry.example.com/team/warmup", "--out", "/mnemo-cache"]
     volumeMounts: [{ name: mnemo-tools, mountPath: /mnemo-tools }, { name: mnemo-cache, mountPath: /mnemo-cache }]
 ```
 
-If the image has no Java, or one older than 21, `fetch` and `run` through the launcher skip themselves
-and exit 0, so the pod still starts. Build it locally with
+If the image has no Java, or one older than 21, the launcher makes `fetch` skip itself with exit 0 and
+`run` start your original command unchanged, so the pod still starts. That safety net needs `/bin/sh`.
+**Shell-free (distroless) application images** have no launcher: call
+`java -jar /mnemo-tools/mnemo-warmup.jar ...` directly, which requires Java 21+ in the image. On an
+older Java that init container would fail and block the pod, so do not enable it there. Build it locally with
 `docker build -f image/Dockerfile -t mnemo-warmup-tools .`, and check the whole chain in Docker with
 `scripts/verify-image.sh` (a local registry, JDK 21 with AppCDS and JDK 25 with AOT).
 See [ADR 0004](docs/adr/0004-tools-image.md).

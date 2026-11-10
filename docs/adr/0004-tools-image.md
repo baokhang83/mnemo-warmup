@@ -17,13 +17,13 @@ bin/mnemo-warmup-exec}`. The tool always runs **inside the application image**:
 
 - **Copy at deploy time:** an init container based on the tools image runs
   `cp -a /opt/mnemo-warmup/. /mnemo-tools/` into a shared `emptyDir`. The `fetch` init container and the
-  trainer then use the *application image* with `command: [java, -jar, /mnemo-tools/mnemo-warmup.jar, ...]`
-  (no shell needed), and the app container uses `/mnemo-tools/bin/mnemo-warmup-exec`.
+  trainer then use the *application image* with `command: [/mnemo-tools/bin/mnemo-warmup, fetch, ...]`,
+  and the app container uses `/mnemo-tools/bin/mnemo-warmup-exec`.
 - **Bake in:** `COPY --from=ghcr.io/baokhang83/mnemo-warmup-tools:<version> /opt/mnemo-warmup /opt/mnemo-warmup`.
 
 `bin/mnemo-warmup` is a launcher that runs the jar with the image's own `java`. If the image has no Java
-or one older than 21 (the CLI needs 21+), `fetch` and `run` skip themselves with exit 0 (§3), other
-commands fail. Per-JDK image variants are not needed, because the JDK is the application's.
+or one older than 21 (the CLI needs 21+), the launcher keeps the pod starting (§3): `fetch` exits 0,
+`run --print` prints nothing, and `run [--spawn] -- cmd` execs `cmd` unchanged; other commands fail. Per-JDK image variants are not needed, because the JDK is the application's.
 
 `scripts/verify-image.sh` checks the whole chain in Docker with a local registry on JDK 21 (AppCDS) and
 25 (AOT), and runs in CI (`image.yml`). Tags publish the image to GHCR.
@@ -37,6 +37,7 @@ commands fail. Per-JDK image variants are not needed, because the JDK is the app
 ## Consequences
 
 - The application image needs Java 21+ for the tool to run in it. With an older Java the cache is skipped.
-- Distroless application images have no shell: use `java -jar /mnemo-tools/mnemo-warmup.jar run --spawn -- ...`
-  as the entrypoint instead of the exec wrapper (keeps a second JVM resident).
+- Distroless application images have no shell, so no launcher and no fallback for an old Java: call
+  `java -jar /mnemo-tools/mnemo-warmup.jar ...` directly (`run --spawn` as the entrypoint, which keeps a second
+  JVM resident). That requires Java 21+ in the image; with an older Java the init container would fail and block the pod.
 - The Helm chart (#17) uses the copy-at-deploy pattern and must run the trainer, `fetch` and the app from the same image.

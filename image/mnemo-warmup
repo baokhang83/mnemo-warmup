@@ -1,24 +1,50 @@
 #!/bin/sh
 # Launcher: runs the mnemo-warmup CLI with the `java` of the image this is executed in.
 #
-# Needs Java 21+ in that image. With an older Java, `fetch` and `run` skip themselves and exit 0
-# (an init container or entrypoint wrapper must never stop the application over an optimisation);
-# any other command fails with exit 2.
+# Needs Java 21+ in that image. Without it the tool cannot run, and an optimisation must never stop
+# the application, so:
+#   fetch                 exits 0 (nothing fetched)
+#   run --print -- ...    exits 0 with no output (the exec wrapper then keeps the original command)
+#   run [--spawn] -- ...  starts the original command unchanged
+#   anything else         fails (exit 2 for an old Java, 127 for no Java)
 
 dir=$(cd "$(dirname "$0")" && pwd)
 
+# skip <exit code for other commands> <message> <original arguments...>
+skip() {
+  code=$1
+  echo "mnemo-warmup: $2; skipping" >&2
+  shift 2
+  case "${1:-}" in
+    fetch)
+      exit 0
+      ;;
+    run)
+      shift
+      print=0
+      while [ $# -gt 0 ] && [ "$1" != "--" ]; do
+        [ "$1" = "--print" ] && print=1
+        shift
+      done
+      [ "$print" = 1 ] && exit 0
+      if [ "${1:-}" = "--" ] && [ $# -gt 1 ]; then
+        shift
+        exec "$@"
+      fi
+      exit 0
+      ;;
+  esac
+  exit "$code"
+}
+
 if ! command -v java >/dev/null 2>&1; then
-  echo "mnemo-warmup: no 'java' on PATH; run this inside the application image (Java 21+)" >&2
-  case "$1" in fetch | run) exit 0 ;; esac
-  exit 127
+  skip 127 "no 'java' on PATH; run this inside the application image (Java 21+)" "$@"
 fi
 
 # "Picked up JAVA_TOOL_OPTIONS" can come first on stderr, so look for the version line itself.
 major=$(java -version 2>&1 | sed -n 's/.* version "\([0-9]*\).*/\1/p' | head -n 1)
 if [ -z "$major" ] || [ "$major" -lt 21 ]; then
-  echo "mnemo-warmup: needs Java 21+ in this image (found ${major:-unknown}); skipping" >&2
-  case "$1" in fetch | run) exit 0 ;; esac
-  exit 2
+  skip 2 "needs Java 21+ in this image (found ${major:-unknown})" "$@"
 fi
 
 exec java -jar "$dir/../mnemo-warmup.jar" "$@"

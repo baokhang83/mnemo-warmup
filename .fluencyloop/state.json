@@ -3,7 +3,7 @@
   "feature": "16-tools-image-jdk-free-container-image-with-the-cli-launche",
   "branch": "feature/16-tools-image-jdk-free-container-image-with-the-cli-launche",
   "stage": "build",
-  "last_session": "001-tools-image-launcher-guards-image-workflow-and-docker-en",
+  "last_session": "002-address-review-launcher-run-fallback-readme-init-example",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

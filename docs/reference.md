@@ -272,8 +272,8 @@ more than one application (see the [project plan](PLAN.md)).
 
 ## Limitations
 
-- **Tested on arm64 only so far** (Apple silicon, Docker, kind). The code is not architecture specific and the image is built
-  for amd64 as well, but no amd64 run has been done.
+- **Tested on amd64 and arm64:** CI runs on Linux amd64 (the whole chain on a kind cluster, JDK 21 and 25); local runs were on arm64
+  (Apple silicon, Docker, kind).
 - **Linux and macOS only.** Stopping the app with SIGTERM is what makes the JVM write the
   archive; Windows kills the process instead.
 - **AOT needs JDK 25+.** JDK 24 has the AOT cache but a two-step flow that is not

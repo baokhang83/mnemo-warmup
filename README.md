@@ -19,12 +19,19 @@ Built for services whose pods start often: frequent deployments, autoscaling sca
 <img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-yellow">
 <img alt="Java 21+" src="https://img.shields.io/badge/java-21%2B-informational">
 
+<p>
+<a href="#try-the-example">Try the example</a> &middot;
+<a href="#configure-it-on-a-cluster">Configure it on a cluster</a> &middot;
+<a href="docs/reference.md">Reference</a>
+</p>
+
 </div>
 
 ## What you get
 
-- **Faster pod starts, without touching your application.** Your code and build stay as they are. Pods start from a ready-made JVM archive instead of
-  loading and linking every class from scratch.
+- **A shorter JVM start-up, with no application source changes.** It integrates through your image build and your Helm chart. Pods start from a
+  ready-made JVM archive instead of loading and linking every class from scratch; whether that shortens pod readiness in your cluster is something to
+  [measure](#measure-the-benefit).
 - **Your pods keep starting, whatever happens to the cache.** If the archive is missing, outdated or the registry is unreachable, the pod starts exactly
   as it does today, and its log says why.
 - **Set it up once.** When your image or JVM options change, the trainer builds a fresh archive on its own and replaces damaged entries; nothing to
@@ -46,6 +53,20 @@ Built for services whose pods start often: frequent deployments, autoscaling sca
 - If looking up or validating the archive fails, the pod starts without it and logs why. Deployment problems are different, see
   [What can still stop a pod](#what-can-still-stop-a-pod).
 
+## Try the example
+
+Before changing your own deployment, run the bundled one: a small Spring Boot application, an example chart, and a script that does everything on a
+throw-away [kind](https://kind.sigs.k8s.io/) cluster, for JDK 21 (AppCDS) or JDK 25 (AOT):
+
+```bash
+git clone --depth 1 --branch v0.2.0 https://github.com/baokhang83/mnemo-warmup.git mnemo-warmup-src
+cd mnemo-warmup-src
+scripts/e2e-kind.sh 21        # needs docker, kind, kubectl and helm; builds the images, creates and deletes its own cluster
+```
+
+It starts the application without an archive, trains one, restarts the pods onto it, and then changes a JVM option to show the fallback; it takes several
+minutes. Read [`examples/`](examples/README.md) to see how the pieces fit before you copy them.
+
 ## Requirements
 
 What the setup below needs from your application and your cluster.
@@ -58,7 +79,7 @@ What the setup below needs from your application and your cluster.
 - **Registry:** an OCI registry (the OCI distribution API) that your cluster can reach and that accepts **Basic or Bearer-token** login from a
   Docker-config Secret, with **tag immutability off** for the archive repository. Cloud credential helpers and workload identity (for example
   ECR with IAM roles) are not supported yet. Archives can reach hundreds of MB, so check the registry's blob-size limit.
-- **Kubernetes:** `batch/v1` CronJobs (1.21 or newer) and the `coordination.k8s.io/v1` Lease API; tested only on 1.35.
+- **Kubernetes:** `batch/v1` CronJobs (1.21 or newer) and the `coordination.k8s.io/v1` Lease API.
 - **Your application's startup runs once more, for real, during training** (see [What it costs](#what-it-costs)).
 
 ## Configure it on a cluster
@@ -82,9 +103,12 @@ Build one image per JDK you run: the image's JDK decides the cache type (AppCDS 
 
 ### 2. Add the chart to your application's chart
 
+The layout you want is two sibling directories, `your-chart/` and `mnemo-warmup/`:
+
+
 ```bash
-git clone --depth 1 --branch v0.2.0 https://github.com/baokhang83/mnemo-warmup.git
-cp -R mnemo-warmup/deploy/helm/mnemo-warmup ./mnemo-warmup      # next to your chart; its defaults point at the 0.2.0 tools image
+git clone --depth 1 --branch v0.2.0 https://github.com/baokhang83/mnemo-warmup.git mnemo-warmup-src
+cp -R mnemo-warmup-src/deploy/helm/mnemo-warmup ./mnemo-warmup      # beside your-chart/; its defaults point at the 0.2.0 tools image
 ```
 
 ```yaml
@@ -96,16 +120,19 @@ dependencies:
     alias: warmup
 ```
 
-### 3. Create the namespace and the registry Secrets
+### 3. Create the namespace and the Secrets
 
-The Secrets must exist in the namespace you deploy to, before you deploy (a missing Secret keeps the pod from starting). Skip them only for an
-anonymous registry. The pull Secret needs read access to the archive repository, the push Secret read and write:
+The Secrets must exist in the namespace you deploy to, before you deploy (a missing Secret keeps the pod from starting). Two of them let the tool
+talk to the **archive** registry (skip them only for an anonymous registry): the pull Secret needs read access to the archive repository, the push
+Secret read and write. They are mounted into containers and do **not** authenticate image pulls, which the kubelet does with `imagePullSecrets`.
+If your application image is in a private registry, create an image-pull Secret as well (it may hold the same credentials):
 
 ```bash
 export NS=my-namespace
 kubectl create namespace $NS
 kubectl -n $NS create secret docker-registry warmup-pull --docker-server=registry.example.com --docker-username=... --docker-password=...
 kubectl -n $NS create secret docker-registry warmup-push --docker-server=registry.example.com --docker-username=... --docker-password=...
+kubectl -n $NS create secret docker-registry regcred --docker-server=registry.example.com --docker-username=... --docker-password=...   # image pulls
 ```
 
 ### 4. Set the values
@@ -115,6 +142,7 @@ kubectl -n $NS create secret docker-registry warmup-push --docker-server=registr
 warmup:
   app:
     image: { repository: registry.example.com/team/my-app, tag: "1.4.2" }  # the SAME image your Deployment runs
+    imagePullSecrets: [{ name: regcred }]   # for that image if it is private; the trainer uses it, and so does the Deployment below
     jar: /app/app.jar
     jvmArgs: ["-Xmx512m"]          # the heap/GC options your app really runs with; the Deployment's java command is built from this list
   store:
@@ -137,6 +165,10 @@ The helpers print list items, so put each `include` **inside the list you alread
 spec:
   template:
     spec:
+      {{- with .Values.warmup.app.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       volumes:
         # ...your own volumes...
         {{- include "mnemo-warmup.volumes" .Values.warmup | nindent 8 }}
@@ -240,11 +272,12 @@ using the cache:
 
 ## Current scope
 
+**Tested with:** amd64 (in CI) and arm64 (locally); Kubernetes 1.35 on kind; JDK 21 (AppCDS) and JDK 25 (AOT); one Spring Boot 3.5 application (the
+bundled example); an anonymous plain-HTTP `registry:2`. CI runs the whole chain on a real cluster. More applications, registries and architectures are being added.
+
 - Alpha: command-line options, chart values and the manifest format may still change.
-- Verified in CI on a real Kubernetes cluster for JDK 21 (AppCDS) and JDK 25 (AOT); more applications and architectures are being added.
-- The tool needs **Java 21+ and `/bin/sh` in your application image**, and the JARs must be fixed at build time (step 1).
+- The application image needs **Java 21+ and `/bin/sh`**, and the JARs must be fixed at build time (step 1).
 - The first archive appears after the trainer's first run (up to one schedule interval, unless you start a job by hand).
-- Tested on **arm64 only**, with one small Spring Boot application, on JDK 21 and 25. Several trainers racing and private-registry login are untested.
 - Registry login supports Docker-config basic and token auth; cloud credential helpers and workload identity are not implemented.
 - The Helm chart is not published; use it from this repository.
 

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>JvmFlags.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">JvmFlags.java</span></div><h1>JvmFlags.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.regex.Pattern;
+
+/**
+ * Picks the JVM options that can make an archive unusable (heap size, GC, pointer layout) out of
+ * everything passed to the JVM.
+ *
+ * &lt;p&gt;This is a &lt;em&gt;conservative&lt;/em&gt; set: it errs towards including a flag. Which flags really
+ * invalidate an archive is being measured in issue #20; flags will be dropped from here only
+ * once that is shown.
+ */
+final class JvmFlags {
+
+<span class="fc" id="L19">    private static final List&lt;Pattern&gt; RELEVANT = List.of(</span>
+<span class="fc" id="L20">            Pattern.compile(&quot;-Xm[sx]\\S+&quot;),</span>
+<span class="fc" id="L21">            Pattern.compile(&quot;-XX:[+-]Use\\w*GC&quot;),</span>
+<span class="fc" id="L22">            Pattern.compile(&quot;-XX:(Max|Min|Initial)RAMPercentage=\\S+&quot;),</span>
+<span class="fc" id="L23">            Pattern.compile(&quot;-XX:(MaxHeapSize|MinHeapSize|InitialHeapSize|SoftMaxHeapSize)=\\S+&quot;),</span>
+<span class="fc" id="L24">            Pattern.compile(&quot;-XX:(ObjectAlignmentInBytes|CompressedClassSpaceSize)=\\S+&quot;),</span>
+<span class="fc" id="L25">            Pattern.compile(&quot;-XX:[+-]UseCompressed(Oops|ClassPointers)&quot;),</span>
+<span class="fc" id="L26">            Pattern.compile(&quot;-XX:[+-]UseCompactObjectHeaders&quot;));</span>
+
+    private JvmFlags() {}
+
+    /**
+     * Collects the relevant options from {@code jvmArgs} followed by the option strings the JVM
+     * also reads from the environment ({@code JAVA_TOOL_OPTIONS}, {@code JDK_JAVA_OPTIONS}).
+     * If an option is given more than once, the last occurrence wins, as in the JVM.
+     * The result is sorted so it does not depend on the order of the command line.
+     *
+     * &lt;p&gt;Environment values are split on whitespace; quoting is not interpreted.
+     */
+    static List&lt;String&gt; relevant(List&lt;String&gt; jvmArgs, Map&lt;String, String&gt; environment) {
+<span class="fc" id="L39">        List&lt;String&gt; all = new ArrayList&lt;&gt;(jvmArgs);</span>
+<span class="fc bfc" id="L40" title="All 2 branches covered.">        for (String variable : new String[] {&quot;JDK_JAVA_OPTIONS&quot;, &quot;JAVA_TOOL_OPTIONS&quot;}) {</span>
+<span class="fc" id="L41">            String value = environment.get(variable);</span>
+<span class="pc bpc" id="L42" title="1 of 4 branches missed.">            if (value != null &amp;&amp; !value.isBlank()) {</span>
+<span class="fc" id="L43">                all.addAll(List.of(value.trim().split(&quot;\\s+&quot;)));</span>
+            }
+        }
+<span class="fc" id="L46">        Map&lt;String, String&gt; byKey = new TreeMap&lt;&gt;();</span>
+<span class="fc bfc" id="L47" title="All 2 branches covered.">        for (String arg : all) {</span>
+<span class="fc bfc" id="L48" title="All 2 branches covered.">            if (RELEVANT.stream().anyMatch(p -&gt; p.matcher(arg).matches())) {</span>
+<span class="fc" id="L49">                byKey.put(key(arg), arg);</span>
+            }
+<span class="fc" id="L51">        }</span>
+<span class="fc" id="L52">        return List.copyOf(byKey.values());</span>
+    }
+
+    /** {@code -Xmx512m -&gt; -Xmx}, {@code -XX:+UseG1GC -&gt; -XX:UseG1GC}, {@code -XX:Foo=1 -&gt; -XX:Foo}. */
+    private static String key(String arg) {
+<span class="fc bfc" id="L57" title="All 4 branches covered.">        if (arg.startsWith(&quot;-Xmx&quot;) || arg.startsWith(&quot;-Xms&quot;)) {</span>
+<span class="fc" id="L58">            return arg.substring(0, 4);</span>
+        }
+<span class="fc" id="L60">        String name = arg.substring(&quot;-XX:&quot;.length());</span>
+<span class="fc bfc" id="L61" title="All 4 branches covered.">        if (name.startsWith(&quot;+&quot;) || name.startsWith(&quot;-&quot;)) {</span>
+<span class="fc" id="L62">            return &quot;-XX:&quot; + name.substring(1);</span>
+        }
+<span class="fc" id="L64">        int eq = name.indexOf('=');</span>
+<span class="pc bpc" id="L65" title="1 of 2 branches missed.">        return &quot;-XX:&quot; + (eq &lt; 0 ? name : name.substring(0, eq));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

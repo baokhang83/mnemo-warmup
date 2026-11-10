@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>BenchReport.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">BenchReport.java</span></div><h1>BenchReport.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+
+/** Turns the samples of each variant into a Markdown table. The first variant is the baseline. */
+public final class BenchReport {
+
+    /** All samples of one variant, in the order measured. */
+    public record Entry(String variant, List&lt;StartupBench.Sample&gt; samples) {
+<span class="fc" id="L14">        public Entry {</span>
+<span class="fc bfc" id="L15" title="All 2 branches covered.">            if (samples.isEmpty()) {</span>
+<span class="fc" id="L16">                throw new IllegalArgumentException(&quot;No samples for &quot; + variant);</span>
+            }
+<span class="fc" id="L18">            samples = List.copyOf(samples);</span>
+<span class="fc" id="L19">        }</span>
+
+        /** The middle value, so one slow or fast run does not move it. Even counts average the two middle values. */
+        Duration medianStartup() {
+<span class="fc" id="L23">            List&lt;Long&gt; millis = samples.stream().map(s -&gt; s.startup().toNanos()).sorted().toList();</span>
+<span class="fc" id="L24">            int n = millis.size();</span>
+<span class="fc bfc" id="L25" title="All 2 branches covered.">            long nanos = n % 2 == 1 ? millis.get(n / 2) : (millis.get(n / 2 - 1) + millis.get(n / 2)) / 2;</span>
+<span class="fc" id="L26">            return Duration.ofNanos(nanos);</span>
+        }
+
+        long medianRssKb() {
+<span class="fc" id="L30">            List&lt;Long&gt; values = samples.stream().map(StartupBench.Sample::peakRssKb).sorted().toList();</span>
+<span class="fc" id="L31">            int n = values.size();</span>
+<span class="fc bfc" id="L32" title="All 2 branches covered.">            return n % 2 == 1 ? values.get(n / 2) : (values.get(n / 2 - 1) + values.get(n / 2)) / 2;</span>
+        }
+
+        Duration min() {
+<span class="fc" id="L36">            return samples.stream().map(StartupBench.Sample::startup).min(Comparator.naturalOrder()).orElseThrow();</span>
+        }
+
+        Duration max() {
+<span class="fc" id="L40">            return samples.stream().map(StartupBench.Sample::startup).max(Comparator.naturalOrder()).orElseThrow();</span>
+        }
+    }
+
+    private BenchReport() {}
+
+    public static String markdown(List&lt;Entry&gt; entries) {
+<span class="fc bfc" id="L47" title="All 2 branches covered.">        if (entries.isEmpty()) {</span>
+<span class="fc" id="L48">            throw new IllegalArgumentException(&quot;Nothing to report&quot;);</span>
+        }
+<span class="fc" id="L50">        double baseline = entries.get(0).medianStartup().toNanos();</span>
+<span class="fc" id="L51">        List&lt;String&gt; lines = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L52">        lines.add(&quot;| Variant | Startup median (ms) | Min-max (ms) | Saved vs &quot; + entries.get(0).variant() + &quot; | RSS (MB) |&quot;);</span>
+<span class="fc" id="L53">        lines.add(&quot;|---|---:|---:|---:|---:|&quot;);</span>
+<span class="fc bfc" id="L54" title="All 2 branches covered.">        for (int i = 0; i &lt; entries.size(); i++) {</span>
+<span class="fc" id="L55">            Entry e = entries.get(i);</span>
+<span class="fc" id="L56">            double median = e.medianStartup().toNanos();</span>
+<span class="fc bfc" id="L57" title="All 2 branches covered.">            String saved = i == 0 ? &quot;-&quot; : String.format(Locale.ROOT, &quot;%.1f%%&quot;, (baseline - median) / baseline * 100);</span>
+<span class="fc" id="L58">            long rss = e.medianRssKb();</span>
+<span class="fc" id="L59">            lines.add(String.format(Locale.ROOT, &quot;| %s | %.0f | %.0f-%.0f | %s | %s |&quot;,</span>
+<span class="fc" id="L60">                    e.variant(), median / 1e6, e.min().toNanos() / 1e6, e.max().toNanos() / 1e6, saved,</span>
+<span class="fc bfc" id="L61" title="All 2 branches covered.">                    rss == 0 ? &quot;n/a&quot; : String.format(Locale.ROOT, &quot;%.0f&quot;, rss / 1024.0)));</span>
+        }
+<span class="fc" id="L63">        return String.join(&quot;\n&quot;, lines);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

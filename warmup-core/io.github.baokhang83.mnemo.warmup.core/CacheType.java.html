@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CacheType.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">CacheType.java</span></div><h1>CacheType.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.util.Locale;
+
+/**
+ * What the user asked for. {@link CacheStrategy} is what that request resolves to for a
+ * concrete JDK.
+ *
+ * &lt;ul&gt;
+ *   &lt;li&gt;{@link #AUTO}: AOT on JDK 25+, AppCDS otherwise.&lt;/li&gt;
+ *   &lt;li&gt;{@link #APPCDS}: always AppCDS.&lt;/li&gt;
+ *   &lt;li&gt;{@link #AOT}: always the Leyden AOT cache; an error on JDKs older than 25.&lt;/li&gt;
+ * &lt;/ul&gt;
+ */
+<span class="fc" id="L15">public enum CacheType {</span>
+<span class="fc" id="L16">    AUTO,</span>
+<span class="fc" id="L17">    APPCDS,</span>
+<span class="fc" id="L18">    AOT;</span>
+
+    /** Parses {@code auto}, {@code appcds} or {@code aot}, ignoring case. */
+    public static CacheType parse(String value) {
+        try {
+<span class="fc" id="L23">            return valueOf(value.trim().toUpperCase(Locale.ROOT));</span>
+<span class="fc" id="L24">        } catch (IllegalArgumentException | NullPointerException e) {</span>
+<span class="fc" id="L25">            throw new IllegalArgumentException(</span>
+                    &quot;Unknown cache type '&quot; + value + &quot;'; expected one of: auto, appcds, aot&quot;);
+        }
+    }
+
+    /**
+     * Resolves this request for the given JDK feature version.
+     *
+     * @throws IllegalArgumentException if the JDK cannot provide the requested cache
+     */
+    public CacheStrategy resolve(int jdkFeatureVersion) {
+<span class="fc bfc" id="L36" title="All 3 branches covered.">        return switch (this) {</span>
+<span class="fc" id="L37">            case AUTO -&gt; CacheStrategy.forFeatureVersion(jdkFeatureVersion);</span>
+            case APPCDS -&gt; {
+<span class="fc" id="L39">                requireMinimum(jdkFeatureVersion, CacheStrategy.APP_CDS_MIN_FEATURE, &quot;AppCDS&quot;);</span>
+<span class="fc" id="L40">                yield CacheStrategy.APP_CDS;</span>
+            }
+            case AOT -&gt; {
+<span class="fc" id="L43">                requireMinimum(jdkFeatureVersion, CacheStrategy.LEYDEN_MIN_FEATURE, &quot;The AOT cache&quot;);</span>
+<span class="fc" id="L44">                yield CacheStrategy.LEYDEN_AOT;</span>
+            }
+        };
+    }
+
+    public CacheStrategy resolve(JdkInfo jdk) {
+<span class="fc" id="L50">        return resolve(jdk.featureVersion());</span>
+    }
+
+    private static void requireMinimum(int actual, int minimum, String what) {
+<span class="fc bfc" id="L54" title="All 2 branches covered.">        if (actual &lt; minimum) {</span>
+<span class="fc" id="L55">            throw new IllegalArgumentException(</span>
+                    what + &quot; requires JDK &quot; + minimum + &quot;+ but the target is JDK &quot; + actual
+                            + &quot;; use cache type 'auto' or 'appcds' instead&quot;);
+        }
+<span class="fc" id="L59">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

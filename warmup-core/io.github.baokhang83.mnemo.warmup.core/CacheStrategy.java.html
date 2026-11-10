@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CacheStrategy.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">CacheStrategy.java</span></div><h1>CacheStrategy.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+/**
+ * Which archive mechanism to use for a given target JDK.
+ *
+ * &lt;ul&gt;
+ *   &lt;li&gt;{@link #APP_CDS}: dynamic AppCDS archive ({@code .jsa}) via {@code -XX:ArchiveClassesAtExit}.&lt;/li&gt;
+ *   &lt;li&gt;{@link #LEYDEN_AOT}: Project Leyden AOT cache ({@code .aot}) via {@code -XX:AOTCacheOutput}
+ *       (single-step ergonomics, JEP 514, JDK 25+).&lt;/li&gt;
+ * &lt;/ul&gt;
+ */
+<span class="fc" id="L12">public enum CacheStrategy {</span>
+<span class="fc" id="L13">    APP_CDS(&quot;jsa&quot;),</span>
+<span class="fc" id="L14">    LEYDEN_AOT(&quot;aot&quot;);</span>
+
+    /**
+     * First JDK feature release with single-step {@code -XX:AOTCacheOutput} (JEP 514).
+     * JDK 24 has the AOT cache but needs a two-step record/create flow, so it uses AppCDS here.
+     */
+    public static final int LEYDEN_MIN_FEATURE = 25;
+    /** Oldest JDK feature release we support for AppCDS. */
+    public static final int APP_CDS_MIN_FEATURE = 21;
+
+    private final String extension;
+
+<span class="fc" id="L26">    CacheStrategy(String extension) {</span>
+<span class="fc" id="L27">        this.extension = extension;</span>
+<span class="fc" id="L28">    }</span>
+
+    public String extension() {
+<span class="fc" id="L31">        return extension;</span>
+    }
+
+    /** Picks the best strategy for the given JDK feature version (e.g. 21, 25). */
+    public static CacheStrategy forFeatureVersion(int feature) {
+<span class="fc bfc" id="L36" title="All 2 branches covered.">        if (feature &lt; APP_CDS_MIN_FEATURE) {</span>
+<span class="fc" id="L37">            throw new IllegalArgumentException(</span>
+                    &quot;Unsupported JDK &quot; + feature + &quot;; mnemo-warmup requires JDK &quot; + APP_CDS_MIN_FEATURE + &quot;+&quot;);
+        }
+<span class="fc bfc" id="L40" title="All 2 branches covered.">        return feature &gt;= LEYDEN_MIN_FEATURE ? LEYDEN_AOT : APP_CDS;</span>
+    }
+
+    /** JVM flag that records the archive during the training run. */
+    public String trainingFlag(String archivePath) {
+<span class="fc bfc" id="L45" title="All 2 branches covered.">        return switch (this) {</span>
+<span class="fc" id="L46">            case APP_CDS -&gt; &quot;-XX:ArchiveClassesAtExit=&quot; + archivePath;</span>
+<span class="fc" id="L47">            case LEYDEN_AOT -&gt; &quot;-XX:AOTCacheOutput=&quot; + archivePath;</span>
+        };
+    }
+
+    /** JVM flag that consumes the archive at runtime. */
+    public String runtimeFlag(String archivePath) {
+<span class="fc bfc" id="L53" title="All 2 branches covered.">        return switch (this) {</span>
+<span class="fc" id="L54">            case APP_CDS -&gt; &quot;-XX:SharedArchiveFile=&quot; + archivePath;</span>
+<span class="fc" id="L55">            case LEYDEN_AOT -&gt; &quot;-XX:AOTCache=&quot; + archivePath;</span>
+        };
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

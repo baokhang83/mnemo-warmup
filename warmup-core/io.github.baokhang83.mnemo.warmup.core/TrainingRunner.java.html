@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>TrainingRunner.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">TrainingRunner.java</span></div><h1>TrainingRunner.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+/**
+ * Runs the application once with archive-recording flags, lets a {@link ReadyCondition} decide
+ * when it has started up enough, stops it with SIGTERM so the JVM writes the archive on its way
+ * out, and checks that an archive really exists.
+ *
+ * &lt;p&gt;Stopping by signal relies on POSIX behaviour (verified for JDK 21 AppCDS and JDK 25 AOT);
+ * on Windows {@link Process#destroy()} kills the process and no archive is written.
+ */
+<span class="fc" id="L21">public final class TrainingRunner {</span>
+
+    /** Exit status of a JVM stopped by SIGTERM (128 + 15). */
+    static final int EXIT_SIGTERM = 143;
+
+    private static final int LOG_TAIL_LINES = 40;
+
+    /**
+     * @param archive    the archive that was written
+     * @param sizeBytes  its size
+     * @param elapsed    wall-clock time of the whole run including shutdown
+     * @param stoppedByUs whether the application was stopped with SIGTERM (as opposed to exiting by itself)
+     * @param logFile    the application's output
+     */
+<span class="fc" id="L35">    public record Result(Path archive, long sizeBytes, Duration elapsed, boolean stoppedByUs, Path logFile) {}</span>
+
+    /**
+     * @throws TrainingException if the application fails, times out, does not stop, or leaves no archive;
+     *                           in that case no archive is left behind
+     */
+    public Result run(TrainingSpec spec) {
+        try {
+<span class="fc" id="L43">            return runOnce(spec);</span>
+<span class="fc" id="L44">        } catch (TrainingException e) {</span>
+            // A failed run (even one that still wrote a file, e.g. after System.exit(3)) must not
+            // leave an archive that a later step could mistake for a good one.
+<span class="fc" id="L47">            deleteQuietly(spec.archive());</span>
+<span class="fc" id="L48">            throw e;</span>
+        }
+    }
+
+    private Result runOnce(TrainingSpec spec) {
+<span class="fc" id="L53">        long started = System.nanoTime();</span>
+<span class="fc" id="L54">        Path log = spec.logFile();</span>
+<span class="fc" id="L55">        Path leftoverConfig = spec.archive().resolveSibling(spec.archive().getFileName() + &quot;.config&quot;);</span>
+<span class="fc" id="L56">        prepareFiles(spec, log, leftoverConfig);</span>
+
+<span class="fc" id="L58">        Process process = start(spec, log);</span>
+<span class="fc" id="L59">        boolean stoppedByUs = false;</span>
+        try {
+            try {
+<span class="fc" id="L62">                spec.ready().await(process, spec.timeout());</span>
+<span class="fc" id="L63">            } catch (TimeoutException e) {</span>
+<span class="fc" id="L64">                terminate(process, spec.shutdownGrace());</span>
+<span class="fc" id="L65">                throw new TrainingException(</span>
+<span class="fc" id="L66">                        &quot;Training timed out after &quot; + spec.timeout() + &quot;: &quot; + e.getMessage() + tail(log), log, e);</span>
+<span class="fc" id="L67">            } catch (RuntimeException e) {</span>
+<span class="fc" id="L68">                terminate(process, spec.shutdownGrace());</span>
+<span class="fc" id="L69">                throw new TrainingException(&quot;Training failed: &quot; + e.getMessage() + tail(log), log, e);</span>
+<span class="fc" id="L70">            }</span>
+<span class="fc bfc" id="L71" title="All 2 branches covered.">            if (process.isAlive()) {</span>
+<span class="fc" id="L72">                stoppedByUs = true;</span>
+<span class="fc" id="L73">                process.destroy(); // SIGTERM: the JVM runs its exit path, which writes the archive</span>
+<span class="fc bfc" id="L74" title="All 2 branches covered.">                if (!process.waitFor(spec.shutdownGrace().toMillis(), TimeUnit.MILLISECONDS)) {</span>
+<span class="fc" id="L75">                    process.destroyForcibly();</span>
+<span class="fc" id="L76">                    throw new TrainingException(</span>
+<span class="fc" id="L77">                            &quot;Application did not exit within &quot; + spec.shutdownGrace()</span>
+<span class="fc" id="L78">                                    + &quot; after SIGTERM; the archive would be incomplete&quot; + tail(log),</span>
+                            log);
+                }
+            }
+<span class="nc" id="L82">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L83">            process.destroyForcibly();</span>
+<span class="nc" id="L84">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L85">            throw new TrainingException(&quot;Training was interrupted&quot;, log, e);</span>
+        } finally {
+<span class="fc" id="L87">            deleteQuietly(leftoverConfig);</span>
+        }
+
+<span class="fc" id="L90">        int exit = process.exitValue();</span>
+<span class="pc bpc" id="L91" title="1 of 6 branches missed.">        boolean acceptable = exit == 0 || (stoppedByUs &amp;&amp; exit == EXIT_SIGTERM);</span>
+<span class="fc bfc" id="L92" title="All 2 branches covered.">        if (!acceptable) {</span>
+<span class="fc" id="L93">            throw new TrainingException(&quot;Application exited with code &quot; + exit + &quot; during training&quot; + tail(log), log);</span>
+        }
+<span class="fc" id="L95">        long size = sizeOf(spec.archive());</span>
+<span class="fc bfc" id="L96" title="All 2 branches covered.">        if (size &lt;= 0) {</span>
+<span class="fc" id="L97">            throw new TrainingException(</span>
+<span class="fc" id="L98">                    &quot;Training finished (exit &quot; + exit + &quot;) but no archive was written to &quot; + spec.archive()</span>
+<span class="fc" id="L99">                            + &quot;; the JVM only writes it on a normal exit&quot; + tail(log),</span>
+                    log);
+        }
+<span class="fc" id="L102">        return new Result(spec.archive(), size, Duration.ofNanos(System.nanoTime() - started), stoppedByUs, log);</span>
+    }
+
+    List&lt;String&gt; command(TrainingSpec spec) {
+<span class="fc" id="L106">        List&lt;String&gt; command = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L107">        command.add(spec.java().toString());</span>
+<span class="fc" id="L108">        command.add(spec.strategy().trainingFlag(spec.archive().toAbsolutePath().toString()));</span>
+<span class="fc" id="L109">        command.addAll(spec.jvmArgs());</span>
+<span class="fc" id="L110">        command.addAll(spec.appArgs());</span>
+<span class="fc" id="L111">        return command;</span>
+    }
+
+    private Process start(TrainingSpec spec, Path log) {
+<span class="fc" id="L115">        ProcessBuilder builder = new ProcessBuilder(command(spec))</span>
+<span class="fc" id="L116">                .redirectErrorStream(true)</span>
+<span class="fc" id="L117">                .redirectOutput(log.toFile());</span>
+<span class="fc" id="L118">        builder.environment().putAll(spec.environment());</span>
+<span class="pc bpc" id="L119" title="1 of 2 branches missed.">        if (spec.workDir() != null) {</span>
+<span class="nc" id="L120">            builder.directory(spec.workDir().toFile());</span>
+        }
+        try {
+<span class="fc" id="L123">            return builder.start();</span>
+<span class="fc" id="L124">        } catch (IOException e) {</span>
+<span class="fc" id="L125">            throw new TrainingException(&quot;Cannot start &quot; + spec.java() + &quot;: &quot; + e.getMessage(), log, e);</span>
+        }
+    }
+
+    private static void prepareFiles(TrainingSpec spec, Path log, Path leftoverConfig) {
+        try {
+<span class="fc bfc" id="L131" title="All 2 branches covered.">            for (Path dir : new Path[] {log.toAbsolutePath().getParent(), spec.archive().toAbsolutePath().getParent()}) {</span>
+<span class="fc" id="L132">                Files.createDirectories(dir);</span>
+            }
+            // A stale archive from an earlier run must never be mistaken for this run's output.
+<span class="fc" id="L135">            Files.deleteIfExists(spec.archive());</span>
+<span class="fc" id="L136">            Files.deleteIfExists(leftoverConfig);</span>
+<span class="nc" id="L137">        } catch (IOException e) {</span>
+<span class="nc" id="L138">            throw new TrainingException(&quot;Cannot prepare training files: &quot; + e.getMessage(), log, e);</span>
+<span class="fc" id="L139">        }</span>
+<span class="fc" id="L140">    }</span>
+
+    private static void terminate(Process process, Duration grace) throws InterruptedException {
+<span class="fc" id="L143">        process.destroy();</span>
+<span class="pc bpc" id="L144" title="1 of 2 branches missed.">        if (!process.waitFor(grace.toMillis(), TimeUnit.MILLISECONDS)) {</span>
+<span class="nc" id="L145">            process.destroyForcibly();</span>
+        }
+<span class="fc" id="L147">    }</span>
+
+    private static long sizeOf(Path file) {
+        try {
+<span class="fc bfc" id="L151" title="All 2 branches covered.">            return Files.exists(file) ? Files.size(file) : 0;</span>
+<span class="nc" id="L152">        } catch (IOException e) {</span>
+<span class="nc" id="L153">            return 0;</span>
+        }
+    }
+
+    private static void deleteQuietly(Path file) {
+        try {
+<span class="fc" id="L159">            Files.deleteIfExists(file);</span>
+<span class="nc" id="L160">        } catch (IOException ignored) {</span>
+            // best effort
+<span class="fc" id="L162">        }</span>
+<span class="fc" id="L163">    }</span>
+
+    private static String tail(Path log) {
+        try {
+<span class="fc" id="L167">            List&lt;String&gt; lines = Files.readAllLines(log, StandardCharsets.UTF_8);</span>
+<span class="fc" id="L168">            int from = Math.max(0, lines.size() - LOG_TAIL_LINES);</span>
+<span class="fc" id="L169">            return &quot;\n--- last &quot; + (lines.size() - from) + &quot; lines of &quot; + log + &quot; ---\n&quot;</span>
+<span class="fc" id="L170">                    + String.join(&quot;\n&quot;, lines.subList(from, lines.size()));</span>
+<span class="nc" id="L171">        } catch (IOException | RuntimeException e) {</span>
+<span class="nc" id="L172">            return &quot;\n(no readable application log at &quot; + log + &quot;)&quot;;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

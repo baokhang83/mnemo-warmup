@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>AppTrainer.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">AppTrainer.java</span></div><h1>AppTrainer.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.List;
+
+/** Trains an archive for a prepared application using an {@link ExitMode}. */
+<span class="fc" id="L8">public final class AppTrainer {</span>
+
+<span class="fc" id="L10">    private final TrainingRunner runner = new TrainingRunner();</span>
+
+    /**
+     * @param app      the output of {@link JarExtractor#prepare}
+     * @param jdk      the target JDK, which both runs the training and must run the app later
+     * @param strategy AppCDS or AOT, already resolved for {@code jdk}
+     * @param mode     how the run ends
+     * @param archive  where to write the archive
+     * @param timeout  how long {@code mode} may take to reach its ready state
+     * @throws IllegalArgumentException if {@code mode} cannot drive this kind of application
+     * @throws TrainingException        if training fails
+     */
+    public TrainingRunner.Result train(
+            JarExtractor.ExtractedApp app,
+            JdkInfo jdk,
+            CacheStrategy strategy,
+            ExitMode mode,
+            Path archive,
+            Duration timeout) {
+<span class="fc" id="L29">        return train(app, jdk, strategy, mode, archive, timeout, List.of());</span>
+    }
+
+    /**
+     * As above, with extra JVM options (heap, GC, system properties) for the training run. They
+     * must be the options the application will run with, because the archive is only valid for them.
+     */
+    public TrainingRunner.Result train(
+            JarExtractor.ExtractedApp app,
+            JdkInfo jdk,
+            CacheStrategy strategy,
+            ExitMode mode,
+            Path archive,
+            Duration timeout,
+            List&lt;String&gt; extraJvmArgs) {
+<span class="fc bfc" id="L44" title="All 2 branches covered.">        if (!mode.supports(app.kind())) {</span>
+<span class="fc" id="L45">            throw new IllegalArgumentException(&quot;Exit mode '&quot; + mode.name() + &quot;' does not support &quot;</span>
+<span class="fc" id="L46">                    + app.kind() + &quot; applications (&quot; + app.runnableJar() + &quot;)&quot;);</span>
+        }
+<span class="fc" id="L48">        TrainingSpec.Builder spec = TrainingSpec.builder(jdk.javaExecutable(), strategy, archive)</span>
+<span class="fc" id="L49">                .appArgs(&quot;-jar&quot;, app.runnableJar().toString())</span>
+<span class="fc" id="L50">                .ready(mode.readyCondition())</span>
+<span class="fc" id="L51">                .timeout(timeout);</span>
+<span class="fc" id="L52">        extraJvmArgs.forEach(spec::jvmArg);</span>
+<span class="fc" id="L53">        mode.jvmArgs().forEach(spec::jvmArg);</span>
+<span class="fc" id="L54">        return runner.run(spec.build());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

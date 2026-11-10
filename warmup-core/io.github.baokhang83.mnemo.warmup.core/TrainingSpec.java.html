@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>TrainingSpec.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">TrainingSpec.java</span></div><h1>TrainingSpec.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+/**
+ * Everything needed for one training run.
+ *
+ * @param java          the target JDK's {@code java} launcher
+ * @param strategy      AppCDS or AOT
+ * @param archive       where the archive is written
+ * @param jvmArgs       extra JVM options, placed before the application arguments
+ * @param appArgs       the application part of the command line, e.g. {@code -jar app.jar}
+ * @param environment   extra environment variables
+ * @param workDir       working directory, or {@code null} to inherit
+ * @param logFile       receives the application's stdout and stderr
+ * @param timeout       how long the {@link ReadyCondition} may take
+ * @param shutdownGrace how long the JVM gets to exit after SIGTERM; AOT creation assembles the
+ *                      cache during exit and can take a while on large applications
+ * @param ready         when to stop the application
+ */
+public record TrainingSpec(
+        Path java,
+        CacheStrategy strategy,
+        Path archive,
+        List&lt;String&gt; jvmArgs,
+        List&lt;String&gt; appArgs,
+        Map&lt;String, String&gt; environment,
+        Path workDir,
+        Path logFile,
+        Duration timeout,
+        Duration shutdownGrace,
+        ReadyCondition ready) {
+
+<span class="fc" id="L39">    public static final Duration DEFAULT_TIMEOUT = Duration.ofMinutes(5);</span>
+<span class="fc" id="L40">    public static final Duration DEFAULT_SHUTDOWN_GRACE = Duration.ofMinutes(2);</span>
+
+<span class="fc" id="L42">    public TrainingSpec {</span>
+<span class="fc" id="L43">        Objects.requireNonNull(java, &quot;java&quot;);</span>
+<span class="fc" id="L44">        Objects.requireNonNull(strategy, &quot;strategy&quot;);</span>
+<span class="fc" id="L45">        Objects.requireNonNull(archive, &quot;archive&quot;);</span>
+<span class="fc" id="L46">        Objects.requireNonNull(ready, &quot;ready&quot;);</span>
+<span class="fc" id="L47">        jvmArgs = List.copyOf(jvmArgs);</span>
+<span class="fc" id="L48">        appArgs = List.copyOf(appArgs);</span>
+<span class="fc" id="L49">        environment = Map.copyOf(environment);</span>
+<span class="fc bfc" id="L50" title="All 2 branches covered.">        if (appArgs.isEmpty()) {</span>
+<span class="fc" id="L51">            throw new IllegalArgumentException(&quot;appArgs must say what to run, e.g. -jar app.jar&quot;);</span>
+        }
+<span class="pc bpc" id="L53" title="3 of 8 branches missed.">        if (timeout.isNegative() || timeout.isZero() || shutdownGrace.isNegative() || shutdownGrace.isZero()) {</span>
+<span class="fc" id="L54">            throw new IllegalArgumentException(&quot;timeout and shutdownGrace must be positive&quot;);</span>
+        }
+<span class="fc" id="L56">    }</span>
+
+    public static Builder builder(Path java, CacheStrategy strategy, Path archive) {
+<span class="fc" id="L59">        return new Builder(java, strategy, archive);</span>
+    }
+
+    public static final class Builder {
+        private final Path java;
+        private final CacheStrategy strategy;
+        private final Path archive;
+<span class="fc" id="L66">        private final List&lt;String&gt; jvmArgs = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L67">        private List&lt;String&gt; appArgs = List.of();</span>
+<span class="fc" id="L68">        private Map&lt;String, String&gt; environment = Map.of();</span>
+        private Path workDir;
+        private Path logFile;
+<span class="fc" id="L71">        private Duration timeout = DEFAULT_TIMEOUT;</span>
+<span class="fc" id="L72">        private Duration shutdownGrace = DEFAULT_SHUTDOWN_GRACE;</span>
+<span class="fc" id="L73">        private ReadyCondition ready = ReadyCondition.processExits();</span>
+
+<span class="fc" id="L75">        private Builder(Path java, CacheStrategy strategy, Path archive) {</span>
+<span class="fc" id="L76">            this.java = java;</span>
+<span class="fc" id="L77">            this.strategy = strategy;</span>
+<span class="fc" id="L78">            this.archive = archive;</span>
+<span class="fc" id="L79">        }</span>
+
+        public Builder jvmArg(String arg) {
+<span class="fc" id="L82">            jvmArgs.add(arg);</span>
+<span class="fc" id="L83">            return this;</span>
+        }
+
+        public Builder appArgs(String... args) {
+<span class="fc" id="L87">            this.appArgs = List.of(args);</span>
+<span class="fc" id="L88">            return this;</span>
+        }
+
+        public Builder environment(Map&lt;String, String&gt; environment) {
+<span class="nc" id="L92">            this.environment = environment;</span>
+<span class="nc" id="L93">            return this;</span>
+        }
+
+        public Builder workDir(Path workDir) {
+<span class="nc" id="L97">            this.workDir = workDir;</span>
+<span class="nc" id="L98">            return this;</span>
+        }
+
+        public Builder logFile(Path logFile) {
+<span class="nc" id="L102">            this.logFile = logFile;</span>
+<span class="nc" id="L103">            return this;</span>
+        }
+
+        public Builder timeout(Duration timeout) {
+<span class="fc" id="L107">            this.timeout = timeout;</span>
+<span class="fc" id="L108">            return this;</span>
+        }
+
+        public Builder shutdownGrace(Duration shutdownGrace) {
+<span class="fc" id="L112">            this.shutdownGrace = shutdownGrace;</span>
+<span class="fc" id="L113">            return this;</span>
+        }
+
+        public Builder ready(ReadyCondition ready) {
+<span class="fc" id="L117">            this.ready = ready;</span>
+<span class="fc" id="L118">            return this;</span>
+        }
+
+        public TrainingSpec build() {
+<span class="pc bpc" id="L122" title="1 of 2 branches missed.">            Path log = logFile != null ? logFile : archive.resolveSibling(archive.getFileName() + &quot;.training.log&quot;);</span>
+<span class="fc" id="L123">            return new TrainingSpec(</span>
+                    java, strategy, archive, jvmArgs, appArgs, environment, workDir, log, timeout, shutdownGrace, ready);
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

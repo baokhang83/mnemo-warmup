@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HttpProbeExitMode.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">HttpProbeExitMode.java</span></div><h1>HttpProbeExitMode.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+/**
+ * Polls an HTTP endpoint (for example {@code /actuator/health}) until it answers 2xx, optionally
+ * drives some warmup traffic, and then lets the runner stop the application.
+ *
+ * &lt;p&gt;Compared with {@link SpringRefreshExitMode} this trains classes used when serving
+ * requests, and it works for any framework.
+ */
+public final class HttpProbeExitMode implements ExitMode {
+
+    public static final String NAME = &quot;http-probe&quot;;
+
+<span class="fc" id="L26">    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(1);</span>
+<span class="fc" id="L27">    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(5);</span>
+<span class="fc" id="L28">    private static final Duration SCRIPT_TIMEOUT = Duration.ofMinutes(5);</span>
+
+    /**
+     * @param url             the endpoint that signals readiness
+     * @param pollInterval    pause between probes
+     * @param warmupRequests  GET requests made once the probe succeeds, in order; absolute URLs, or
+     *                        paths resolved against the probe URL's scheme and host
+     * @param warmupScript    optional program run after the requests; it receives the base URL as its only
+     *                        argument and must exit 0
+     */
+    public record Settings(URI url, Duration pollInterval, List&lt;String&gt; warmupRequests, Path warmupScript) {
+
+<span class="fc" id="L40">        public Settings {</span>
+<span class="fc" id="L41">            Objects.requireNonNull(url, &quot;url&quot;);</span>
+<span class="fc" id="L42">            String scheme = url.getScheme();</span>
+<span class="pc bpc" id="L43" title="1 of 6 branches missed.">            if (url.getAuthority() == null || !(&quot;http&quot;.equals(scheme) || &quot;https&quot;.equals(scheme))) {</span>
+<span class="fc" id="L44">                throw new IllegalArgumentException(&quot;The probe URL must be an absolute http(s) URL: &quot; + url);</span>
+            }
+<span class="pc bpc" id="L46" title="1 of 4 branches missed.">            if (pollInterval.isNegative() || pollInterval.isZero()) {</span>
+<span class="fc" id="L47">                throw new IllegalArgumentException(&quot;The poll interval must be positive&quot;);</span>
+            }
+<span class="fc" id="L49">            warmupRequests = List.copyOf(warmupRequests);</span>
+<span class="fc" id="L50">        }</span>
+
+        public static Settings of(URI url) {
+<span class="fc" id="L53">            return new Settings(url, Duration.ofMillis(500), List.of(), null);</span>
+        }
+
+        public Settings withPollInterval(Duration interval) {
+<span class="fc" id="L57">            return new Settings(url, interval, warmupRequests, warmupScript);</span>
+        }
+
+        URI baseUrl() {
+<span class="fc" id="L61">            return URI.create(url.getScheme() + &quot;://&quot; + url.getAuthority());</span>
+        }
+    }
+
+    private final Settings settings;
+    private final CommandRunner scriptRunner;
+
+    public HttpProbeExitMode(Settings settings) {
+<span class="fc" id="L69">        this(settings, CommandRunner.system(SCRIPT_TIMEOUT));</span>
+<span class="fc" id="L70">    }</span>
+
+<span class="fc" id="L72">    HttpProbeExitMode(Settings settings, CommandRunner scriptRunner) {</span>
+<span class="fc" id="L73">        this.settings = settings;</span>
+<span class="fc" id="L74">        this.scriptRunner = scriptRunner;</span>
+<span class="fc" id="L75">    }</span>
+
+    @Override
+    public String name() {
+<span class="fc" id="L79">        return NAME;</span>
+    }
+
+    @Override
+    public List&lt;String&gt; jvmArgs() {
+<span class="fc" id="L84">        return List.of();</span>
+    }
+
+    @Override
+    public boolean supports(JarExtractor.Kind kind) {
+<span class="fc" id="L89">        return true;</span>
+    }
+
+    @Override
+    public ReadyCondition readyCondition() {
+<span class="fc" id="L94">        return this::await;</span>
+    }
+
+    private void await(Process process, Duration timeout) throws TimeoutException, InterruptedException {
+<span class="fc" id="L98">        long deadline = System.nanoTime() + timeout.toNanos();</span>
+<span class="fc" id="L99">        try (HttpClient client = HttpClient.newBuilder()</span>
+<span class="fc" id="L100">                .connectTimeout(CONNECT_TIMEOUT)</span>
+<span class="fc" id="L101">                .followRedirects(HttpClient.Redirect.NORMAL)</span>
+<span class="fc" id="L102">                .build()) {</span>
+<span class="fc" id="L103">            String lastProblem = &quot;no response yet&quot;;</span>
+            while (true) {
+<span class="fc bfc" id="L105" title="All 2 branches covered.">                if (!process.isAlive()) {</span>
+<span class="fc" id="L106">                    return; // it ended on its own; the runner judges the exit code</span>
+                }
+                try {
+<span class="fc" id="L109">                    int status = get(client, settings.url());</span>
+<span class="fc bfc" id="L110" title="All 2 branches covered.">                    if (status / 100 == 2) {</span>
+<span class="fc" id="L111">                        break;</span>
+                    }
+<span class="fc" id="L113">                    lastProblem = &quot;HTTP &quot; + status;</span>
+<span class="fc" id="L114">                } catch (IOException e) {</span>
+<span class="fc" id="L115">                    lastProblem = e.getClass().getSimpleName() + &quot;: &quot; + e.getMessage();</span>
+<span class="fc" id="L116">                }</span>
+<span class="fc" id="L117">                long remainingMillis = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());</span>
+<span class="fc bfc" id="L118" title="All 2 branches covered.">                if (remainingMillis &lt;= 0) {</span>
+<span class="fc" id="L119">                    throw new TimeoutException(settings.url() + &quot; did not return 2xx within &quot; + timeout</span>
+                            + &quot; (last result: &quot; + lastProblem + &quot;)&quot;);
+                }
+                // Sleeps between probes but wakes immediately if the application dies.
+<span class="fc" id="L123">                process.waitFor(Math.min(settings.pollInterval().toMillis(), remainingMillis), TimeUnit.MILLISECONDS);</span>
+<span class="fc" id="L124">            }</span>
+<span class="fc" id="L125">            warmUp(client);</span>
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">        }</span>
+<span class="fc" id="L127">    }</span>
+
+    private void warmUp(HttpClient client) throws InterruptedException {
+<span class="fc" id="L130">        URI base = settings.baseUrl();</span>
+<span class="fc bfc" id="L131" title="All 2 branches covered.">        for (String request : settings.warmupRequests()) {</span>
+<span class="fc" id="L132">            URI target = base.resolve(request);</span>
+            try {
+<span class="fc" id="L134">                int status = get(client, target);</span>
+<span class="fc bfc" id="L135" title="All 2 branches covered.">                if (status / 100 != 2) {</span>
+<span class="fc" id="L136">                    throw new IllegalStateException(&quot;Warmup request &quot; + target + &quot; returned HTTP &quot; + status);</span>
+                }
+<span class="nc" id="L138">            } catch (IOException e) {</span>
+<span class="nc" id="L139">                throw new IllegalStateException(&quot;Warmup request &quot; + target + &quot; failed: &quot; + e.getMessage(), e);</span>
+<span class="fc" id="L140">            }</span>
+<span class="fc" id="L141">        }</span>
+<span class="fc bfc" id="L142" title="All 2 branches covered.">        if (settings.warmupScript() != null) {</span>
+<span class="fc" id="L143">            runScript(base);</span>
+        }
+<span class="fc" id="L145">    }</span>
+
+    private void runScript(URI base) throws InterruptedException {
+        try {
+<span class="fc" id="L149">            var result = scriptRunner.run(List.of(settings.warmupScript().toString(), base.toString()));</span>
+<span class="fc bfc" id="L150" title="All 2 branches covered.">            if (result.exitCode() != 0) {</span>
+<span class="fc" id="L151">                throw new IllegalStateException(&quot;Warmup script &quot; + settings.warmupScript() + &quot; exited with &quot;</span>
+<span class="fc" id="L152">                        + result.exitCode() + &quot;:\n&quot; + result.output());</span>
+            }
+<span class="nc" id="L154">        } catch (IOException e) {</span>
+<span class="nc" id="L155">            throw new IllegalStateException(&quot;Cannot run warmup script &quot; + settings.warmupScript() + &quot;: &quot; + e.getMessage(), e);</span>
+<span class="fc" id="L156">        }</span>
+<span class="fc" id="L157">    }</span>
+
+    private static int get(HttpClient client, URI uri) throws IOException, InterruptedException {
+<span class="fc" id="L160">        HttpRequest request = HttpRequest.newBuilder(uri).timeout(REQUEST_TIMEOUT).GET().build();</span>
+<span class="fc" id="L161">        return client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

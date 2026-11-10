@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>StartupBench.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">StartupBench.java</span></div><h1>StartupBench.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+/**
+ * Measures how long an application takes to start, as a fresh JVM process, with or without an archive.
+ *
+ * &lt;p&gt;&quot;Started&quot; is whatever the {@link ExitMode}'s {@link ReadyCondition} says, so every variant is
+ * stopped at the same moment. The clock runs from just before the process is launched until the
+ * condition is met. Pass a mode without warmup traffic, or the warmup is counted as startup.
+ */
+public final class StartupBench {
+
+    /**
+     * One thing to measure.
+     *
+     * @param name     the label in the report
+     * @param strategy how the archive is passed to the JVM; {@code null} for no archive
+     * @param archive  the archive file; {@code null} for no archive
+     */
+<span class="fc" id="L28">    public record Variant(String name, CacheStrategy strategy, Path archive) {</span>
+
+        public static Variant none() {
+<span class="fc" id="L31">            return new Variant(&quot;none&quot;, null, null);</span>
+        }
+
+        public static Variant of(String name, CacheStrategy strategy, Path archive) {
+<span class="fc" id="L35">            return new Variant(name, strategy, archive);</span>
+        }
+    }
+
+    /**
+     * @param startup    time from launching the process until it was ready
+     * @param peakRssKb  highest resident memory seen while it ran, in KiB; {@code 0} if it could not be read.
+     *                   It is sampled, so it can miss a short peak (and the final one when the app exits at once).
+     */
+<span class="fc" id="L44">    public record Sample(Duration startup, long peakRssKb) {}</span>
+
+<span class="fc" id="L46">    private static final Duration SHUTDOWN_GRACE = Duration.ofSeconds(30);</span>
+
+    private final MemoryProbe memory;
+
+    public StartupBench() {
+<span class="fc" id="L51">        this(MemoryProbe.system());</span>
+<span class="fc" id="L52">    }</span>
+
+<span class="fc" id="L54">    StartupBench(MemoryProbe memory) {</span>
+<span class="fc" id="L55">        this.memory = memory;</span>
+<span class="fc" id="L56">    }</span>
+
+    /**
+     * Starts the application {@code warmups + runs} times and returns the last {@code runs} samples.
+     * The first {@code warmups} starts are thrown away: they pay one-off costs such as reading the
+     * files from disk, which the later starts do not.
+     *
+     * @throws TrainingException if the application fails or is not ready within {@code timeout}
+     */
+    public List&lt;Sample&gt; measure(
+            JdkInfo jdk,
+            Variant variant,
+            JarExtractor.ExtractedApp app,
+            ExitMode mode,
+            List&lt;String&gt; jvmArgs,
+            Duration timeout,
+            int warmups,
+            int runs,
+            Path logFile) {
+<span class="pc bpc" id="L75" title="1 of 4 branches missed.">        if (runs &lt; 1 || warmups &lt; 0) {</span>
+<span class="fc" id="L76">            throw new IllegalArgumentException(&quot;runs must be at least 1 and warmups at least 0&quot;);</span>
+        }
+<span class="fc" id="L78">        List&lt;Sample&gt; samples = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L79" title="All 2 branches covered.">        for (int i = 0; i &lt; warmups + runs; i++) {</span>
+<span class="fc" id="L80">            Sample sample = runOnce(jdk, variant, app, mode, jvmArgs, timeout, logFile);</span>
+<span class="fc bfc" id="L81" title="All 2 branches covered.">            if (i &gt;= warmups) {</span>
+<span class="fc" id="L82">                samples.add(sample);</span>
+            }
+        }
+<span class="fc" id="L85">        return samples;</span>
+    }
+
+    List&lt;String&gt; command(JdkInfo jdk, Variant variant, JarExtractor.ExtractedApp app, ExitMode mode, List&lt;String&gt; jvmArgs) {
+<span class="fc" id="L89">        List&lt;String&gt; command = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L90">        command.add(jdk.javaExecutable().toString());</span>
+<span class="fc bfc" id="L91" title="All 2 branches covered.">        if (variant.strategy() != null) {</span>
+<span class="fc" id="L92">            command.add(variant.strategy().runtimeFlag(variant.archive().toAbsolutePath().toString()));</span>
+        }
+<span class="fc" id="L94">        command.addAll(jvmArgs);</span>
+<span class="fc" id="L95">        command.addAll(mode.jvmArgs());</span>
+<span class="fc" id="L96">        command.add(&quot;-jar&quot;);</span>
+<span class="fc" id="L97">        command.add(app.runnableJar().toString());</span>
+<span class="fc" id="L98">        return command;</span>
+    }
+
+    private Sample runOnce(
+            JdkInfo jdk, Variant variant, JarExtractor.ExtractedApp app, ExitMode mode, List&lt;String&gt; jvmArgs,
+            Duration timeout, Path logFile) {
+<span class="fc" id="L104">        ProcessBuilder builder = new ProcessBuilder(command(jdk, variant, app, mode, jvmArgs))</span>
+<span class="fc" id="L105">                .redirectErrorStream(true)</span>
+<span class="fc" id="L106">                .redirectOutput(logFile.toFile());</span>
+        Process process;
+        long start;
+        try {
+<span class="fc" id="L110">            Files.createDirectories(logFile.toAbsolutePath().getParent());</span>
+<span class="fc" id="L111">            start = System.nanoTime();</span>
+<span class="fc" id="L112">            process = builder.start();</span>
+<span class="nc" id="L113">        } catch (IOException e) {</span>
+<span class="nc" id="L114">            throw new TrainingException(&quot;Cannot start &quot; + jdk.javaExecutable() + &quot;: &quot; + e.getMessage(), logFile, e);</span>
+<span class="fc" id="L115">        }</span>
+<span class="fc" id="L116">        try (MemoryProbe.Sampler sampler = memory.sample(process)) {</span>
+            long ready;
+            try {
+<span class="fc" id="L119">                mode.readyCondition().await(process, timeout);</span>
+<span class="fc" id="L120">                ready = System.nanoTime();</span>
+<span class="nc" id="L121">            } catch (TimeoutException e) {</span>
+<span class="nc" id="L122">                throw new TrainingException(variant.name() + &quot;: not ready within &quot; + timeout + &quot;: &quot; + e.getMessage(), logFile, e);</span>
+<span class="fc" id="L123">            }</span>
+<span class="pc bpc" id="L124" title="1 of 4 branches missed.">            if (!process.isAlive() &amp;&amp; process.exitValue() != 0) {</span>
+<span class="fc" id="L125">                throw new TrainingException(</span>
+<span class="fc" id="L126">                        variant.name() + &quot;: application exited with code &quot; + process.exitValue() + &quot; before it was ready&quot;, logFile);</span>
+            }
+<span class="fc" id="L128">            return new Sample(Duration.ofNanos(ready - start), sampler.peakKb());</span>
+<span class="nc" id="L129">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L130">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L131">            throw new TrainingException(variant.name() + &quot;: interrupted&quot;, logFile, e);</span>
+        } finally {
+<span class="fc" id="L133">            stop(process);</span>
+        }
+    }
+
+    private static void stop(Process process) {
+<span class="fc" id="L138">        process.destroy();</span>
+        try {
+<span class="pc bpc" id="L140" title="1 of 2 branches missed.">            if (!process.waitFor(SHUTDOWN_GRACE.toMillis(), TimeUnit.MILLISECONDS)) {</span>
+<span class="nc" id="L141">                process.destroyForcibly();</span>
+            }
+<span class="nc" id="L143">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L144">            process.destroyForcibly();</span>
+<span class="nc" id="L145">            Thread.currentThread().interrupt();</span>
+<span class="fc" id="L146">        }</span>
+<span class="fc" id="L147">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

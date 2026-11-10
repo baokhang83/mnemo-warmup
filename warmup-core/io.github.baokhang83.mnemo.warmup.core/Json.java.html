@@ -1,0 +1,341 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>Json.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">Json.java</span></div><h1>Json.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * A deliberately small JSON reader/writer, enough for the manifest, so that the core library
+ * needs no third-party dependency. Values are {@code Map&lt;String,Object&gt;} (insertion ordered),
+ * {@code List&lt;Object&gt;}, {@code String}, {@code Long}, {@code Double}, {@code Boolean} and {@code null}.
+ */
+final class Json {
+
+    private static final int MAX_DEPTH = 64;
+
+    private Json() {}
+
+    // ---- writing ----
+
+    /** Pretty-printed with two-space indentation and a trailing newline. */
+    static String writePretty(Object value) {
+<span class="fc" id="L23">        StringBuilder sb = new StringBuilder();</span>
+<span class="fc" id="L24">        write(sb, value, 0, true);</span>
+<span class="fc" id="L25">        return sb.append('\n').toString();</span>
+    }
+
+    /** Compact form without any whitespace; deterministic for ordered maps, so it can be hashed. */
+    static String writeCompact(Object value) {
+<span class="fc" id="L30">        StringBuilder sb = new StringBuilder();</span>
+<span class="fc" id="L31">        write(sb, value, 0, false);</span>
+<span class="fc" id="L32">        return sb.toString();</span>
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    private static void write(StringBuilder sb, Object value, int depth, boolean pretty) {
+<span class="fc bfc" id="L37" title="All 2 branches covered.">        if (value == null) {</span>
+<span class="fc" id="L38">            sb.append(&quot;null&quot;);</span>
+<span class="fc bfc" id="L39" title="All 2 branches covered.">        } else if (value instanceof String s) {</span>
+<span class="fc" id="L40">            quote(sb, s);</span>
+<span class="pc bpc" id="L41" title="1 of 6 branches missed.">        } else if (value instanceof Boolean || value instanceof Long || value instanceof Integer) {</span>
+<span class="fc" id="L42">            sb.append(value);</span>
+<span class="fc bfc" id="L43" title="All 2 branches covered.">        } else if (value instanceof Double d) {</span>
+<span class="pc bpc" id="L44" title="1 of 4 branches missed.">            if (d.isNaN() || d.isInfinite()) {</span>
+<span class="fc" id="L45">                throw new IllegalArgumentException(&quot;JSON cannot represent &quot; + d);</span>
+            }
+<span class="fc" id="L47">            sb.append(d);</span>
+<span class="fc bfc" id="L48" title="All 2 branches covered.">        } else if (value instanceof Map&lt;?, ?&gt; map) {</span>
+<span class="fc" id="L49">            writeObject(sb, (Map&lt;String, Object&gt;) map, depth, pretty);</span>
+<span class="fc bfc" id="L50" title="All 2 branches covered.">        } else if (value instanceof List&lt;?&gt; list) {</span>
+<span class="fc" id="L51">            writeArray(sb, (List&lt;Object&gt;) list, depth, pretty);</span>
+        } else {
+<span class="fc" id="L53">            throw new IllegalArgumentException(&quot;Unsupported JSON value: &quot; + value.getClass());</span>
+        }
+<span class="fc" id="L55">    }</span>
+
+    private static void writeObject(StringBuilder sb, Map&lt;String, Object&gt; map, int depth, boolean pretty) {
+<span class="fc bfc" id="L58" title="All 2 branches covered.">        if (map.isEmpty()) {</span>
+<span class="fc" id="L59">            sb.append(&quot;{}&quot;);</span>
+<span class="fc" id="L60">            return;</span>
+        }
+<span class="fc" id="L62">        sb.append('{');</span>
+<span class="fc" id="L63">        boolean first = true;</span>
+<span class="fc bfc" id="L64" title="All 2 branches covered.">        for (Map.Entry&lt;String, Object&gt; e : map.entrySet()) {</span>
+<span class="fc bfc" id="L65" title="All 2 branches covered.">            if (!first) {</span>
+<span class="fc" id="L66">                sb.append(',');</span>
+            }
+<span class="fc" id="L68">            first = false;</span>
+<span class="fc" id="L69">            newline(sb, depth + 1, pretty);</span>
+<span class="fc" id="L70">            quote(sb, e.getKey());</span>
+<span class="fc bfc" id="L71" title="All 2 branches covered.">            sb.append(pretty ? &quot;: &quot; : &quot;:&quot;);</span>
+<span class="fc" id="L72">            write(sb, e.getValue(), depth + 1, pretty);</span>
+<span class="fc" id="L73">        }</span>
+<span class="fc" id="L74">        newline(sb, depth, pretty);</span>
+<span class="fc" id="L75">        sb.append('}');</span>
+<span class="fc" id="L76">    }</span>
+
+    private static void writeArray(StringBuilder sb, List&lt;Object&gt; list, int depth, boolean pretty) {
+<span class="fc bfc" id="L79" title="All 2 branches covered.">        if (list.isEmpty()) {</span>
+<span class="fc" id="L80">            sb.append(&quot;[]&quot;);</span>
+<span class="fc" id="L81">            return;</span>
+        }
+<span class="fc" id="L83">        sb.append('[');</span>
+<span class="fc" id="L84">        boolean first = true;</span>
+<span class="fc bfc" id="L85" title="All 2 branches covered.">        for (Object item : list) {</span>
+<span class="fc bfc" id="L86" title="All 2 branches covered.">            if (!first) {</span>
+<span class="fc" id="L87">                sb.append(',');</span>
+            }
+<span class="fc" id="L89">            first = false;</span>
+<span class="fc" id="L90">            newline(sb, depth + 1, pretty);</span>
+<span class="fc" id="L91">            write(sb, item, depth + 1, pretty);</span>
+<span class="fc" id="L92">        }</span>
+<span class="fc" id="L93">        newline(sb, depth, pretty);</span>
+<span class="fc" id="L94">        sb.append(']');</span>
+<span class="fc" id="L95">    }</span>
+
+    private static void newline(StringBuilder sb, int depth, boolean pretty) {
+<span class="fc bfc" id="L98" title="All 2 branches covered.">        if (pretty) {</span>
+<span class="fc" id="L99">            sb.append('\n').append(&quot;  &quot;.repeat(depth));</span>
+        }
+<span class="fc" id="L101">    }</span>
+
+    private static void quote(StringBuilder sb, String s) {
+<span class="fc" id="L104">        sb.append('&quot;');</span>
+<span class="fc bfc" id="L105" title="All 2 branches covered.">        for (int i = 0; i &lt; s.length(); i++) {</span>
+<span class="fc" id="L106">            char c = s.charAt(i);</span>
+<span class="pc bpc" id="L107" title="3 of 8 branches missed.">            switch (c) {</span>
+<span class="fc" id="L108">                case '&quot;' -&gt; sb.append(&quot;\\\&quot;&quot;);</span>
+<span class="fc" id="L109">                case '\\' -&gt; sb.append(&quot;\\\\&quot;);</span>
+<span class="fc" id="L110">                case '\n' -&gt; sb.append(&quot;\\n&quot;);</span>
+<span class="nc" id="L111">                case '\r' -&gt; sb.append(&quot;\\r&quot;);</span>
+<span class="fc" id="L112">                case '\t' -&gt; sb.append(&quot;\\t&quot;);</span>
+<span class="nc" id="L113">                case '\b' -&gt; sb.append(&quot;\\b&quot;);</span>
+<span class="nc" id="L114">                case '\f' -&gt; sb.append(&quot;\\f&quot;);</span>
+                default -&gt; {
+<span class="fc bfc" id="L116" title="All 2 branches covered.">                    if (c &lt; 0x20) {</span>
+<span class="fc" id="L117">                        sb.append(String.format(&quot;\\u%04x&quot;, (int) c));</span>
+                    } else {
+<span class="fc" id="L119">                        sb.append(c);</span>
+                    }
+                }
+            }
+        }
+<span class="fc" id="L124">        sb.append('&quot;');</span>
+<span class="fc" id="L125">    }</span>
+
+    // ---- reading ----
+
+    /** @throws IllegalArgumentException on malformed input, naming the offset */
+    static Object parse(String text) {
+<span class="fc" id="L131">        Parser parser = new Parser(text);</span>
+<span class="fc" id="L132">        parser.skipWhitespace();</span>
+<span class="fc" id="L133">        Object value = parser.value(0);</span>
+<span class="fc" id="L134">        parser.skipWhitespace();</span>
+<span class="fc bfc" id="L135" title="All 2 branches covered.">        if (!parser.atEnd()) {</span>
+<span class="fc" id="L136">            throw parser.error(&quot;Unexpected content after the JSON value&quot;);</span>
+        }
+<span class="fc" id="L138">        return value;</span>
+    }
+
+    private static final class Parser {
+        private final String s;
+        private int pos;
+
+<span class="fc" id="L145">        Parser(String s) {</span>
+<span class="fc" id="L146">            this.s = s;</span>
+<span class="fc" id="L147">        }</span>
+
+        boolean atEnd() {
+<span class="fc bfc" id="L150" title="All 2 branches covered.">            return pos &gt;= s.length();</span>
+        }
+
+        IllegalArgumentException error(String message) {
+<span class="fc" id="L154">            return new IllegalArgumentException(&quot;Invalid JSON at offset &quot; + pos + &quot;: &quot; + message);</span>
+        }
+
+        void skipWhitespace() {
+<span class="fc bfc" id="L158" title="All 4 branches covered.">            while (pos &lt; s.length() &amp;&amp; Character.isWhitespace(s.charAt(pos))) {</span>
+<span class="fc" id="L159">                pos++;</span>
+            }
+<span class="fc" id="L161">        }</span>
+
+        Object value(int depth) {
+<span class="fc bfc" id="L164" title="All 2 branches covered.">            if (depth &gt; MAX_DEPTH) {</span>
+<span class="fc" id="L165">                throw error(&quot;Nesting is too deep&quot;);</span>
+            }
+<span class="fc bfc" id="L167" title="All 2 branches covered.">            if (atEnd()) {</span>
+<span class="fc" id="L168">                throw error(&quot;Unexpected end of input&quot;);</span>
+            }
+<span class="fc" id="L170">            char c = s.charAt(pos);</span>
+<span class="pc bpc" id="L171" title="1 of 7 branches missed.">            return switch (c) {</span>
+<span class="fc" id="L172">                case '{' -&gt; object(depth);</span>
+<span class="fc" id="L173">                case '[' -&gt; array(depth);</span>
+<span class="fc" id="L174">                case '&quot;' -&gt; string();</span>
+<span class="fc" id="L175">                case 't' -&gt; literal(&quot;true&quot;, Boolean.TRUE);</span>
+<span class="nc" id="L176">                case 'f' -&gt; literal(&quot;false&quot;, Boolean.FALSE);</span>
+<span class="fc" id="L177">                case 'n' -&gt; literal(&quot;null&quot;, null);</span>
+                default -&gt; {
+<span class="pc bpc" id="L179" title="2 of 6 branches missed.">                    if (c == '-' || (c &gt;= '0' &amp;&amp; c &lt;= '9')) {</span>
+<span class="fc" id="L180">                        yield number();</span>
+                    }
+<span class="nc" id="L182">                    throw error(&quot;Unexpected character '&quot; + c + &quot;'&quot;);</span>
+                }
+            };
+        }
+
+        Object literal(String word, Object result) {
+<span class="fc bfc" id="L188" title="All 2 branches covered.">            if (!s.startsWith(word, pos)) {</span>
+<span class="fc" id="L189">                throw error(&quot;Expected '&quot; + word + &quot;'&quot;);</span>
+            }
+<span class="fc" id="L191">            pos += word.length();</span>
+<span class="fc" id="L192">            return result;</span>
+        }
+
+        Map&lt;String, Object&gt; object(int depth) {
+<span class="fc" id="L196">            Map&lt;String, Object&gt; map = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L197">            pos++; // {</span>
+<span class="fc" id="L198">            skipWhitespace();</span>
+<span class="fc bfc" id="L199" title="All 2 branches covered.">            if (peek('}')) {</span>
+<span class="fc" id="L200">                pos++;</span>
+<span class="fc" id="L201">                return map;</span>
+            }
+            while (true) {
+<span class="fc" id="L204">                skipWhitespace();</span>
+<span class="fc bfc" id="L205" title="All 2 branches covered.">                if (!peek('&quot;')) {</span>
+<span class="fc" id="L206">                    throw error(&quot;Expected a string key&quot;);</span>
+                }
+<span class="fc" id="L208">                String key = string();</span>
+<span class="fc" id="L209">                skipWhitespace();</span>
+<span class="fc" id="L210">                expect(':');</span>
+<span class="fc" id="L211">                skipWhitespace();</span>
+<span class="fc bfc" id="L212" title="All 2 branches covered.">                if (map.put(key, value(depth + 1)) != null) {</span>
+<span class="fc" id="L213">                    throw error(&quot;Duplicate key '&quot; + key + &quot;'&quot;);</span>
+                }
+<span class="fc" id="L215">                skipWhitespace();</span>
+<span class="fc bfc" id="L216" title="All 2 branches covered.">                if (peek(',')) {</span>
+<span class="fc" id="L217">                    pos++;</span>
+                } else {
+<span class="fc" id="L219">                    expect('}');</span>
+<span class="fc" id="L220">                    return map;</span>
+                }
+<span class="fc" id="L222">            }</span>
+        }
+
+        List&lt;Object&gt; array(int depth) {
+<span class="fc" id="L226">            List&lt;Object&gt; list = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L227">            pos++; // [</span>
+<span class="fc" id="L228">            skipWhitespace();</span>
+<span class="fc bfc" id="L229" title="All 2 branches covered.">            if (peek(']')) {</span>
+<span class="fc" id="L230">                pos++;</span>
+<span class="fc" id="L231">                return list;</span>
+            }
+            while (true) {
+<span class="fc" id="L234">                skipWhitespace();</span>
+<span class="fc" id="L235">                list.add(value(depth + 1));</span>
+<span class="fc" id="L236">                skipWhitespace();</span>
+<span class="fc bfc" id="L237" title="All 2 branches covered.">                if (peek(',')) {</span>
+<span class="fc" id="L238">                    pos++;</span>
+                } else {
+<span class="fc" id="L240">                    expect(']');</span>
+<span class="fc" id="L241">                    return list;</span>
+                }
+            }
+        }
+
+        String string() {
+<span class="fc" id="L247">            pos++; // opening quote</span>
+<span class="fc" id="L248">            StringBuilder sb = new StringBuilder();</span>
+            while (true) {
+<span class="fc bfc" id="L250" title="All 2 branches covered.">                if (atEnd()) {</span>
+<span class="fc" id="L251">                    throw error(&quot;Unterminated string&quot;);</span>
+                }
+<span class="fc" id="L253">                char c = s.charAt(pos++);</span>
+<span class="fc bfc" id="L254" title="All 2 branches covered.">                if (c == '&quot;') {</span>
+<span class="fc" id="L255">                    return sb.toString();</span>
+                }
+<span class="fc bfc" id="L257" title="All 2 branches covered.">                if (c &lt; 0x20) {</span>
+<span class="fc" id="L258">                    throw error(&quot;Unescaped control character in string&quot;);</span>
+                }
+<span class="fc bfc" id="L260" title="All 2 branches covered.">                if (c != '\\') {</span>
+<span class="fc" id="L261">                    sb.append(c);</span>
+<span class="fc" id="L262">                    continue;</span>
+                }
+<span class="pc bpc" id="L264" title="1 of 2 branches missed.">                if (atEnd()) {</span>
+<span class="nc" id="L265">                    throw error(&quot;Unterminated escape&quot;);</span>
+                }
+<span class="fc" id="L267">                char e = s.charAt(pos++);</span>
+<span class="pc bpc" id="L268" title="3 of 8 branches missed.">                switch (e) {</span>
+<span class="fc" id="L269">                    case '&quot;', '\\', '/' -&gt; sb.append(e);</span>
+<span class="nc" id="L270">                    case 'b' -&gt; sb.append('\b');</span>
+<span class="nc" id="L271">                    case 'f' -&gt; sb.append('\f');</span>
+<span class="fc" id="L272">                    case 'n' -&gt; sb.append('\n');</span>
+<span class="nc" id="L273">                    case 'r' -&gt; sb.append('\r');</span>
+<span class="fc" id="L274">                    case 't' -&gt; sb.append('\t');</span>
+                    case 'u' -&gt; {
+<span class="fc bfc" id="L276" title="All 2 branches covered.">                        if (pos + 4 &gt; s.length()) {</span>
+<span class="fc" id="L277">                            throw error(&quot;Truncated \\u escape&quot;);</span>
+                        }
+                        try {
+<span class="fc" id="L280">                            sb.append((char) Integer.parseInt(s.substring(pos, pos + 4), 16));</span>
+<span class="nc" id="L281">                        } catch (NumberFormatException ex) {</span>
+<span class="nc" id="L282">                            throw error(&quot;Bad \\u escape&quot;);</span>
+<span class="fc" id="L283">                        }</span>
+<span class="fc" id="L284">                        pos += 4;</span>
+<span class="fc" id="L285">                    }</span>
+<span class="fc" id="L286">                    default -&gt; throw error(&quot;Unknown escape '\\&quot; + e + &quot;'&quot;);</span>
+                }
+<span class="fc" id="L288">            }</span>
+        }
+
+        Object number() {
+<span class="fc" id="L292">            int start = pos;</span>
+<span class="fc bfc" id="L293" title="All 2 branches covered.">            if (peek('-')) {</span>
+<span class="fc" id="L294">                pos++;</span>
+            }
+<span class="fc" id="L296">            digits();</span>
+<span class="fc" id="L297">            boolean integral = true;</span>
+<span class="fc bfc" id="L298" title="All 2 branches covered.">            if (peek('.')) {</span>
+<span class="fc" id="L299">                integral = false;</span>
+<span class="fc" id="L300">                pos++;</span>
+<span class="fc" id="L301">                digits();</span>
+            }
+<span class="pc bpc" id="L303" title="1 of 4 branches missed.">            if (peek('e') || peek('E')) {</span>
+<span class="fc" id="L304">                integral = false;</span>
+<span class="fc" id="L305">                pos++;</span>
+<span class="pc bpc" id="L306" title="2 of 4 branches missed.">                if (peek('+') || peek('-')) {</span>
+<span class="nc" id="L307">                    pos++;</span>
+                }
+<span class="fc" id="L309">                digits();</span>
+            }
+<span class="fc" id="L311">            String text = s.substring(start, pos);</span>
+            try {
+<span class="fc bfc" id="L313" title="All 2 branches covered.">                return integral ? (Object) Long.parseLong(text) : (Object) Double.parseDouble(text);</span>
+<span class="nc" id="L314">            } catch (NumberFormatException e) {</span>
+<span class="nc" id="L315">                throw error(&quot;Bad number '&quot; + text + &quot;'&quot;);</span>
+            }
+        }
+
+        void digits() {
+<span class="fc" id="L320">            int start = pos;</span>
+<span class="fc bfc" id="L321" title="All 6 branches covered.">            while (pos &lt; s.length() &amp;&amp; s.charAt(pos) &gt;= '0' &amp;&amp; s.charAt(pos) &lt;= '9') {</span>
+<span class="fc" id="L322">                pos++;</span>
+            }
+<span class="fc bfc" id="L324" title="All 2 branches covered.">            if (pos == start) {</span>
+<span class="fc" id="L325">                throw error(&quot;Expected a digit&quot;);</span>
+            }
+<span class="fc" id="L327">        }</span>
+
+        boolean peek(char c) {
+<span class="fc bfc" id="L330" title="All 4 branches covered.">            return pos &lt; s.length() &amp;&amp; s.charAt(pos) == c;</span>
+        }
+
+        void expect(char c) {
+<span class="fc bfc" id="L334" title="All 2 branches covered.">            if (!peek(c)) {</span>
+<span class="fc" id="L335">                throw error(&quot;Expected '&quot; + c + &quot;'&quot;);</span>
+            }
+<span class="fc" id="L337">            pos++;</span>
+<span class="fc" id="L338">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

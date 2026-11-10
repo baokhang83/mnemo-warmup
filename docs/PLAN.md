@@ -98,7 +98,7 @@ and grows running pods in place without restarts; warmup speeds up the pods that
 ## Open decisions
 1. **Archive store:** OCI registry (easy auth, content-addressed) vs S3/GCS vs RWX PVC.
    Leaning OCI or S3; archives are hundreds of MB and RWX is not universal.
-2. **Who trains:** DECIDED: one Job per fingerprint via Helm hook (see
+2. **Who trains:** DECIDED: chart-owned CronJob with a Lease, non-hook (see
    `docs/adr/0002-training-trigger-and-traffic.md`).
 3. **Training traffic:** DECIDED: `spring-refresh` default, `http-probe` opt-in, no warmup
    script in v0.2.0 (same ADR).

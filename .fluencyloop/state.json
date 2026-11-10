@@ -3,7 +3,7 @@
   "feature": "12-decision-who-trains-one-off-job-vs-first-pod-and-training",
   "branch": "feature/12-decision-who-trains-one-off-job-vs-first-pod-and-training",
   "stage": "build",
-  "last_session": "001-record-adr-0002-job-per-fingerprint-trainer-and-training",
+  "last_session": "002-revise-adr-0002-after-review-cronjob-plus-lease",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

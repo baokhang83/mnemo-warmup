@@ -1,6 +1,7 @@
 # Training trigger
 
-Many replicas start at once and each sees that no archive exists. Only one should train. The
-chart creates a Job whose name contains the fingerprint. Kubernetes allows one Job per name, so a
-second attempt is refused and no lock is needed. The Job also checks the store first and stops if
-the archive is already there. Pods that start during training run without the archive.
+Many replicas start at once and each sees that no archive exists. Only one should train, and a
+failed training must not fail a release. A scheduled job from the chart works out the fingerprint
+from the image, checks the store, and stops if the archive is there. If it is missing, the job
+takes a lock named after the fingerprint. The lock expires, so a crashed trainer cannot block
+others. The job ends successfully even when training fails, and the next run tries again.

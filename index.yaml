@@ -1,0 +1,41 @@
+apiVersion: v1
+entries:
+  mnemo-warmup:
+  - annotations:
+      artifacthub.io/category: integration-delivery
+      artifacthub.io/containsSecurityUpdates: "false"
+      artifacthub.io/images: |
+        - name: mnemo-warmup-tools
+          image: ghcr.io/baokhang83/mnemo-warmup-tools:0.2.0
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/baokhang83/mnemo-warmup#readme
+        - name: Example application and chart
+          url: https://github.com/baokhang83/mnemo-warmup/tree/main/examples
+        - name: Design decisions
+          url: https://github.com/baokhang83/mnemo-warmup/tree/main/docs/adr
+    apiVersion: v2
+    appVersion: 0.2.0
+    created: "2026-11-10T15:16:29.616834499Z"
+    description: Trains a startup cache (AppCDS or Leyden AOT) for a JVM application
+      once per fingerprint and shares it with every replica through an init container.
+    digest: 29acd5a465aeb54600adc8e737d85bb43880ea922bdc8a021a661e750c22992c
+    home: https://github.com/baokhang83/mnemo-warmup
+    keywords:
+    - jvm
+    - appcds
+    - leyden
+    - startup
+    - kubernetes
+    maintainers:
+    - name: baokhang83
+      url: https://github.com/baokhang83
+    name: mnemo-warmup
+    sources:
+    - https://github.com/baokhang83/mnemo-warmup
+    type: application
+    urls:
+    - https://github.com/baokhang83/mnemo-warmup/releases/download/mnemo-warmup-0.2.0/mnemo-warmup-0.2.0.tgz
+    version: 0.2.0
+generated: "2026-11-10T15:16:29.616839116Z"

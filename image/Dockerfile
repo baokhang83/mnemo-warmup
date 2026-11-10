@@ -27,6 +27,18 @@ RUN if [ "$VERSION" != dev ]; then mvn -B -ntp -q versions:set -DnewVersion="$VE
  && mvn -B -ntp -q -pl warmup-cli -am -DskipTests -Djacoco.skip=true \
         -Dmaven.javadoc.skip=true -Dmaven.source.skip=true package
 
+# The native launcher: a static Go binary for distroless images. Built on the build platform and
+# cross-compiled for the target, so the multi-arch image does not emulate a Go build under QEMU.
+FROM --platform=$BUILDPLATFORM golang:1.24 AS launcher
+ARG TARGETOS=linux
+ARG TARGETARCH
+WORKDIR /src/launcher
+COPY launcher/ ./
+# Tests run for the BUILD platform (a test binary for another architecture cannot execute here);
+# only the shipped binary is cross-compiled.
+RUN CGO_ENABLED=0 go test ./... \
+ && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/mnemo-launcher .
+
 # busybox gives the init-container pattern `cp` and the wrapper its `sh`; it is about 4 MB.
 FROM busybox:1.37
 ARG VERSION=dev
@@ -36,5 +48,6 @@ LABEL org.opencontainers.image.title="mnemo-warmup-tools" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${VERSION}"
 COPY --from=build /src/warmup-cli/target/mnemo-warmup.jar /opt/mnemo-warmup/mnemo-warmup.jar
+COPY --from=launcher --chmod=0755 /out/mnemo-launcher /opt/mnemo-warmup/bin/mnemo-launcher
 COPY --chmod=0755 image/mnemo-warmup /opt/mnemo-warmup/bin/mnemo-warmup
 COPY --chmod=0755 scripts/mnemo-warmup-exec /opt/mnemo-warmup/bin/mnemo-warmup-exec

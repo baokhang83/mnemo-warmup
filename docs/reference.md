@@ -153,15 +153,18 @@ in the trainer and in the app. If a Spring Boot fat JAR is launched directly, `r
 starts it plain. See [ADR 0003](adr/0003-run-exec-model-and-layout.md).
 
 `run` options: `--cache-dir` (default `$MNEMO_WARMUP_CACHE_DIR`, then `.mnemo-warmup/cache`),
-`--image-digest` (default `$MNEMO_WARMUP_IMAGE_DIGEST`), `--print`, `--spawn`, `--stop-timeout-seconds`.
+`--image-digest` (default `$MNEMO_WARMUP_IMAGE_DIGEST`), `--print`, `--format shell|nul` (with `--print`:
+one shell-quoted line for `eval`, the default, or each argument followed by a NUL byte for the native
+launcher), `--spawn`, `--stop-timeout-seconds`.
 
 ## Container image
 
 The tool has to run **inside your application image**, because an archive is only valid for that
 image's JDK build, JAR files, paths and modification times. So the published image
 `ghcr.io/baokhang83/mnemo-warmup-tools:<version>` (about 7 MB, amd64 and arm64) contains no JDK; it only
-carries `/opt/mnemo-warmup/mnemo-warmup.jar`, a launcher `bin/mnemo-warmup` and the exec wrapper
-`bin/mnemo-warmup-exec`. Your application image needs Java 21 or newer.
+carries `/opt/mnemo-warmup/mnemo-warmup.jar`, the shell scripts `bin/mnemo-warmup` (launcher) and
+`bin/mnemo-warmup-exec` (exec wrapper), and the static native launcher `bin/mnemo-launcher` for images
+without a shell. Your application image needs Java 21 or newer.
 
 Bake it into your image:
 
@@ -186,14 +189,65 @@ initContainers:
     volumeMounts: [{ name: mnemo-tools, mountPath: /mnemo-tools }, { name: mnemo-cache, mountPath: /mnemo-cache }]
 ```
 
-If the image has no Java, or one older than 21, the launcher makes `fetch` skip itself with exit 0 and
+If the image has no Java, or one older than 21, the shell launcher makes `fetch` skip itself with exit 0 and
 `run` start your original command unchanged, so the pod still starts. That safety net needs `/bin/sh`.
-**Shell-free (distroless) application images** have no launcher: call
-`java -jar /mnemo-tools/mnemo-warmup.jar ...` directly, which requires Java 21+ in the image. On an
-older Java that init container would fail and block the pod, so do not enable it there. Build it locally with
+Build it locally with
 `docker build -f image/Dockerfile -t mnemo-warmup-tools .`, and check the whole chain in Docker with
 `scripts/verify-image.sh` (a local registry, JDK 21 with AppCDS and JDK 25 with AOT).
 See [ADR 0004](adr/0004-tools-image.md).
+
+### Shell-free (distroless) application images
+
+`bin/mnemo-launcher` is a static Go program (no libc, no shell; linux/amd64 and linux/arm64) that replaces
+the three shell steps. The offline injector uses it for every container it generates; the Helm chart still
+uses the shell scripts.
+
+| Command | What it does |
+|---------|--------------|
+| `mnemo-launcher install <dir>` | Copies the tools into `<dir>` (what `cp -R` did). Run it from the tools image, which still has the files at `/opt/mnemo-warmup`. |
+| `mnemo-launcher fetch <options>` | Runs `java -jar mnemo-warmup.jar fetch <options>`. A missing `java` or a failing jar is logged and exits 0, so the pod still starts. |
+| `mnemo-launcher exec -- <command>` | Asks the jar for the final command (`run --print --format nul`) and **replaces itself** with it, so the JVM is PID 1 and gets SIGTERM directly. On any doubt it starts your original command unchanged. |
+| `mnemo-launcher jar <arguments>` | Runs any other CLI command, for example the trainer's `train`, as `java -jar mnemo-warmup.jar <arguments>` with no fallback. |
+
+```yaml
+initContainers:
+  - name: mnemo-warmup-install
+    image: ghcr.io/baokhang83/mnemo-warmup-tools:0.2.5
+    command: ["/opt/mnemo-warmup/bin/mnemo-launcher", "install", "/mnemo-tools"]
+    volumeMounts: [{ name: mnemo-tools, mountPath: /mnemo-tools }]
+  - name: mnemo-warmup-fetch
+    image: my-distroless-app:1.0
+    command: ["/mnemo-tools/bin/mnemo-launcher", "fetch", "--jar", "/app/app.jar",
+              "--store", "oci://registry.example.com/team/warmup", "--out", "/mnemo-cache"]
+    volumeMounts: [{ name: mnemo-tools, mountPath: /mnemo-tools }, { name: mnemo-cache, mountPath: /mnemo-cache }]
+containers:
+  - name: app
+    image: my-distroless-app:1.0
+    command: ["/mnemo-tools/bin/mnemo-launcher"]
+    args: ["exec", "--", "java", "-jar", "/app/app.jar"]
+    env: [{ name: MNEMO_WARMUP_CACHE_DIR, value: /mnemo-cache }]
+```
+
+The launcher looks for `java` the way your command would: an explicit path in the command, then `PATH`,
+then `JAVA_HOME`, then common JDK locations. It never substitutes a different JDK for an explicit path.
+
+Known differences and limits:
+
+- **`fetch --strict`** keeps a real failure status, including when `java` is missing or older than 21
+  (127, or the jar's status). The shell launcher exits 0 there. Without `--strict` both exit 0.
+- **No Java version check.** On Java older than 21 the jar fails to start, which takes the same fallback
+  (`fetch` exits 0, `exec` starts your command), at the price of one wasted JVM start.
+- **`install` has no fallback.** If it cannot write the volume it exits 1 and the pod waits, because the
+  later containers have nothing to run. Without `java` in the application image `exec` cannot start the
+  application either and exits 127.
+- **The trainer needs Java 21+** in the application image; `jar train` fails visibly without it.
+- **The helper JVM** that decides the final command is stopped after 60 seconds and your command is
+  started unchanged.
+- Cache files are mode 0600 and owned by the user that ran `fetch`, so run the application as that user.
+
+`scripts/verify-image.sh` checks all of this on `gcr.io/distroless/java21-debian12`: install, train,
+push, fetch, cache hit, cache miss, corrupt archives, an unsupported command, UTF-8 arguments, exit status and SIGTERM
+(`docker stop` ends with exit 143 when the JVM received it).
 
 ## Kubernetes: the Helm chart and the trainer
 
@@ -305,7 +359,8 @@ more than one application (see the [project plan](PLAN.md)).
 warmup-core/   engine: JDK detection, extraction, training, manifest, OCI store, fetch/run logic
 warmup-cli/    command-line interface (picocli): build, bench, push, fetch, run, train
 coverage/      aggregates JaCoCo coverage for the badge (not published)
-image/         Dockerfile and launcher of the tools image
+image/         Dockerfile and shell launcher of the tools image
+launcher/      the static Go launcher (mnemo-launcher) for shell-free images
 deploy/helm/   Helm chart for the trainer plus the reusable pod-template helpers, and a parent-chart test fixture
 examples/      a Spring Boot app, an example workload chart, and the notes behind scripts/e2e-kind.sh
 scripts/       mnemo-warmup-exec wrapper, verify-image.sh, test-chart.sh, Docker checks for the AppCDS matrix

@@ -71,7 +71,7 @@ final class OfflineInjector {
             saved.put("container", w.container());
             saved.put("commandPresent", app.containsKey("command")); saved.put("command", app.get("command"));
             saved.put("argsPresent", app.containsKey("args")); saved.put("args", app.get("args"));
-            saved.put("injectedArgs", new ArrayList<>(w.command()));
+            saved.put("injectedArgs", launcherExecArgs(w.command()));
             saved.put("volumesPresent", pod.containsKey("volumes"));
             saved.put("initContainersPresent", pod.containsKey("initContainers"));
             saved.put("volumeMountsPresent", app.containsKey("volumeMounts"));
@@ -80,7 +80,7 @@ final class OfflineInjector {
             if (w.pullSecret() != null) append(pod, "volumes", secretVolume("mnemo-registry-pull", w.pullSecret()));
             List<Object> commonArgs = commonArgs(w);
             List<Object> fetchArgs = new ArrayList<>(List.of("fetch", "--out", "/mnemo-cache")); fetchArgs.addAll(commonArgs);
-            Map<String, Object> fetch = obj("name", "mnemo-warmup-fetch", "image", w.image(), "command", List.of("/mnemo-tools/bin/mnemo-warmup"), "args", fetchArgs,
+            Map<String, Object> fetch = obj("name", "mnemo-warmup-fetch", "image", w.image(), "command", List.of(LAUNCHER), "args", fetchArgs,
                 "volumeMounts", new ArrayList<>(List.of(mount("mnemo-tools", "/mnemo-tools", true), mount("mnemo-cache", "/mnemo-cache", false), mount("mnemo-work", "/tmp/mnemo-warmup", false))));
             copyMounts(app, fetch);
             copyIfPresent(app, fetch, "env", "envFrom", "imagePullPolicy", "securityContext");
@@ -92,7 +92,7 @@ final class OfflineInjector {
             append(pod, "initContainers", install(tools), fetch);
             append(app, "volumeMounts", mount("mnemo-tools", "/mnemo-tools", true), mount("mnemo-cache", "/mnemo-cache", true));
             append(app, "env", obj("name", "MNEMO_WARMUP_CACHE_DIR", "value", "/mnemo-cache"));
-            app.put("command", List.of("/mnemo-tools/bin/mnemo-warmup-exec")); app.put("args", new ArrayList<>(w.command()));
+            app.put("command", List.of(LAUNCHER)); app.put("args", launcherExecArgs(w.command()));
             saved.put("volumeNames", managedVolumes);
             saved.put("volumesManaged", managed(pod, "volumes", managedVolumes));
             saved.put("initContainersManaged", managed(pod, "initContainers", List.of("mnemo-warmup-install", "mnemo-warmup-fetch")));
@@ -131,9 +131,9 @@ final class OfflineInjector {
     private static List<Map<String, Object>> trainer(WorkloadDiscovery.Workload w, Map<String, Object> pod, Map<String, Object> app, List<Object> common, String tools) {
         String name = trainerName(w.name());
         Map<String, Object> labels = obj(OWNER, w.name());
-        List<Object> args = new ArrayList<>(List.of("train")); args.addAll(common); args.addAll(List.of("--exit-mode", w.exitMode()));
+        List<Object> args = new ArrayList<>(List.of("jar", "train")); args.addAll(common); args.addAll(List.of("--exit-mode", w.exitMode()));
         if (w.probeUrl() != null) args.addAll(List.of("--url", w.probeUrl()));
-        Map<String, Object> trainer = obj("name", "trainer", "image", w.image(), "command", List.of("/mnemo-tools/bin/mnemo-warmup"), "args", args,
+        Map<String, Object> trainer = obj("name", "trainer", "image", w.image(), "command", List.of(LAUNCHER), "args", args,
                 "volumeMounts", new ArrayList<>(List.of(mount("mnemo-tools", "/mnemo-tools", true), mount("mnemo-work", "/tmp/mnemo-warmup", false))));
         copyMounts(app, trainer);
         copyIfPresent(app, trainer, "envFrom", "imagePullPolicy", "securityContext");
@@ -176,9 +176,16 @@ final class OfflineInjector {
         if (w.plainHttp()) args.add("--plain-http");
         return args;
     }
+    /** The shell-free launcher: works in distroless images, unlike the sh scripts the Helm chart still uses. */
+    private static final String LAUNCHER = "/mnemo-tools/bin/mnemo-launcher";
+    private static List<Object> launcherExecArgs(List<String> command) {
+        List<Object> args = new ArrayList<>(List.of("exec", "--"));
+        args.addAll(command);
+        return args;
+    }
     private static Map<String, Object> install(String tools) {
         return obj("name", "mnemo-warmup-install", "image", tools,
-                "command", List.of("cp", "-R", "/opt/mnemo-warmup/.", "/mnemo-tools/"),
+                "command", List.of("/opt/mnemo-warmup/bin/mnemo-launcher", "install", "/mnemo-tools"),
                 "securityContext", obj("runAsNonRoot", true, "runAsUser", 65532, "allowPrivilegeEscalation", false,
                         "readOnlyRootFilesystem", true, "capabilities", obj("drop", List.of("ALL")),
                         "seccompProfile", obj("type", "RuntimeDefault")),
@@ -221,7 +228,7 @@ final class OfflineInjector {
         try { saved = ManifestStream.parse(new String(Base64.getDecoder().decode(s), StandardCharsets.UTF_8)).get(0); }
         catch (RuntimeException e) { throw new IllegalArgumentException("invalid injector marker", e); }
         Map<String, Object> pod = map(template.get("spec"), "pod spec"); Map<String, Object> app = selected(pod, String.valueOf(saved.get("container")));
-        if (!List.of("/mnemo-tools/bin/mnemo-warmup-exec").equals(app.get("command"))) throw new IllegalArgumentException("managed command was changed");
+        if (!List.of(LAUNCHER).equals(app.get("command"))) throw new IllegalArgumentException("managed command was changed");
         if (!java.util.Objects.equals(saved.get("injectedArgs"), app.get("args"))) throw new IllegalArgumentException("managed arguments were changed");
         List<String> volumeNames = WorkloadDiscovery.strings(saved.get("volumeNames"), "managed volume names");
         verifyManaged(pod, saved, "volumes", volumeNames);

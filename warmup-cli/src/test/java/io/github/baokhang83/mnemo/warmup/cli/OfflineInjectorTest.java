@@ -43,7 +43,7 @@ class OfflineInjectorTest {
     }
     @Test void editedManagedCommandFailsInsteadOfOverwriting() {
         String injected = inject(INPUT).yaml();
-        String edited = injected.replace("/mnemo-tools/bin/mnemo-warmup-exec", "/usr/bin/other");
+        String edited = injected.replace("/mnemo-tools/bin/mnemo-launcher", "/usr/bin/other");
         assertThrows(IllegalArgumentException.class, () -> inject(edited));
     }
     @Test void failsWhenNamespaceCannotBeDetermined() {
@@ -62,7 +62,7 @@ class OfflineInjectorTest {
         assertNotEquals(injected, disabled, "expected serialized enabled annotation");
         String result = inject(disabled).yaml();
         assertEquals(2, ManifestStream.parse(result).size());
-        assertFalse(result.contains("mnemo-warmup-exec"));
+        assertFalse(result.contains("mnemo-launcher"));
         assertFalse(result.contains("mnemo-tools"));
     }
     @Test void registrySecretsAreMountedSeparately() {
@@ -105,7 +105,15 @@ class OfflineInjectorTest {
         var containers = (java.util.List<java.util.Map<String, Object>>) ((java.util.Map<String, Object>) ((java.util.Map<String, Object>) ((java.util.Map<String, Object>) docs.get(0).get("spec")).get("template")).get("spec")).get("containers");
         assertEquals("proxy", containers.get(0).get("name"));
         assertNull(containers.get(0).get("command"), "the other container must be untouched");
-        assertEquals(java.util.List.of("/mnemo-tools/bin/mnemo-warmup-exec"), containers.get(1).get("command"));
+        assertEquals(java.util.List.of("/mnemo-tools/bin/mnemo-launcher"), containers.get(1).get("command"));
+    }
+    @Test void everyGeneratedContainerRunsThroughTheShellFreeLauncher() {
+        String yaml = inject(INPUT).yaml();
+        assertTrue(yaml.contains("/opt/mnemo-warmup/bin/mnemo-launcher"), "install runs the launcher from the tools image");
+        assertFalse(yaml.contains("mnemo-warmup-exec"), "no sh wrapper");
+        assertFalse(java.util.regex.Pattern.compile("bin/mnemo-warmup(?![-\\w])").matcher(yaml).find(), "no sh launcher script");
+        assertFalse(java.util.regex.Pattern.compile("(?m)^\\s*-\\s*cp\\s*$").matcher(yaml).find(), "no cp");
+        assertTrue(java.util.regex.Pattern.compile("(?s)- jar\\s+- train").matcher(yaml).find(), "the trainer goes through the jar pass-through");
     }
     @Test void aNamedContainerThatDoesNotExistIsAnError() {
         String missing = TWO_CONTAINERS.replace("warmup.mnemo.io/exit-mode: spring-refresh", "warmup.mnemo.io/exit-mode: spring-refresh\n        warmup.mnemo.io/container: nope");

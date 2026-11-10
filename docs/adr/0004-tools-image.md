@@ -1,6 +1,6 @@
 # ADR 0004: A JDK-free tools image that runs inside the application image
 
-Status: accepted (2026-11-10) · Resolves issue #16 (supersedes its "bundle a JDK, per-JDK variants" wording)
+Status: accepted (2026-11-10) · Resolves issue #16 (supersedes its "bundle a JDK, per-JDK variants" wording) · Amended by issue #56: shell-free images are supported through a native launcher
 
 ## Context
 
@@ -32,12 +32,20 @@ or one older than 21 (the CLI needs 21+), the launcher keeps the pod starting (�
 
 - **Per-JDK images with a bundled JDK (the issue's wording):** the tool cannot see the application's
   JARs, so fingerprints do not match unless the application files are also mounted into it.
-- **Distroless or scratch base:** the copy pattern needs `cp`, and the wrapper needs `sh`.
+- **Distroless or scratch base for the tools image:** the Helm chart's copy pattern needs `cp`, and its wrapper needs `sh`. The tools image stays busybox; shell-free *application* images are handled by the native launcher (below).
 
 ## Consequences
 
 - The application image needs Java 21+ for the tool to run in it. With an older Java the cache is skipped.
-- Distroless application images have no shell, so no launcher and no fallback for an old Java: call
-  `java -jar /mnemo-tools/mnemo-warmup.jar ...` directly (`run --spawn` as the entrypoint, which keeps a second
-  JVM resident). That requires Java 21+ in the image; with an older Java the init container would fail and block the pod.
+- Distroless application images have no shell. `bin/mnemo-launcher`, a static Go program in the same image
+  (`launcher/`, built for amd64 and arm64 with `CGO_ENABLED=0`), does the install, fetch and application-start
+  steps without one. It locates `java` the way the application's own command does, runs the jar, and replaces
+  itself with the final command so the JVM is PID 1. Cache failures fall back to the original command (§1-§3);
+  `install` and a missing `java` for the application itself cannot, and fail visibly. The jar prints the final
+  command with `run --print --format nul` (NUL-terminated arguments), so no shell quoting is needed. The offline
+  injector (#55) uses the launcher for all generated containers; the Helm chart keeps the shell scripts.
+  Rejected for the launcher: spawning the application as a child (needs signal forwarding and keeps a parent
+  resident), and a Java version probe (the jar already fails fast on an old Java, which takes the fallback).
+  Verified on `gcr.io/distroless/java21-debian12` by `scripts/verify-image.sh`. See the
+  [reference](../reference.md#shell-free-distroless-application-images) for limits.
 - The Helm chart (#17) uses the copy-at-deploy pattern and must run the trainer, `fetch` and the app from the same image.

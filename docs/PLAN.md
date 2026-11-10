@@ -98,8 +98,10 @@ and grows running pods in place without restarts; warmup speeds up the pods that
 ## Open decisions
 1. **Archive store:** DECIDED: OCI registry first, behind a put/get/exists interface
    (see `docs/adr/0001-archive-store.md`). S3/GCS may follow; RWX PVC not planned.
-2. **Who trains:** one-off Job per fingerprint vs first pod to start.
-3. **Training traffic:** startup only, probe-driven, or user warmup script.
+2. **Who trains:** DECIDED: chart-owned CronJob with a Lease, non-hook (see
+   `docs/adr/0002-training-trigger-and-traffic.md`).
+3. **Training traffic:** DECIDED: `spring-refresh` default, `http-probe` opt-in, no warmup
+   script in v0.2.0 (same ADR).
 4. **App pickup:** `mnemo-warmup run` entrypoint only, or also `JAVA_TOOL_OPTIONS`.
 5. **AppCDS flavour:** dynamic archive on top of the JDK default archive vs static
    dump. Dynamic is simpler. Verified on 21-24: see `docs/appcds-jdk-matrix.md`.

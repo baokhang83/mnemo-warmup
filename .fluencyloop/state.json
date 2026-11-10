@@ -1,9 +1,9 @@
 {
   "schema_version": "1",
-  "feature": "11-decision-archive-store-backend-oci-registry-vs-s3-gcs-vs",
-  "branch": "feature/11-decision-archive-store-backend-oci-registry-vs-s3-gcs-vs",
+  "feature": "12-decision-who-trains-one-off-job-vs-first-pod-and-training",
+  "branch": "feature/12-decision-who-trains-one-off-job-vs-first-pod-and-training",
   "stage": "build",
-  "last_session": "002-revise-adr-0001-after-review-tag-encoding-and-in-pod-cre",
+  "last_session": "002-revise-adr-0002-after-review-cronjob-plus-lease",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

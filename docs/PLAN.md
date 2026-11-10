@@ -96,8 +96,8 @@ and grows running pods in place without restarts; warmup speeds up the pods that
   `SoftMaxHeapSize` does not, one archive can survive warden's day/night resizes.
 
 ## Open decisions
-1. **Archive store:** OCI registry (easy auth, content-addressed) vs S3/GCS vs RWX PVC.
-   Leaning OCI or S3; archives are hundreds of MB and RWX is not universal.
+1. **Archive store:** DECIDED: OCI registry first, behind a put/get/exists interface
+   (see `docs/adr/0001-archive-store.md`). S3/GCS may follow; RWX PVC not planned.
 2. **Who trains:** one-off Job per fingerprint vs first pod to start.
 3. **Training traffic:** startup only, probe-driven, or user warmup script.
 4. **App pickup:** `mnemo-warmup run` entrypoint only, or also `JAVA_TOOL_OPTIONS`.

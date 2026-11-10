@@ -10,8 +10,12 @@ import io.github.baokhang83.mnemo.warmup.core.ExitMode;
 import io.github.baokhang83.mnemo.warmup.core.HttpProbeExitMode;
 import io.github.baokhang83.mnemo.warmup.core.JarExtractor;
 import io.github.baokhang83.mnemo.warmup.core.JdkInfo;
+import io.github.baokhang83.mnemo.warmup.core.OciArchiveStore;
+import io.github.baokhang83.mnemo.warmup.core.RegistryCredentials;
+import io.github.baokhang83.mnemo.warmup.core.StoreException;
 import io.github.baokhang83.mnemo.warmup.core.TrainingException;
 import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -29,7 +33,7 @@ import picocli.CommandLine.Spec;
         mixinStandardHelpOptions = true,
         version = "mnemo-warmup 0.1.0-SNAPSHOT",
         description = "Build, validate and benchmark AppCDS / Leyden AOT caches.",
-        subcommands = {Main.Build.class, Main.Bench.class})
+        subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class})
 public class Main implements Runnable {
 
     @Spec
@@ -154,6 +158,79 @@ public class Main implements Runnable {
                 err.println("error: " + e.getMessage());
                 return 2;
             } catch (TrainingException e) {
+                err.println("error: " + e.getMessage());
+                return 1;
+            }
+        }
+    }
+
+    @Command(name = "push",
+            mixinStandardHelpOptions = true,
+            description = "Upload the archive and manifest produced by build to an OCI registry, tagged by fingerprint.")
+    static class Push implements Callable<Integer> {
+
+        @Spec
+        CommandSpec spec;
+
+        @Option(
+                names = "--work-dir",
+                defaultValue = ".mnemo-warmup",
+                description = "Directory holding the archive and " + ArchiveManifest.FILE_NAME + " from build. Default: ${DEFAULT-VALUE}.")
+        Path workDir;
+
+        @Option(names = "--store", required = true, description = "Archive store: oci://host[:port]/repository.")
+        String store;
+
+        @Option(
+                names = "--registry-auth",
+                description = "Docker-config style JSON with the registry login (push scope). Defaults to $MNEMO_WARMUP_REGISTRY_AUTH, then anonymous.")
+        Path registryAuth;
+
+        @Option(names = "--plain-http", description = "Talk to the registry over http instead of https (local registries only).")
+        boolean plainHttp;
+
+        @Option(names = "--timeout-seconds", defaultValue = "1800", description = "Per request. Default: ${DEFAULT-VALUE}.")
+        long timeoutSeconds;
+
+        @Override
+        public Integer call() {
+            var out = spec.commandLine().getOut();
+            var err = spec.commandLine().getErr();
+            try {
+                Path manifestFile = workDir.resolve(ArchiveManifest.FILE_NAME);
+                if (!Files.isRegularFile(manifestFile)) {
+                    err.println("error: no " + manifestFile + " (run build first)");
+                    return 2;
+                }
+                ArchiveManifest manifest = ArchiveManifest.read(manifestFile);
+                if (manifest.archive() == null) {
+                    err.println("error: " + manifestFile + " does not describe an archive");
+                    return 2;
+                }
+                Path archive = workDir.resolve(manifest.archive().file());
+                if (!Files.isRegularFile(archive)) {
+                    err.println("error: archive " + archive + " not found");
+                    return 2;
+                }
+                if (timeoutSeconds <= 0) {
+                    throw new IllegalArgumentException("--timeout-seconds must be positive");
+                }
+                Path auth = registryAuth;
+                if (auth == null && System.getenv("MNEMO_WARMUP_REGISTRY_AUTH") != null) {
+                    auth = Path.of(System.getenv("MNEMO_WARMUP_REGISTRY_AUTH"));
+                }
+                RegistryCredentials credentials = auth == null
+                        ? null
+                        : RegistryCredentials.fromDockerConfig(auth, OciArchiveStore.registryHost(store)).orElse(null);
+                var target = OciArchiveStore.of(store, plainHttp, credentials, Duration.ofSeconds(timeoutSeconds));
+                out.printf("Uploading %s (%.1f MB) to %s%n", archive, manifest.archive().sizeBytes() / 1_048_576.0, store);
+                target.put(manifest, archive);
+                out.printf("Stored fingerprint %s as tag %s%n", manifest.fingerprint(), OciArchiveStore.tagFor(manifest.fingerprint()));
+                return 0;
+            } catch (IllegalArgumentException | IllegalStateException e) {
+                err.println("error: " + e.getMessage());
+                return 2;
+            } catch (StoreException e) {
                 err.println("error: " + e.getMessage());
                 return 1;
             }

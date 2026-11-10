@@ -5,6 +5,6 @@ type: application
 version: 0.1.0
 dependencies:
   - name: mnemo-warmup
-    version: 0.1.0
+    version: "*"      # a test fixture: any chart version
     repository: file://../../mnemo-warmup
     alias: warmup

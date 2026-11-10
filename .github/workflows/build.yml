@@ -34,8 +34,17 @@ jobs:
           jacoco-csv-file: coverage/target/site/jacoco-aggregate/jacoco.csv
           badges-directory: coverage/target/site/jacoco-aggregate/badges
 
+      # gh-pages also serves the Helm repository (index.yaml, charts/, artifacthub-repo.yml): keep it out of the clean-up
+      - name: Include Artifact Hub repository metadata
+        if: matrix.java == 21 && github.event_name == 'push' && github.ref == 'refs/heads/main' && hashFiles('artifacthub-repo.yml') != ''
+        run: cp artifacthub-repo.yml coverage/target/site/jacoco-aggregate/artifacthub-repo.yml
+
       - name: Publish coverage report to GitHub Pages
         if: matrix.java == 21 && github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           folder: coverage/target/site/jacoco-aggregate
+          clean-exclude: |
+            index.yaml
+            artifacthub-repo.yml
+            charts/**

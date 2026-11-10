@@ -1,0 +1,64 @@
+name: publish-chart
+
+# Publishes the Helm chart as an installable repository, in the same way as mnemo-jvm-warden:
+#   helm repo add mnemo-warmup https://baokhang83.github.io/mnemo-warmup/
+# chart-releaser stores the package as a GitHub release asset (mnemo-warmup-<version>) and updates index.yaml on gh-pages;
+# mirror-chart-to-pages then serves the package from GitHub Pages (Artifact Hub's tracker times out on release assets).
+#
+# The chart version is the release version: on an app release tag (v1.2.3) scripts/stamp-chart.sh sets the chart version,
+# appVersion and the default tools image tag to 1.2.3. A version can be published once; chart-releaser refuses to
+# overwrite a release. To publish a version without a new tag (for example the first one, 0.2.0), run this workflow by hand.
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Chart version to publish (x.y.z, no leading v). It must match an existing tools image tag.'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - uses: azure/setup-helm@v4
+
+      - name: Stamp the release version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          VERSION="${INPUT_VERSION:-${GITHUB_REF_NAME#v}}"
+          scripts/stamp-chart.sh "$VERSION"
+          grep -H -E '^(version|appVersion):' deploy/helm/mnemo-warmup/Chart.yaml
+
+      - name: The tools image this chart points at must exist
+        run: |
+          VERSION=$(awk '$1 == "version:" {print $2; exit}' deploy/helm/mnemo-warmup/Chart.yaml)
+          docker manifest inspect "ghcr.io/baokhang83/mnemo-warmup-tools:${VERSION}" >/dev/null \
+            || { echo "::error::ghcr.io/baokhang83/mnemo-warmup-tools:${VERSION} does not exist; publish the image (tag v${VERSION}) first"; exit 1; }
+
+      - name: Lint and render
+        run: |
+          helm lint deploy/helm/mnemo-warmup --set app.image.repository=my-app --set app.image.tag=1.0 --set store.url=oci://registry.example.com/team/warmup
+          helm template check deploy/helm/mnemo-warmup --set app.image.repository=my-app --set app.image.tag=1.0 --set store.url=oci://registry.example.com/team/warmup >/dev/null
+
+      - name: Run chart-releaser
+        uses: helm/chart-releaser-action@v1.6.0
+        with:
+          charts_dir: deploy/helm
+          mark_as_latest: false     # the app release (v1.2.3) stays "Latest"
+        env:
+          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"

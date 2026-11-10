@@ -42,6 +42,12 @@ _No stance recorded yet._
 
 **Why:** The archive is an optimisation. A stale archive in a pod would otherwise turn a slow start into an outage. Verified on JDK 21-24 in `docs/appcds-jdk-matrix.md`.
 
+### §2 Verify before use
+
+**Rule:** An archive obtained from a store is digest-checked before the JVM can load it. A size or digest mismatch discards the download and means "no archive" (§1), never a partial or unverified file.
+
+**Why:** A truncated or tampered archive handed to the JVM can crash it or run unintended code. Verification keeps a bad store or network from becoming an outage or a code-execution path.
+
 <!-- Real principles land here, numbered §1, §2, … (features cite these numbers in their
 `constitution:` fields). Each: a short title, the non-negotiable in a sentence or two, and the
 why (the failure it prevents). Keep them checkable, not platitudes. -->

@@ -3,7 +3,7 @@
   "feature": "18-example-spring-boot-app-example-chart-and-a-kind-end-to-e",
   "branch": "feature/18-example-spring-boot-app-example-chart-and-a-kind-end-to-e",
   "stage": "build",
-  "last_session": "003-release-prep-version-string-e2e-rollout-race-readme-stat",
+  "last_session": "004-chart-publishing-classic-helm-repo-version-release",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

@@ -1,11 +1,22 @@
 # mnemo-warmup Helm chart
 
 Trains a startup cache (AppCDS, or Leyden AOT on JDK 25+) for your JVM application **once per fingerprint** and
-shares it with every replica. See the [project README](../../../README.md) and
-[ADR 0005](../../../docs/adr/0005-trainer-and-chart.md).
+shares it with every replica. See the [project README](https://github.com/baokhang83/mnemo-warmup/#readme) and
+[ADR 0005](https://github.com/baokhang83/mnemo-warmup/blob/main/docs/adr/0005-trainer-and-chart.md).
 
 The chart renders the **trainer** (ServiceAccount, Role/RoleBinding for Leases, CronJob). It does **not** render your
 Deployment: you add the init containers and the exec wrapper to your own pod template with the named templates below.
+
+## Get the chart
+
+The chart is published as a Helm repository, and its version is the release version (the chart, the app it deploys and the default
+tools image `ghcr.io/baokhang83/mnemo-warmup-tools` all carry the same number):
+
+```bash
+helm repo add mnemo-warmup https://baokhang83.github.io/mnemo-warmup/
+helm repo update
+helm search repo mnemo-warmup
+```
 
 ## Use it from your application chart
 
@@ -13,8 +24,8 @@ Deployment: you add the init containers and the exec wrapper to your own pod tem
 # Chart.yaml
 dependencies:
   - name: mnemo-warmup
-    version: 0.1.0
-    repository: oci://ghcr.io/baokhang83/charts   # or file://../mnemo-warmup while developing
+    version: 0.2.0
+    repository: https://baokhang83.github.io/mnemo-warmup/
     alias: warmup
 ```
 
@@ -36,7 +47,7 @@ containers:
       {{- include "mnemo-warmup.volumeMounts" .Values.warmup | nindent 12 }}
 ```
 
-A complete working example is [`../tests/parent`](../tests/parent).
+A complete working example is [`examples/helm/example-app`](https://github.com/baokhang83/mnemo-warmup/tree/main/examples/helm/example-app).
 
 ## Values that must agree with your Deployment
 

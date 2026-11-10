@@ -33,6 +33,16 @@ validate() { # <name> <manifest>
 echo "== lint"
 helm lint "$CHART" "${BASE[@]}" >/dev/null && ok "helm lint" || fail "helm lint"
 
+echo "== the chart carries one version"
+cv=$(awk '$1 == "version:" {print $2; exit}' "$CHART/Chart.yaml")
+av=$(awk '$1 == "appVersion:" {print $2; exit}' "$CHART/Chart.yaml" | tr -d '"')
+tt=$(awk '/^tools:/{t=1} t && /^    tag:/ {gsub(/"/,"",$2); print $2; exit}' "$CHART/values.yaml")
+ai=$(grep -o 'mnemo-warmup-tools:[^ ]*' "$CHART/Chart.yaml" | head -1 | cut -d: -f2)
+if [ "$cv" = "$av" ] && [ "$cv" = "$tt" ] && [ "$cv" = "$ai" ]; then ok "version = appVersion = default tools image tag = Artifact Hub image tag = $cv"; else fail "versions disagree: version=$cv appVersion=$av tools.image.tag=$tt annotation=$ai (run scripts/stamp-chart.sh)"; fi
+STAMPED="$WORK/stamped"; cp -R "$CHART" "$STAMPED"
+if scripts/stamp-chart.sh 9.8.7 "$STAMPED" >/dev/null && helm lint "$STAMPED" "${BASE[@]}" >/dev/null && helm package "$STAMPED" -d "$WORK" >/dev/null && [ -s "$WORK/mnemo-warmup-9.8.7.tgz" ]; then ok "a stamped chart lints and packages as mnemo-warmup-9.8.7.tgz"; else fail "stamping a release version breaks the chart"; fi
+grep -q "ghcr.io/baokhang83/mnemo-warmup-tools:9.8.7" <(helm template s "$STAMPED" "${BASE[@]}") && ok "the stamped default tools image reaches the rendered manifests" || fail "stamped tools image tag not rendered"
+
 echo "== defaults (tag, anonymous registry)"
 out=$(helm template rel "$CHART" -n default "${BASE[@]}")
 validate "defaults" "$out"

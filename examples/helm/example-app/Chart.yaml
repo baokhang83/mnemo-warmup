@@ -6,7 +6,7 @@ version: 0.1.0
 appVersion: "0.1.0"
 dependencies:
   - name: mnemo-warmup
-    version: 0.1.0
+    version: ">=0.2.0"
     # while developing in this repository; use the published chart's repository in real use
     repository: file://../../../deploy/helm/mnemo-warmup
     alias: warmup

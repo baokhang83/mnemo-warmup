@@ -3,8 +3,6 @@
   <h1>mnemo-warmup</h1>
 </div>
 
-**Faster JVM starts on Kubernetes, shared by every replica.**
-
 A JVM starts much faster when it reuses an archive of classes it has already loaded (AppCDS, or the Leyden AOT cache on JDK 25;
 speedups of 30 to 60% are commonly reported). mnemo-warmup trains that archive **once, inside your cluster**, keeps it in a
 registry, and has every pod fetch it before the application starts. If the archive does not fit the pod exactly, or anything goes

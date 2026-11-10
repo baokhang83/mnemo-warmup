@@ -10,15 +10,16 @@ init container, and fall back to a normal start whenever the cache doesn't match
 [![build](https://github.com/baokhang83/mnemo-warmup/actions/workflows/build.yml/badge.svg)](https://github.com/baokhang83/mnemo-warmup/actions/workflows/build.yml)
 [![coverage](https://raw.githubusercontent.com/baokhang83/mnemo-warmup/refs/heads/gh-pages/badges/jacoco.svg)](https://baokhang83.github.io/mnemo-warmup/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)
+![Status: alpha](https://img.shields.io/badge/status-alpha-yellow)
 ![Java 21+](https://img.shields.io/badge/java-21%2B-informational)
 
-> **Status: pre-alpha.** The whole pod-side chain works from the command line: `build` trains an
-> archive, `push` stores it in an OCI registry, `fetch` (init container) retrieves and verifies it,
-> and `run` (entrypoint) starts the JVM with it only if it still fits. `bench` measures the savings.
-> A tools image carries the CLI into your application image, a Helm chart runs the trainer, and an
-> [example](examples/README.md) runs the whole chain on a kind cluster. See the [roadmap](#roadmap) and the [project plan](docs/PLAN.md). Part of the Mnemo
-> suite (`mnemo-jvm-warden`, `mnemo-cache`, `mnemo-warmup`).
+> **Status: alpha.** The whole chain works and is checked end to end on a real Kubernetes cluster (kind) with JDK 21
+> (AppCDS) and JDK 25 (AOT): `build` trains an archive, `push` stores it in an OCI registry, a trainer CronJob does that
+> in the cluster, `fetch` (init container) retrieves and verifies it, and `run` (entrypoint) starts the JVM with it only if
+> it still fits; `bench` measures the savings. What is **not** proven yet: it has only run on arm64, with one small Spring
+> Boot application, and the Helm chart is not published (use it from this repository). The command-line options, chart
+> values and the manifest format can still change. See the [roadmap](#roadmap) and the [project plan](docs/PLAN.md).
+> Part of the Mnemo suite (`mnemo-jvm-warden`, `mnemo-cache`, `mnemo-warmup`).
 
 ---
 
@@ -42,7 +43,7 @@ creation since JDK 25, JEP 514). Almost nobody runs them in production, because:
 ```
             +------------------------+
  trainer    | trainer CronJob        |  computes the fingerprint, trains if missing, pushes
- (planned)  | (build + push)         |--------------------+
+ (CronJob)  | (train: build + push)  |--------------------+
             +------------------------+                    v
                                              +------------------------+
                                              | archive store          |
@@ -57,7 +58,7 @@ creation since JDK 25, JEP 514). Almost nobody runs them in production, because:
                          (a plain start if nothing fits)
 ```
 
-Solid today: `build`, `push`, `fetch`, `run` and the tools image. Planned: the trainer CronJob and the Helm chart
+Everything in the picture exists: `build`, `push`, `train`, `fetch`, `run`, the tools image and the Helm chart
 (a Helm *hook* was rejected because a failing trainer would fail the release; see
 [ADR 0002](docs/adr/0002-training-trigger-and-traffic.md)).
 
@@ -273,7 +274,7 @@ snippet, and [`deploy/helm/tests/parent`](deploy/helm/tests/parent) is a working
 
 ```yaml
 dependencies:
-  - { name: mnemo-warmup, version: 0.1.0, repository: "oci://...", alias: warmup }
+  - { name: mnemo-warmup, version: 0.1.0, repository: "file://path/to/mnemo-warmup/deploy/helm/mnemo-warmup", alias: warmup }
 ```
 
 The values that must match your Deployment are `app.image`, `app.jar`, `app.jvmArgs` and `app.env`: an archive is only
@@ -329,10 +330,13 @@ longer matches. The manifest also stores the archive's size and SHA-256.
 - `warmup-core` is on [Maven Central](https://central.sonatype.com/artifact/io.github.baokhang83.mnemo/warmup-core)
   as `io.github.baokhang83.mnemo:warmup-core`.
 
-Not there yet: a published chart and image (the first release tag), and a pass of the end-to-end test in CI. (see the [roadmap](#roadmap)).
+Not there yet: a published Helm chart (use `deploy/helm/mnemo-warmup` from this repository), results on amd64, and
+more than one application (see the [roadmap](#roadmap)).
 
 ## Limitations
 
+- **Tested on arm64 only so far** (Apple silicon, Docker, kind). The code is not architecture specific and the image is built
+  for amd64 as well, but no amd64 run has been done.
 - **Linux and macOS only.** Stopping the app with SIGTERM is what makes the JVM write the
   archive; Windows kills the process instead.
 - **AOT needs JDK 25+.** JDK 24 has the AOT cache but a two-step flow that is not
@@ -347,6 +351,16 @@ Not there yet: a published chart and image (the first release tag), and a pass o
   or a cloud registry).
 - **`run` hashes the classpath JARs and the archive at start.** That costs startup time on a large
   classpath; it has not been measured yet.
+
+## Getting it
+
+- **The tool in a pod:** the tools image `ghcr.io/baokhang83/mnemo-warmup-tools:<version>` (see [Container image](#container-image)),
+  published for each release tag. It is the only way the CLI is distributed; build from source to run it elsewhere.
+- **As a library:** `warmup-core` is on Maven Central (`io.github.baokhang83.mnemo:warmup-core`), for example for
+  mnemo-jvm-warden.
+- **The Helm chart:** `deploy/helm/mnemo-warmup` in this repository (not published to a chart repository yet).
+
+`mnemo-warmup --version` prints the version of the jar you run.
 
 ## Building from source
 
@@ -392,7 +406,7 @@ docs/adr/      decisions: archive store, training trigger, run/exec model
 - [x] Archive store backend with `push`
 - [x] `fetch` (init container) and `run` (entrypoint)
 - [x] Tools image (JDK-free, runs inside the application image), checked end to end in Docker
-- [x] `train` command with a Kubernetes Lease, trainer CronJob and Helm chart (validated by rendering and API-server dry-run)
+- [x] `train` command with a Kubernetes Lease, trainer CronJob and Helm chart (rendered, accepted by a real API server, and run in a kind cluster)
 - [x] Example Spring Boot app, tested on kind with JDK 21 (AppCDS) and JDK 25 (AOT) by `scripts/e2e-kind.sh`
 
 **Phase 3: automation (v0.3.0)**

@@ -3,7 +3,7 @@
   "feature": "11-decision-archive-store-backend-oci-registry-vs-s3-gcs-vs",
   "branch": "feature/11-decision-archive-store-backend-oci-registry-vs-s3-gcs-vs",
   "stage": "build",
-  "last_session": "001-compare-archive-stores-and-record-adr-0001-choosing-oci",
+  "last_session": "002-revise-adr-0001-after-review-tag-encoding-and-in-pod-cre",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

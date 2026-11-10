@@ -1,4 +1,7 @@
-# mnemo-warmup
+<div align="center">
+  <img width="300" height="300" alt="image" src="https://github.com/user-attachments/assets/70f9a302-2f30-409c-b170-8f437391778a" />
+  <h1>mnemo-warmup</h1>
+</div>
 
 **Cluster-aware startup caches for JVM workloads on Kubernetes.**
 Train an AppCDS or Project Leyden AOT cache once, share it with every replica through an

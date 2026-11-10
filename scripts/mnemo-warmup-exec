@@ -9,8 +9,11 @@
 # receives SIGTERM directly, with no second JVM kept resident. If mnemo-warmup is missing or fails
 # in any way, the original command is exec'd unchanged: a cache problem never stops the application.
 #
-# Environment (read by mnemo-warmup run): MNEMO_WARMUP_CACHE_DIR (default /mnemo-cache),
+# Environment (read by mnemo-warmup run): MNEMO_WARMUP_CACHE_DIR (default .mnemo-warmup/cache),
 # MNEMO_WARMUP_IMAGE_DIGEST (the digest given to `build`).
+
+# In the tools layout the launcher sits next to this script; an installed `mnemo-warmup` on PATH wins.
+PATH="$PATH:$(cd "$(dirname "$0")" && pwd)"
 
 if cmd=$(mnemo-warmup run --print -- "$@") && [ -n "$cmd" ]; then
   eval "exec $cmd"

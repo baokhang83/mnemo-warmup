@@ -244,4 +244,71 @@ class RunPlannerTest {
         assertTrue(output.contains("refreshed"), output);
         assertTrue(output.contains("Main source: shared objects file"), "the app class must come from the archive:\n" + output);
     }
+
+    @Test
+    void sameLengthCorruptionOfTheArchiveIsCaughtByItsHash(@TempDir Path dir) throws Exception {
+        Cache c = cache(dir);
+        Path archive = c.cacheDir().resolve("app." + STRATEGY.extension());
+        byte[] bytes = Files.readAllBytes(archive);
+        bytes[0] ^= 0x01; // same length, different content
+        Files.write(archive, bytes);
+
+        var plan = plan(c, launch(c, "-Xmx512m"));
+
+        assertFalse(plan.archiveUsed());
+        assertTrue(plan.notes().get(0).contains("SHA-256"), plan.notes().toString());
+        assertEquals(launch(c, "-Xmx512m"), plan.command());
+    }
+
+    @Test
+    void identicalFilesInAnotherDirectoryAreNotUsedBecauseTheJvmRecordsPaths(@TempDir Path dir) throws Exception {
+        Cache c = cache(Files.createDirectories(dir.resolve("a")));
+        Path otherDir = Files.createDirectories(dir.resolve("b"));
+        Path copy = Files.copy(c.jar(), otherDir.resolve("app.jar"), StandardCopyOption.COPY_ATTRIBUTES);
+        assertEquals(Files.getLastModifiedTime(c.jar()), Files.getLastModifiedTime(copy));
+
+        List<String> command = List.of(JAVA, "-Xmx512m", "-jar", copy.toString());
+        var plan = new RunPlanner().plan(command, c.cacheDir(), Map.of(), null);
+
+        assertFalse(plan.archiveUsed());
+        assertTrue(plan.notes().get(0).contains("trained from") && plan.notes().get(0).contains("launched from"), plan.notes().toString());
+        assertEquals(command, plan.command());
+    }
+
+    @Test
+    void aManifestThatDoesNotRecordWhereItWasTrainedCannotBeVerified(@TempDir Path dir) throws Exception {
+        Cache c = cache(dir);
+        var m = c.manifest();
+        new ArchiveManifest(m.schemaVersion(), m.cacheType(), m.jdk(), m.imageDigest(), m.jvmFlags(), m.classpath(), m.archive())
+                .write(c.cacheDir().resolve(ArchiveManifest.FILE_NAME));
+
+        var plan = plan(c, launch(c, "-Xmx512m"));
+
+        assertFalse(plan.archiveUsed());
+        assertTrue(plan.notes().get(0).contains("does not record where it was trained"), plan.notes().toString());
+    }
+
+    @Test
+    void aHungJdkProbeFallsBackInsteadOfBlockingTheLaunch(@TempDir Path dir) throws Exception {
+        assumeShell();
+        Cache c = cache(dir);
+        // a "java" that never answers; the planner must give up on its own and start the command as given
+        Path fakeHome = Files.createDirectories(dir.resolve("fake").resolve("bin"));
+        Path fakeJava = Files.writeString(fakeHome.resolve("java"), "#!/bin/sh\nexec sleep 60\n");
+        fakeJava.toFile().setExecutable(true);
+        List<String> command = List.of(fakeJava.toString(), "-Xmx512m", "-jar", c.jar().toString());
+
+        long started = System.nanoTime();
+        var plan = new RunPlanner().plan(command, c.cacheDir(), Map.of(), null);
+        long seconds = Duration.ofNanos(System.nanoTime() - started).toSeconds();
+
+        assertFalse(plan.archiveUsed());
+        assertEquals(command, plan.command());
+        assertTrue(plan.notes().get(0).contains("could not validate") && plan.notes().get(0).contains("Timed out"), plan.notes().toString());
+        assertTrue(seconds < 30, "the probe must be bounded, took " + seconds + " s");
+    }
+
+    private static void assumeShell() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(Files.isExecutable(Path.of("/bin/sh")), "needs /bin/sh");
+    }
 }

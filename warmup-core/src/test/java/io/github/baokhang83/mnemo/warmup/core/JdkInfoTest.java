@@ -3,8 +3,12 @@ package io.github.baokhang83.mnemo.warmup.core;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -89,5 +93,32 @@ class JdkInfoTest {
     @Test
     void rejectsJavaHomeWithoutJava(@TempDir Path empty) {
         assertThrows(IllegalArgumentException.class, () -> JdkInfo.fromJavaHome(empty));
+    }
+
+    private static Path fakeJdk(Path home, String script) throws Exception {
+        Path bin = Files.createDirectories(home.resolve("bin"));
+        Path java = Files.writeString(bin.resolve("java"), script);
+        java.toFile().setExecutable(true);
+        return home;
+    }
+
+    @Test
+    void aLauncherThatNeverAnswersTimesOutInsteadOfHanging(@TempDir Path dir) throws Exception {
+        assumeTrue(Files.isExecutable(Path.of("/bin/sh")), "needs /bin/sh");
+        Path home = fakeJdk(dir, "#!/bin/sh\nexec sleep 60\n");
+        long started = System.nanoTime();
+        var e = assertThrows(IllegalStateException.class, () -> JdkInfo.fromJavaHome(home, Duration.ofSeconds(1)));
+        assertTrue(e.getMessage().contains("Timed out"), e.getMessage());
+        assertTrue(Duration.ofNanos(System.nanoTime() - started).toSeconds() < 10);
+    }
+
+    @Test
+    void aStreamHeldOpenByALeftBehindChildDoesNotHangTheProbeEither(@TempDir Path dir) throws Exception {
+        assumeTrue(Files.isExecutable(Path.of("/bin/sh")), "needs /bin/sh");
+        // the launcher exits at once, but a background child keeps the output pipe open (like a hung agent)
+        Path home = fakeJdk(dir, "#!/bin/sh\nsleep 60 &\nexit 0\n");
+        long started = System.nanoTime();
+        assertThrows(IllegalStateException.class, () -> JdkInfo.fromJavaHome(home, Duration.ofSeconds(1)));
+        assertTrue(Duration.ofNanos(System.nanoTime() - started).toSeconds() < 10);
     }
 }

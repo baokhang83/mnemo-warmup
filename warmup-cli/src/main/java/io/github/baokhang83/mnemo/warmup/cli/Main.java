@@ -433,6 +433,13 @@ public class Main implements Runnable {
                 + "Keeps this JVM resident (about 40-60 MB); for images without /bin/sh. This is the default without --print.")
         boolean spawn;
 
+        @Option(
+                names = "--stop-timeout-seconds",
+                defaultValue = "25",
+                description = "--spawn: after SIGTERM, how long to wait for the command to exit before killing it. "
+                        + "Keep it below the pod's terminationGracePeriodSeconds. Default: ${DEFAULT-VALUE}.")
+        long stopTimeoutSeconds;
+
         @Parameters(arity = "1..*", paramLabel = "COMMAND", description = "The command to start, after --.")
         List<String> command = new ArrayList<>();
 
@@ -446,17 +453,17 @@ public class Main implements Runnable {
             String digest = imageDigest == null || imageDigest.isBlank() ? null : imageDigest;
             var plan = new RunPlanner().plan(command, cacheDir, System.getenv(), digest);
             plan.notes().forEach(n -> err.println("run: " + n));
-            return launch(spec.commandLine(), plan.command(), print);
+            return launch(spec.commandLine(), plan.command(), print, Duration.ofSeconds(Math.max(1, stopTimeoutSeconds)));
         }
 
-        static int launch(CommandLine cmd, List<String> command, boolean print) {
+        static int launch(CommandLine cmd, List<String> command, boolean print, Duration stopTimeout) {
             if (print) {
                 cmd.getOut().println(shellQuote(command));
                 return 0;
             }
             try {
                 Process process = new ProcessBuilder(command).inheritIO().start();
-                Thread forwarder = new Thread(process::destroy, "run-signal-forwarder");
+                Thread forwarder = new Thread(() -> stop(process, stopTimeout), "run-signal-forwarder");
                 Runtime.getRuntime().addShutdownHook(forwarder);
                 try {
                     return process.waitFor();
@@ -475,6 +482,26 @@ public class Main implements Runnable {
                 cmd.getErr().println("error: cannot start " + command.get(0) + ": " + e.getMessage());
                 return 127;
             }
+        }
+
+        /**
+         * Forwards SIGTERM to the child and WAITS for it. When this JVM is PID 1 it must not exit while the
+         * child is still running its shutdown hooks, or the container runtime kills the child at once
+         * instead of giving it the grace period. Falls back to SIGKILL after {@code timeout}.
+         *
+         * @return whether the child exited on its own within the timeout
+         */
+        static boolean stop(Process process, Duration timeout) {
+            process.destroy();
+            try {
+                if (process.waitFor(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    return true;
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            process.destroyForcibly();
+            return false;
         }
 
         /** {@code 'a' 'b c' 'it'\''s'}: safe for {@code eval} in any POSIX shell. */
@@ -504,7 +531,7 @@ public class Main implements Runnable {
             cmd.getErr().println("warning: " + ex.getMessage() + "; starting the command unchanged");
             List<String> original = List.of(args).subList(dashes + 1, args.length);
             boolean print = java.util.Arrays.asList(args).subList(0, dashes).contains("--print");
-            return launch(cmd, original, print);
+            return launch(cmd, original, print, Duration.ofSeconds(25));
         }
     }
 

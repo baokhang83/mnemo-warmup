@@ -136,4 +136,69 @@ class RunCommandTest {
         assertTrue(p.waitFor(10, TimeUnit.SECONDS));
         return out;
     }
+
+    /** A child that needs about a second to shut down after SIGTERM, like a JVM running its hooks. */
+    private Process slowStopper(Path marker, Path ready) throws Exception {
+        String script = "trap 'sleep 1; echo done > \"" + marker + "\"; exit 0' TERM; echo up > \"" + ready + "\"; while :; do sleep 0.1; done";
+        return new ProcessBuilder("/bin/sh", "-c", script).start();
+    }
+
+    private static void awaitFile(Path file) throws Exception {
+        for (int i = 0; i < 100 && !Files.exists(file); i++) {
+            Thread.sleep(50);
+        }
+        assertTrue(Files.exists(file), "child never started");
+    }
+
+    @Test
+    void stopWaitsForAChildThatNeedsTimeToShutDown() throws Exception {
+        assumeTrue(Files.isExecutable(Path.of("/bin/sh")));
+        Path marker = dir.resolve("done");
+        Path ready = dir.resolve("ready");
+        Process child = slowStopper(marker, ready);
+        awaitFile(ready);
+
+        boolean graceful = Main.Run.stop(child, java.time.Duration.ofSeconds(15));
+
+        assertTrue(graceful);
+        assertTrue(Files.exists(marker), "stop() returned before the child finished its shutdown");
+        assertTrue(!child.isAlive());
+    }
+
+    @Test
+    void stopKillsAChildThatIgnoresSigtermAfterTheTimeout() throws Exception {
+        assumeTrue(Files.isExecutable(Path.of("/bin/sh")));
+        Path ready = dir.resolve("ready");
+        Process child = new ProcessBuilder("/bin/sh", "-c", "trap '' TERM; echo up > \"" + ready + "\"; while :; do sleep 0.1; done").start();
+        awaitFile(ready);
+
+        boolean graceful = Main.Run.stop(child, java.time.Duration.ofSeconds(1));
+
+        assertTrue(!graceful);
+        assertTrue(child.waitFor(10, TimeUnit.SECONDS), "the child must be killed");
+    }
+
+    /** The real thing: SIGTERM to a running `run --spawn` JVM must not end before its child has. */
+    @Test
+    void sigtermToTheSpawningJvmWaitsForTheChildToFinishItsShutdown() throws Exception {
+        assumeTrue(Files.isExecutable(Path.of("/bin/sh")));
+        Path marker = dir.resolve("done");
+        Path ready = dir.resolve("ready");
+        String script = "trap 'sleep 1; echo done > \"" + marker + "\"; exit 0' TERM; echo up > \"" + ready + "\"; while :; do sleep 0.1; done";
+        Process wrapper = new ProcessBuilder(
+                        Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                        "-cp", System.getProperty("java.class.path"),
+                        "io.github.baokhang83.mnemo.warmup.cli.Main",
+                        "run", "--spawn", "--cache-dir", dir.resolve("cache").toString(), "--stop-timeout-seconds", "15",
+                        "--", "/bin/sh", "-c", script)
+                .redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .start();
+        awaitFile(ready);
+
+        wrapper.destroy(); // SIGTERM, as Kubernetes sends to PID 1
+
+        assertTrue(wrapper.waitFor(30, TimeUnit.SECONDS));
+        assertTrue(Files.exists(marker), "the JVM exited before its child finished shutting down");
+    }
 }

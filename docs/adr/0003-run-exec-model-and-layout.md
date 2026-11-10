@@ -19,14 +19,19 @@ extraction and used on another is silently ignored by the JVM: safe (§1) but no
 `scripts/mnemo-warmup-exec` evaluates it with `exec`, so the JVM replaces the shell and is PID 1
 with no wrapper process. If `run` is missing or fails, the script execs the original command
 (§3). `run --spawn` (the default without `--print`) starts the command as a child, forwards
-SIGTERM and returns its exit code, for images without `/bin/sh`; it keeps a second JVM resident.
+SIGTERM and **waits** for it (`--stop-timeout-seconds`, default 25, then SIGKILL) so the child gets
+its shutdown time, and returns its exit code, for images without `/bin/sh`; it keeps a second JVM resident.
 
 **Layout: require extraction at image build time.**
 The trainer and the application run the same extracted files at the same path
 (`java -Djarmode=tools -jar app.jar extract` in the Dockerfile). `run`:
 - supports `java [options] -jar <jar> [args]` launches only;
-- compares the live manifest to the fetched one (`mismatches`) and, separately, the JAR
-  modification times to the second (`modificationTimeMismatches`);
+- hashes the archive and compares it with the manifest's SHA-256 (size alone would accept
+  same-length corruption), then compares the live manifest to the fetched one (`mismatches`);
+- separately compares the JAR modification times to the second (`modificationTimeMismatches`) and
+  the directory the app was trained from (`locationMismatches`, from the manifest's `launchDir`,
+  because the JVM records paths; a manifest without one cannot be verified and is not used);
+- bounds the JDK probe (10 s) so a hung launcher cannot hold the application back;
 - on any difference, or if a Spring Boot fat JAR is launched directly, starts the command unchanged
   and logs the reason;
 - inserts `-XX:SharedArchiveFile=` / `-XX:AOTCache=` right after the java executable, and leaves a
@@ -46,5 +51,6 @@ both does not change it.
 ## Consequences
 
 - Images need `/bin/sh` for the recommended mode. Dockerfiles must extract Spring Boot JARs at build time.
-- `run` hashes the classpath JARs at start (as `fetch` does). Measure the cost before optimising.
+- `run` hashes the classpath JARs and the archive at start (`fetch` hashes the JARs too). Measure the cost before optimising.
+- Manifests written before `launchDir` existed are not used by `run`; retrain.
 - The image (#16) ships `mnemo-warmup-exec` and sets `MNEMO_WARMUP_CACHE_DIR` and `MNEMO_WARMUP_IMAGE_DIGEST`.

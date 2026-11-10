@@ -24,6 +24,9 @@ public final class RunPlanner {
      */
     public record Plan(List<String> command, boolean archiveUsed, List<String> notes) {}
 
+    /** A healthy probe takes a fraction of a second; a hung launcher must not hold the application back for long. */
+    private static final java.time.Duration PROBE_TIMEOUT = java.time.Duration.ofSeconds(10);
+
     private static final String[] ARCHIVE_OPTIONS = {"-XX:SharedArchiveFile=", "-XX:AOTCache=", "-XX:ArchiveClassesAtExit=", "-XX:AOTCacheOutput="};
 
     /**
@@ -69,6 +72,12 @@ public final class RunPlanner {
             notes.add("archive " + archive + " is missing or its size differs from the manifest; starting without it");
             return plain;
         }
+        // Verify before use (§2): the size alone would accept same-length corruption, so hash the bytes
+        // that are about to be handed to the JVM.
+        if (!trained.archive().sha256().equals(sha256Hex(archive))) {
+            notes.add("archive " + archive + " does not match the SHA-256 in its manifest; starting without it");
+            return plain;
+        }
 
         JavaLaunch launch = JavaLaunch.parse(command);
         if (launch == null) {
@@ -89,13 +98,18 @@ public final class RunPlanner {
             return plain;
         }
 
-        JdkInfo jdk = JdkInfo.fromJavaHome(launch.javaHome(env));
+        JdkInfo jdk = JdkInfo.fromJavaHome(launch.javaHome(env), PROBE_TIMEOUT);
         var live = ArchiveManifest.describe(
                 new JarExtractor.ExtractedApp(JarExtractor.Kind.EXECUTABLE_JAR, launch.jar().toAbsolutePath()),
                 jdk, trained.cacheType(), launch.jvmOptions(), env, imageDigest);
         List<String> problems = trained.mismatches(live);
         if (!problems.isEmpty()) {
             notes.add("archive does not match this launch: " + problems + "; starting without it");
+            return plain;
+        }
+        List<String> locationProblems = trained.locationMismatches(live);
+        if (!locationProblems.isEmpty()) {
+            notes.add("the JVM records JAR paths, so it would ignore the archive: " + locationProblems + "; starting without it");
             return plain;
         }
         List<String> timeProblems = trained.modificationTimeMismatches(live);
@@ -115,6 +129,19 @@ public final class RunPlanner {
             return Files.isRegularFile(file) ? Files.readString(file, StandardCharsets.UTF_8) : null;
         } catch (IOException e) {
             return null;
+        }
+    }
+
+    private static String sha256Hex(Path file) {
+        try (var in = Files.newInputStream(file)) {
+            var md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[64 * 1024];
+            for (int n; (n = in.read(buffer)) > 0; ) {
+                md.update(buffer, 0, n);
+            }
+            return java.util.HexFormat.of().formatHex(md.digest());
+        } catch (IOException | java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("Cannot hash " + file + ": " + e.getMessage(), e);
         }
     }
 

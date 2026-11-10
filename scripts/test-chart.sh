@@ -7,8 +7,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-CHART=deploy/helm/mnemo-warmup
-PARENT=deploy/helm/tests/parent
+# Everything below runs on a throw-away COPY of the charts: `helm dependency build` writes charts/ and Chart.lock next to
+# a chart, and a developer's own vendored dependencies or lock files must never be touched or removed.
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/deploy" "$WORK/examples"
+cp -R deploy/helm "$WORK/deploy/helm"
+cp -R examples/helm "$WORK/examples/helm"
+CHART="$WORK/deploy/helm/mnemo-warmup"
+PARENT="$WORK/deploy/helm/tests/parent"
 DIGEST="sha256:$(printf 'ab%.0s' $(seq 32))"
 BASE=(--set app.image.repository=my-app --set app.image.tag=1.0 --set store.url=oci://registry.example.com/team/warmup)
 failures=0
@@ -84,6 +91,17 @@ check "$out" "kind: CronJob" "the trainer comes with the parent chart"
 fetch_args=$(awk '/name: mnemo-warmup-fetch/,/volumeMounts:/' <<<"$out" | grep -E -- '--(jar|store|cache-type|jvm-arg|image-digest)|/app/app.jar|oci://|"auto"|Xmx' | sed 's/^ *//' | sort -u)
 train_args=$(awk '/name: trainer/,/volumeMounts:/' <<<"$out" | grep -E -- '--(jar|store|cache-type|jvm-arg|image-digest)|/app/app.jar|oci://|"auto"|Xmx' | sed 's/^ *//' | sort -u)
 if [ "$fetch_args" = "$train_args" ] && [ -n "$fetch_args" ]; then ok "fetch and trainer share the same launch arguments"; else fail "fetch and trainer arguments differ"; diff <(echo "$fetch_args") <(echo "$train_args") || true; fi
-rm -rf "$PARENT/charts" "$PARENT/Chart.lock"
+
+echo "== example workload chart (examples/helm/example-app)"
+EXAMPLE="$WORK/examples/helm/example-app"
+helm dependency build "$EXAMPLE" >/dev/null 2>&1 || helm dependency update "$EXAMPLE" >/dev/null
+helm lint "$EXAMPLE" >/dev/null && ok "helm lint (example)" || fail "helm lint (example)"
+out=$(helm template ex "$EXAMPLE" -n default --set warmup.app.jvmArgs='{-Xmx512m}' --set 'javaOptions={-Xlog:gc}')
+validate "example chart" "$out"
+check "$out" "kind: Deployment" "example renders the workload"
+check "$out" "kind: CronJob" "example renders the trainer"
+check "$out" '"-Xmx512m"' "the Deployment's java command uses warmup.app.jvmArgs"
+check "$out" '"-Xlog:gc"' "javaOptions reach the java command"
+check "$out" '- "--jvm-arg=-Xmx512m"' "the same jvm args reach fetch and the trainer"
 
 if [ "$failures" -eq 0 ]; then echo "ALL OK"; else echo "$failures FAILED"; exit 1; fi

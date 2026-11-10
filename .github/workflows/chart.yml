@@ -9,6 +9,7 @@ on:
   pull_request:
     paths:
       - 'deploy/helm/**'
+      - 'examples/helm/**'
       - 'scripts/test-chart.sh'
       - '.github/workflows/chart.yml'
 

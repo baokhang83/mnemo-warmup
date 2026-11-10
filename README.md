@@ -16,8 +16,8 @@ init container, and fall back to a normal start whenever the cache doesn't match
 > **Status: pre-alpha.** The whole pod-side chain works from the command line: `build` trains an
 > archive, `push` stores it in an OCI registry, `fetch` (init container) retrieves and verifies it,
 > and `run` (entrypoint) starts the JVM with it only if it still fits. `bench` measures the savings.
-> A tools image carries the CLI into your application image. The trainer CronJob, the Helm chart
-> and a cluster end-to-end example are not built yet. See the [roadmap](#roadmap) and the [project plan](docs/PLAN.md). Part of the Mnemo
+> A tools image carries the CLI into your application image, a Helm chart runs the trainer, and an
+> [example](examples/README.md) runs the whole chain on a kind cluster. See the [roadmap](#roadmap) and the [project plan](docs/PLAN.md). Part of the Mnemo
 > suite (`mnemo-jvm-warden`, `mnemo-cache`, `mnemo-warmup`).
 
 ---
@@ -286,6 +286,14 @@ may only `get`, `create`, `update` and `delete` Leases in its own namespace; app
 Check the chart with `scripts/test-chart.sh` (needs `helm`; set `KUBE_CONTEXT` to also have a cluster's API server
 validate every manifest). See [ADR 0005](docs/adr/0005-trainer-and-chart.md).
 
+## Example and end-to-end test
+
+[`examples/`](examples/README.md) has a small Spring Boot application, an example workload chart that uses the
+mnemo-warmup chart, and `scripts/e2e-kind.sh`, which runs the whole chain on a kind cluster for JDK 21 (AppCDS) and
+JDK 25 (AOT): the app starts without an archive; the trainer trains and uploads once and releases its Lease; a second run
+finds the entry complete; after a restart `fetch` finds the archive, the application's own classes load from it and `java`
+is PID 1; and a JVM option changed only in the Deployment makes the pod start uncached, healthy, with a logged reason.
+
 ## The manifest and fingerprint
 
 `build` writes `mnemo-warmup.manifest.json` next to the archive. It records what the archive
@@ -321,8 +329,7 @@ longer matches. The manifest also stores the archive's size and SHA-256.
 - `warmup-core` is on [Maven Central](https://central.sonatype.com/artifact/io.github.baokhang83.mnemo/warmup-core)
   as `io.github.baokhang83.mnemo:warmup-core`.
 
-Not there yet: an end-to-end test of the whole chain on a real cluster (the chart is validated by rendering and by
-a cluster's API server, but no pod has run it yet) (see the [roadmap](#roadmap)).
+Not there yet: a published chart and image (the first release tag), and a pass of the end-to-end test in CI. (see the [roadmap](#roadmap)).
 
 ## Limitations
 
@@ -330,8 +337,8 @@ a cluster's API server, but no pod has run it yet) (see the [roadmap](#roadmap))
   archive; Windows kills the process instead.
 - **AOT needs JDK 25+.** JDK 24 has the AOT cache but a two-step flow that is not
   supported yet; it uses AppCDS.
-- **Tested with small apps, not yet with a real Spring Boot application.** The unit and
-  process-level tests use tiny JVM apps. To check your own Spring Boot 3.3+ JAR, run
+- **Spring Boot is tested with one small application** (the example, a web app with one controller), on JDK 21 and 25.
+  To check your own Spring Boot 3.3+ JAR, run
   `mvn verify -pl warmup-core -Dwarmup.test.springBootJar=/path/to/app.jar`.
 - AppCDS behaviour on JDK 21-24 was checked in Docker ([results](docs/appcds-jdk-matrix.md)); CI runs
   the tests on 21 and 25.
@@ -363,12 +370,12 @@ warmup-cli/    command-line interface (picocli): build, bench, push, fetch, run,
 coverage/      aggregates JaCoCo coverage for the badge (not published)
 image/         Dockerfile and launcher of the tools image
 deploy/helm/   Helm chart for the trainer plus the reusable pod-template helpers, and a parent-chart test fixture
+examples/      a Spring Boot app, an example workload chart, and the notes behind scripts/e2e-kind.sh
 scripts/       mnemo-warmup-exec wrapper, verify-image.sh, test-chart.sh, Docker checks for the AppCDS matrix
 docs/PLAN.md   design, decisions and roadmap
 docs/adr/      decisions: archive store, training trigger, run/exec model
 ```
 
-Planned: `examples/` (sample Spring Boot app).
 
 ## Roadmap
 
@@ -386,7 +393,7 @@ Planned: `examples/` (sample Spring Boot app).
 - [x] `fetch` (init container) and `run` (entrypoint)
 - [x] Tools image (JDK-free, runs inside the application image), checked end to end in Docker
 - [x] `train` command with a Kubernetes Lease, trainer CronJob and Helm chart (validated by rendering and API-server dry-run)
-- [ ] Example app tested on kind with JDK 21 and JDK 25
+- [x] Example Spring Boot app, tested on kind with JDK 21 (AppCDS) and JDK 25 (AOT) by `scripts/e2e-kind.sh`
 
 **Phase 3: automation (v0.3.0)**
 - [ ] Investigate which JVM flags invalidate an archive (multi-profile archives), metrics

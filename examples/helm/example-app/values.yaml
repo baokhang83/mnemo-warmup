@@ -1,0 +1,20 @@
+replicas: 2
+
+# JVM options that do NOT change what an archive is valid for (logging, system properties). The options that DO
+# matter (heap size, GC, ...) belong in warmup.app.jvmArgs below: they are used for the trainer, for fetch AND for the
+# Deployment's java command, so all three always agree.
+javaOptions: []
+
+# Everything under `warmup` is the mnemo-warmup chart's values (see deploy/helm/mnemo-warmup/values.yaml).
+warmup:
+  app:
+    image:
+      repository: mnemo-example
+      tag: "21"
+    jar: /app/app.jar
+    jvmArgs: []               # e.g. ["-Xmx512m"]
+  store:
+    url: oci://registry.example.com/team/warmup
+    # pullSecret / pushSecret: names of dockerconfigjson Secrets for a private registry
+  trainer:
+    exitMode: spring-refresh  # Spring Boot: train the startup path

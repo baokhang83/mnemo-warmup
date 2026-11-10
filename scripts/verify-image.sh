@@ -108,4 +108,70 @@ if grep -q 'openjdk version "17' <<<"$direct"; then ok "run --spawn starts the o
 if docker run --rm "$TAG" /opt/mnemo-warmup/bin/mnemo-warmup fetch >/dev/null 2>&1; then
   ok "fetch exits 0 when the image has no java"; else fail "fetch without java must exit 0"; fi
 
+# A distroless application image has no shell and no cp: everything goes through the native launcher.
+echo "== distroless application image (no shell)"
+dl=${DISTROLESS_IMAGE:-gcr.io/distroless/java21-debian12}
+L=/mnemo-tools/bin/mnemo-launcher
+dtools=mw-verify-$RUN-dl-tools; dapp=mw-verify-$RUN-dl-app; dwork=mw-verify-$RUN-dl-work
+dcache=mw-verify-$RUN-dl-cache; dempty=mw-verify-$RUN-dl-empty; dbad=mw-verify-$RUN-dl-bad; dzero=mw-verify-$RUN-dl-zero
+VOLUMES+=("$dtools" "$dapp" "$dwork" "$dcache" "$dempty" "$dbad" "$dzero")
+dstore=oci://$REG:5000/mnemo/verify-distroless
+if docker run --rm --entrypoint sh "$dl" -c true >/dev/null 2>&1; then fail "$dl unexpectedly has a shell"; else ok "$dl has no shell"; fi
+if docker run --rm -v "$dtools":/mnemo-tools "$TAG" /opt/mnemo-warmup/bin/mnemo-launcher install /mnemo-tools; then
+  ok "launcher install copied the tools"; else fail "launcher install"; fi
+docker run --rm -v "$dapp":/app -v "$PWD/scripts/verify-image":/src:ro eclipse-temurin:21-jdk sh -c \
+  'mkdir /tmp/c && javac -d /tmp/c /src/App.java && jar --create --file /app/app.jar --main-class App -C /tmp/c .'
+
+# dl <extra docker options...> -- <launcher arguments...>: the launcher is the only executable we rely on
+dl() {
+  local opts=(); while [ "$1" != "--" ]; do opts+=("$1"); shift; done; shift
+  docker run --rm ${opts[@]+"${opts[@]}"} -v "$dtools":/mnemo-tools:ro -v "$dapp":/app --entrypoint "$L" "$dl" "$@"
+}
+dlapp() { # cache volume, then java options: start the app the way the injector does
+  local cache=$1; shift
+  dl -v "$cache":/cache:ro -e MNEMO_WARMUP_CACHE_DIR=/cache -- exec -- java -Xlog:class+load -Dexit.after.start=1 -Dport=8080 "$@" -jar /app/app.jar 2>&1
+}
+
+if dl --network "$NET" -v "$dwork":/work -- jar build --jar /app/app.jar --work-dir /work --exit-mode http-probe \
+      --url http://127.0.0.1:8080/health --jvm-arg=-Dport=8080 >/tmp/mw-dl-train.log 2>&1 \
+   && dl --network "$NET" -v "$dwork":/work -- jar push --work-dir /work --store "$dstore" --plain-http >>/tmp/mw-dl-train.log 2>&1; then
+  ok "trained and pushed through the launcher (jar pass-through)"
+else
+  fail "distroless train/push (see /tmp/mw-dl-train.log)"
+fi
+if dl --network "$NET" -v "$dcache":/cache -- fetch --jar /app/app.jar --work-dir /tmp/w --jvm-arg=-Dport=8080 \
+      --store "$dstore" --plain-http --out /cache --strict >/tmp/mw-dl-fetch.log 2>&1; then
+  ok "fetched through the launcher"; else fail "distroless fetch (see /tmp/mw-dl-fetch.log)"; fi
+
+out=$(dlapp "$dcache")
+if grep -q "App source: shared objects file" <<<"$out"; then ok "cache hit: app class loaded from the archive"; else fail "distroless cache hit"; grep -E "run:|mnemo-launcher|App source" <<<"$out" | head -5 || true; fi
+if grep -q "^pid=1$" <<<"$out"; then ok "java is PID 1 (the launcher replaced itself)"; else fail "java is not PID 1 on distroless"; fi
+
+docker volume create "$dempty" >/dev/null
+out=$(dlapp "$dempty")
+if grep -q "^listening$" <<<"$out" && ! grep -q "App source: shared objects file" <<<"$out"; then ok "cache miss: plain start"; else fail "distroless cache miss"; fi
+
+# corrupt archives: one with a different size, one with the right size but zero content
+size=$(docker run --rm -v "$dcache":/src:ro "$TAG" sh -c 'wc -c < /src/app.jsa')
+docker run --rm -v "$dcache":/src:ro -v "$dbad":/bad "$TAG" sh -c 'cp -a /src/. /bad/ && echo junk > /bad/app.jsa'
+docker run --rm -v "$dcache":/src:ro -v "$dzero":/zero "$TAG" sh -c "cp -a /src/. /zero/ && head -c $size /dev/zero > /zero/app.jsa"
+for v in "$dbad" "$dzero"; do
+  out=$(dlapp "$v")
+  if grep -q "^listening$" <<<"$out" && ! grep -q "App source: shared objects file" <<<"$out"; then ok "corrupt cache ($v): plain start"; else fail "distroless corrupt cache ($v)"; grep -E "run:|rror|App source" <<<"$out" | head -5 || true; fi
+done
+
+out=$(dl -- exec -- "$L" which-java 2>&1) && rc=0 || rc=$?
+if [ "$rc" = 0 ] && grep -q "^/usr/bin/java$" <<<"$out" && grep -q "not a java command" <<<"$out"; then ok "unsupported command runs unchanged"; else fail "distroless unsupported command"; fi
+dl -- exec -- java -jar /nonexistent.jar >/dev/null 2>&1 && rc=0 || rc=$?
+if [ "$rc" = 1 ]; then ok "the JVM's exit status is the container's"; else fail "exit status was $rc, want 1"; fi
+
+# SIGTERM must reach the JVM (PID 1) and its status must come back: docker stop returns quickly with 143
+name=mw-verify-$RUN-dl-term
+docker run -d --name "$name" -v "$dtools":/mnemo-tools:ro -v "$dapp":/app -v "$dcache":/cache:ro -e MNEMO_WARMUP_CACHE_DIR=/cache \
+  --entrypoint "$L" "$dl" exec -- java -Dport=8080 -jar /app/app.jar >/dev/null
+sleep 3
+start=$(date +%s); docker stop -t 15 "$name" >/dev/null; elapsed=$(( $(date +%s) - start ))
+code=$(docker inspect -f '{{.State.ExitCode}}' "$name"); docker rm -f "$name" >/dev/null
+if [ "$code" = 143 ] && [ "$elapsed" -lt 10 ]; then ok "SIGTERM reached the JVM: exit 143 in ${elapsed}s"; else fail "SIGTERM: exit $code after ${elapsed}s"; fi
+
 if [ "$failures" -eq 0 ]; then echo "ALL OK"; else echo "$failures FAILED"; exit 1; fi

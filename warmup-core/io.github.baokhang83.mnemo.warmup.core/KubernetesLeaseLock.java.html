@@ -1,0 +1,253 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>KubernetesLeaseLock.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">KubernetesLeaseLock.java</span></div><h1>KubernetesLeaseLock.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+
+/**
+ * A {@link TrainingLock} on a Kubernetes {@code Lease} named after the fingerprint (ADR 0002).
+ *
+ * &lt;p&gt;Creating a Lease is atomic, so two trainers cannot both create it. A Lease nobody renews expires, so a
+ * crashed trainer does not block training forever: the next trainer takes it over with an update that
+ * carries the resourceVersion it read, so only one of several takers wins. The holder renews in the
+ * background while it trains and deletes the Lease when done.
+ */
+public final class KubernetesLeaseLock implements TrainingLock {
+
+<span class="fc" id="L31">    private static final DateTimeFormatter MICRO_TIME =</span>
+<span class="fc" id="L32">            DateTimeFormatter.ofPattern(&quot;yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'&quot;).withZone(ZoneOffset.UTC);</span>
+
+    private final KubeApi api;
+    private final String namespace;
+    private final String holder;
+    private final Duration leaseDuration;
+    private final Clock clock;
+
+<span class="fc" id="L40">    KubernetesLeaseLock(KubeApi api, String namespace, String holder, Duration leaseDuration, Clock clock) {</span>
+<span class="fc" id="L41">        this.api = api;</span>
+<span class="fc" id="L42">        this.namespace = namespace;</span>
+<span class="fc" id="L43">        this.holder = holder;</span>
+<span class="fc" id="L44">        this.leaseDuration = leaseDuration;</span>
+<span class="fc" id="L45">        this.clock = clock;</span>
+<span class="fc" id="L46">    }</span>
+
+    /** The Lease API of the cluster this pod runs in, in this pod's namespace, held as this pod. */
+    public static KubernetesLeaseLock inCluster(Duration leaseDuration) {
+<span class="nc" id="L50">        KubeApi api = KubeApi.inCluster(Duration.ofSeconds(30)); // first: explains &quot;not in a pod&quot; before anything else</span>
+<span class="nc" id="L51">        String namespace = System.getenv(&quot;POD_NAMESPACE&quot;);</span>
+        try {
+<span class="nc bnc" id="L53" title="All 4 branches missed.">            if (namespace == null || namespace.isBlank()) {</span>
+<span class="nc" id="L54">                namespace = Files.readString(KubeApi.SERVICE_ACCOUNT.resolve(&quot;namespace&quot;), StandardCharsets.UTF_8).strip();</span>
+            }
+<span class="nc" id="L56">        } catch (IOException e) {</span>
+<span class="nc" id="L57">            throw new StoreException(&quot;Cannot determine the pod's namespace (set POD_NAMESPACE): &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L58">        }</span>
+<span class="nc" id="L59">        String pod = System.getenv().getOrDefault(&quot;HOSTNAME&quot;, &quot;trainer&quot;);</span>
+<span class="nc" id="L60">        return new KubernetesLeaseLock(</span>
+<span class="nc" id="L61">                api, namespace, pod + &quot;-&quot; + UUID.randomUUID().toString().substring(0, 8), leaseDuration, Clock.systemUTC());</span>
+    }
+
+    static String leaseName(String key) {
+<span class="pc bpc" id="L65" title="1 of 2 branches missed.">        String hex = key.startsWith(&quot;sha256:&quot;) ? key.substring(&quot;sha256:&quot;.length()) : key;</span>
+<span class="fc bfc" id="L66" title="All 2 branches covered.">        if (!hex.matches(&quot;[0-9a-f]{1,128}&quot;)) {</span>
+<span class="fc" id="L67">            throw new IllegalArgumentException(&quot;Not a fingerprint: &quot; + key);</span>
+        }
+<span class="fc" id="L69">        return &quot;mnemo-warmup-&quot; + hex;</span>
+    }
+
+    @Override
+    public Optional&lt;Handle&gt; tryAcquire(String key) {
+<span class="fc" id="L74">        String name = leaseName(key);</span>
+<span class="pc bpc" id="L75" title="1 of 2 branches missed.">        for (int attempt = 0; attempt &lt; 3; attempt++) {</span>
+<span class="fc" id="L76">            KubeApi.Response created = api.request(&quot;POST&quot;, collection(), lease(name, null, null));</span>
+<span class="pc bpc" id="L77" title="1 of 4 branches missed.">            if (created.status() == 201 || created.status() == 200) {</span>
+<span class="fc" id="L78">                return Optional.of(new LeaseHandle(name));</span>
+            }
+<span class="fc bfc" id="L80" title="All 2 branches covered.">            if (created.status() != 409) {</span>
+<span class="fc" id="L81">                throw failure(&quot;create the lease&quot;, created);</span>
+            }
+<span class="fc" id="L83">            KubeApi.Response current = api.request(&quot;GET&quot;, item(name), null);</span>
+<span class="pc bpc" id="L84" title="1 of 2 branches missed.">            if (current.status() == 404) {</span>
+<span class="nc" id="L85">                continue; // released between our create and our read: try again</span>
+            }
+<span class="pc bpc" id="L87" title="1 of 2 branches missed.">            if (current.status() != 200) {</span>
+<span class="nc" id="L88">                throw failure(&quot;read the lease&quot;, current);</span>
+            }
+<span class="fc" id="L90">            Map&lt;String, Object&gt; existing = current.json();</span>
+<span class="fc" id="L91">            Map&lt;String, Object&gt; spec = map(existing.get(&quot;spec&quot;));</span>
+<span class="fc" id="L92">            String currentHolder = string(spec.get(&quot;holderIdentity&quot;));</span>
+<span class="fc bfc" id="L93" title="All 4 branches covered.">            if (!holder.equals(currentHolder) &amp;&amp; !expired(spec)) {</span>
+<span class="fc" id="L94">                return Optional.empty();</span>
+            }
+<span class="fc" id="L96">            String resourceVersion = string(map(existing.get(&quot;metadata&quot;)).get(&quot;resourceVersion&quot;));</span>
+<span class="fc" id="L97">            KubeApi.Response taken = api.request(&quot;PUT&quot;, item(name), lease(name, resourceVersion, string(spec.get(&quot;acquireTime&quot;))));</span>
+<span class="fc bfc" id="L98" title="All 2 branches covered.">            if (taken.status() == 200) {</span>
+<span class="fc" id="L99">                return Optional.of(new LeaseHandle(name));</span>
+            }
+<span class="pc bpc" id="L101" title="1 of 2 branches missed.">            if (taken.status() == 409) {</span>
+<span class="fc" id="L102">                return Optional.empty(); // someone else took it over first</span>
+            }
+<span class="nc" id="L104">            throw failure(&quot;take over the lease&quot;, taken);</span>
+        }
+<span class="nc" id="L106">        return Optional.empty();</span>
+    }
+
+    private boolean expired(Map&lt;String, Object&gt; spec) {
+<span class="fc" id="L110">        String renewed = string(spec.get(&quot;renewTime&quot;));</span>
+<span class="pc bpc" id="L111" title="1 of 2 branches missed.">        if (renewed == null) {</span>
+<span class="nc" id="L112">            renewed = string(spec.get(&quot;acquireTime&quot;));</span>
+        }
+<span class="pc bpc" id="L114" title="1 of 2 branches missed.">        if (renewed == null) {</span>
+<span class="nc" id="L115">            return true;</span>
+        }
+<span class="pc bpc" id="L117" title="1 of 2 branches missed.">        long seconds = spec.get(&quot;leaseDurationSeconds&quot;) instanceof Number n ? n.longValue() : leaseDuration.toSeconds();</span>
+<span class="fc" id="L118">        return clock.instant().isAfter(Instant.parse(renewed).plusSeconds(seconds));</span>
+    }
+
+    private Map&lt;String, Object&gt; lease(String name, String resourceVersion, String acquireTime) {
+<span class="fc" id="L122">        String now = MICRO_TIME.format(clock.instant());</span>
+<span class="fc" id="L123">        Map&lt;String, Object&gt; metadata = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L124">        metadata.put(&quot;name&quot;, name);</span>
+<span class="fc" id="L125">        metadata.put(&quot;namespace&quot;, namespace);</span>
+<span class="fc bfc" id="L126" title="All 2 branches covered.">        if (resourceVersion != null) {</span>
+<span class="fc" id="L127">            metadata.put(&quot;resourceVersion&quot;, resourceVersion);</span>
+        }
+<span class="fc" id="L129">        Map&lt;String, Object&gt; spec = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L130">        spec.put(&quot;holderIdentity&quot;, holder);</span>
+<span class="fc" id="L131">        spec.put(&quot;leaseDurationSeconds&quot;, leaseDuration.toSeconds());</span>
+<span class="pc bpc" id="L132" title="1 of 4 branches missed.">        spec.put(&quot;acquireTime&quot;, resourceVersion == null || acquireTime == null ? now : acquireTime);</span>
+<span class="fc" id="L133">        spec.put(&quot;renewTime&quot;, now);</span>
+<span class="fc" id="L134">        Map&lt;String, Object&gt; lease = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L135">        lease.put(&quot;apiVersion&quot;, &quot;coordination.k8s.io/v1&quot;);</span>
+<span class="fc" id="L136">        lease.put(&quot;kind&quot;, &quot;Lease&quot;);</span>
+<span class="fc" id="L137">        lease.put(&quot;metadata&quot;, metadata);</span>
+<span class="fc" id="L138">        lease.put(&quot;spec&quot;, spec);</span>
+<span class="fc" id="L139">        return lease;</span>
+    }
+
+    private String collection() {
+<span class="fc" id="L143">        return &quot;/apis/coordination.k8s.io/v1/namespaces/&quot; + namespace + &quot;/leases&quot;;</span>
+    }
+
+    private String item(String name) {
+<span class="fc" id="L147">        return collection() + &quot;/&quot; + name;</span>
+    }
+
+    private StoreException failure(String what, KubeApi.Response r) {
+<span class="pc bpc" id="L151" title="1 of 2 branches missed.">        String hint = r.status() == 403 ? &quot; (the trainer's ServiceAccount needs get/create/update/delete on leases in namespace &quot; + namespace + &quot;)&quot; : &quot;&quot;;</span>
+<span class="fc" id="L152">        return new StoreException(&quot;Kubernetes refused to &quot; + what + &quot; (HTTP &quot; + r.status() + serverMessage(r) + &quot;)&quot; + hint);</span>
+    }
+
+    /** The API server's own explanation (its Status message), if the body has one. */
+    private static String serverMessage(KubeApi.Response r) {
+        try {
+<span class="fc" id="L158">            Object message = r.json().get(&quot;message&quot;);</span>
+<span class="pc bpc" id="L159" title="5 of 6 branches missed.">            return message instanceof String m &amp;&amp; !m.isBlank() ? &quot;: &quot; + (m.length() &gt; 300 ? m.substring(0, 300) + &quot;...&quot; : m) : &quot;&quot;;</span>
+<span class="nc" id="L160">        } catch (RuntimeException e) {</span>
+<span class="nc" id="L161">            return &quot;&quot;;</span>
+        }
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    private static Map&lt;String, Object&gt; map(Object o) {
+<span class="pc bpc" id="L167" title="1 of 2 branches missed.">        return o instanceof Map&lt;?, ?&gt; m ? (Map&lt;String, Object&gt;) m : Map.of();</span>
+    }
+
+    private static String string(Object o) {
+<span class="pc bpc" id="L171" title="1 of 2 branches missed.">        return o instanceof String s ? s : null;</span>
+    }
+
+    /**
+     * Renews in the background every third of the lease duration; deletes the lease on close.
+     *
+     * &lt;p&gt;{@link #held()} is only true while the last successful renewal (or the acquisition) is recent: after two
+     * missed renewals, two thirds of the duration, ownership is reported lost, well before the lease can expire and
+     * be taken by another trainer. A partition therefore cannot leave a trainer believing it still holds a lease
+     * that someone else already owns. Only a definite answer (lease gone, another holder, a conflicting update)
+     * loses it for good; a transient API error just does not count as a renewal.
+     */
+    private final class LeaseHandle implements Handle {
+        private final String name;
+<span class="fc" id="L185">        private final AtomicBoolean lost = new AtomicBoolean(false);</span>
+<span class="fc" id="L186">        private final AtomicLong lastRenewedNanos = new AtomicLong(System.nanoTime());</span>
+<span class="fc" id="L187">        private final long trustNanos = leaseDuration.toNanos() * 2 / 3;</span>
+        private final ScheduledExecutorService renewer;
+
+<span class="fc" id="L190">        LeaseHandle(String name) {</span>
+<span class="fc" id="L191">            this.name = name;</span>
+<span class="fc" id="L192">            this.renewer = Executors.newSingleThreadScheduledExecutor(r -&gt; {</span>
+<span class="fc" id="L193">                Thread t = new Thread(r, &quot;lease-renewer&quot;);</span>
+<span class="fc" id="L194">                t.setDaemon(true);</span>
+<span class="fc" id="L195">                return t;</span>
+            });
+<span class="fc" id="L197">            long period = Math.max(1, leaseDuration.toSeconds() / 3);</span>
+<span class="fc" id="L198">            renewer.scheduleAtFixedRate(this::renew, period, period, TimeUnit.SECONDS);</span>
+<span class="fc" id="L199">        }</span>
+
+        private void renew() {
+            try {
+<span class="fc" id="L203">                KubeApi.Response current = api.request(&quot;GET&quot;, item(name), null);</span>
+<span class="fc bfc" id="L204" title="All 2 branches covered.">                if (current.status() == 404) {</span>
+<span class="fc" id="L205">                    lost.set(true); // deleted under us</span>
+<span class="fc" id="L206">                    return;</span>
+                }
+<span class="fc bfc" id="L208" title="All 2 branches covered.">                if (current.status() != 200) {</span>
+<span class="fc" id="L209">                    return; // transient: not a renewal, but not a loss either</span>
+                }
+<span class="fc" id="L211">                Map&lt;String, Object&gt; existing = current.json();</span>
+<span class="fc" id="L212">                Map&lt;String, Object&gt; spec = map(existing.get(&quot;spec&quot;));</span>
+<span class="fc bfc" id="L213" title="All 2 branches covered.">                if (!holder.equals(string(spec.get(&quot;holderIdentity&quot;)))) {</span>
+<span class="fc" id="L214">                    lost.set(true); // taken over</span>
+<span class="fc" id="L215">                    return;</span>
+                }
+<span class="fc" id="L217">                String rv = string(map(existing.get(&quot;metadata&quot;)).get(&quot;resourceVersion&quot;));</span>
+<span class="fc" id="L218">                int status = api.request(&quot;PUT&quot;, item(name), lease(name, rv, string(spec.get(&quot;acquireTime&quot;)))).status();</span>
+<span class="pc bpc" id="L219" title="1 of 2 branches missed.">                if (status == 200) {</span>
+<span class="fc" id="L220">                    lastRenewedNanos.set(System.nanoTime());</span>
+<span class="nc bnc" id="L221" title="All 2 branches missed.">                } else if (status == 409) {</span>
+<span class="nc" id="L222">                    lost.set(true); // someone changed it between our read and our write</span>
+                }
+<span class="nc" id="L224">            } catch (RuntimeException e) {</span>
+                // unreachable API server: not a renewal; held() turns false once the trust window passes
+<span class="fc" id="L226">            }</span>
+<span class="fc" id="L227">        }</span>
+
+        @Override
+        public boolean held() {
+<span class="fc bfc" id="L231" title="All 4 branches covered.">            return !lost.get() &amp;&amp; System.nanoTime() - lastRenewedNanos.get() &lt; trustNanos;</span>
+        }
+
+        @Override
+        public void close() {
+<span class="fc" id="L236">            renewer.shutdownNow();</span>
+            try {
+<span class="fc" id="L238">                KubeApi.Response current = api.request(&quot;GET&quot;, item(name), null);</span>
+<span class="fc bfc" id="L239" title="All 4 branches covered.">                if (current.status() == 200 &amp;&amp; holder.equals(string(map(map(current.json()).get(&quot;spec&quot;)).get(&quot;holderIdentity&quot;)))) {</span>
+<span class="fc" id="L240">                    Map&lt;String, Object&gt; options = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L241">                    options.put(&quot;apiVersion&quot;, &quot;v1&quot;);</span>
+<span class="fc" id="L242">                    options.put(&quot;kind&quot;, &quot;DeleteOptions&quot;);</span>
+<span class="fc" id="L243">                    options.put(&quot;preconditions&quot;, Map.of(&quot;resourceVersion&quot;, string(map(current.json().get(&quot;metadata&quot;)).get(&quot;resourceVersion&quot;))));</span>
+<span class="fc" id="L244">                    api.request(&quot;DELETE&quot;, item(name), options);</span>
+                }
+<span class="nc" id="L246">            } catch (RuntimeException e) {</span>
+                // best effort: an undeleted lease simply expires
+<span class="fc" id="L248">            }</span>
+<span class="fc" id="L249">            lost.set(true);</span>
+<span class="fc" id="L250">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

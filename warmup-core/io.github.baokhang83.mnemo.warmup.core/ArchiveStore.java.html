@@ -13,6 +13,41 @@ public interface ArchiveStore {
     /** Whether an archive for the fingerprint is stored. */
     boolean exists(String fingerprint);
 
+    /** What {@link #inspect} found. */
+<span class="fc" id="L17">    enum Presence {</span>
+        /** Nothing is stored under the fingerprint. */
+<span class="fc" id="L19">        ABSENT,</span>
+        /** An entry exists and is complete and consistent. */
+<span class="fc" id="L21">        USABLE,</span>
+        /** An entry exists but cannot be used (a missing or wrong blob, a manifest for another fingerprint, ...). */
+<span class="fc" id="L23">        BROKEN</span>
+    }
+
+<span class="fc" id="L26">    record Inspection(Presence presence, String detail) {</span>
+        public static Inspection absent() {
+<span class="fc" id="L28">            return new Inspection(Presence.ABSENT, &quot;nothing stored&quot;);</span>
+        }
+
+        public static Inspection usable() {
+<span class="fc" id="L32">            return new Inspection(Presence.USABLE, &quot;complete&quot;);</span>
+        }
+
+        public static Inspection broken(String why) {
+<span class="fc" id="L36">            return new Inspection(Presence.BROKEN, why);</span>
+        }
+    }
+
+    /**
+     * Whether the fingerprint has a COMPLETE entry, without downloading the archive. A tag that merely exists is not
+     * enough: a trainer that treats it as done would never repair a half-written or damaged entry. The default only
+     * knows presence; stores that can look inside should override it.
+     *
+     * @throws StoreException if the store cannot be asked
+     */
+    default Inspection inspect(String fingerprint) {
+<span class="nc bnc" id="L48" title="All 2 branches missed.">        return exists(fingerprint) ? Inspection.usable() : Inspection.absent();</span>
+    }
+
     /** Stores the archive and its manifest under the manifest's own fingerprint. */
     void put(ArchiveManifest manifest, Path archiveFile);
 
@@ -23,6 +58,6 @@ public interface ArchiveStore {
     Optional&lt;StoredArchive&gt; get(String fingerprint, Path targetDir);
 
     /** A downloaded, digest-verified archive and the manifest it was trained with. */
-<span class="fc" id="L26">    record StoredArchive(ArchiveManifest manifest, Path archiveFile) {}</span>
+<span class="fc" id="L61">    record StoredArchive(ArchiveManifest manifest, Path archiveFile) {}</span>
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

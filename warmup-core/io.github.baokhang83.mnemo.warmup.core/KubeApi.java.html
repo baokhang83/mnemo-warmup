@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>KubeApi.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">KubeApi.java</span></div><h1>KubeApi.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpRequest.BodyPublishers;
+import java.net.http.HttpResponse;
+import java.net.http.HttpResponse.BodyHandlers;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.KeyStore;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateFactory;
+import java.time.Duration;
+import java.util.Map;
+import java.util.function.Supplier;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManagerFactory;
+
+/**
+ * The few Kubernetes REST calls the trainer needs, on the JDK HTTP client so the core library stays free of
+ * dependencies (the same reason as the OCI client, ADR 0001). Authenticates with the pod's service-account
+ * token, which is re-read on every request because projected tokens rotate.
+ */
+final class KubeApi {
+
+<span class="fc" id="L30">    static final Path SERVICE_ACCOUNT = Path.of(&quot;/var/run/secrets/kubernetes.io/serviceaccount&quot;);</span>
+
+<span class="fc" id="L32">    record Response(int status, String body) {</span>
+        Map&lt;String, Object&gt; json() {
+            try {
+<span class="fc" id="L35">                Object parsed = Json.parse(body);</span>
+                @SuppressWarnings(&quot;unchecked&quot;)
+<span class="fc" id="L37">                Map&lt;String, Object&gt; map = (Map&lt;String, Object&gt;) parsed;</span>
+<span class="fc" id="L38">                return map;</span>
+<span class="nc" id="L39">            } catch (RuntimeException e) {</span>
+<span class="nc" id="L40">                throw new StoreException(&quot;Kubernetes API returned unreadable JSON (HTTP &quot; + status + &quot;)&quot;, e);</span>
+            }
+        }
+    }
+
+    private final URI base;
+    private final Supplier&lt;String&gt; token;
+    private final HttpClient http;
+    private final Duration timeout;
+
+<span class="fc" id="L50">    private KubeApi(URI base, Supplier&lt;String&gt; token, SSLContext ssl, Duration timeout) {</span>
+<span class="fc" id="L51">        this.base = base;</span>
+<span class="fc" id="L52">        this.token = token;</span>
+<span class="fc" id="L53">        this.timeout = timeout;</span>
+        // HTTP/1.1 only: on a plain http:// URL the JDK client tries an h2c upgrade, which `kubectl proxy` answers
+        // with a 500 (found against a real API server; invisible to a test double).
+<span class="fc" id="L56">        HttpClient.Builder builder = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(Duration.ofSeconds(10));</span>
+<span class="pc bpc" id="L57" title="1 of 2 branches missed.">        if (ssl != null) {</span>
+<span class="nc" id="L58">            builder.sslContext(ssl);</span>
+        }
+<span class="fc" id="L60">        this.http = builder.build();</span>
+<span class="fc" id="L61">    }</span>
+
+    /** Talks to the API server of the cluster this pod runs in. */
+    static KubeApi inCluster(Duration timeout) {
+<span class="fc" id="L65">        String host = System.getenv(&quot;KUBERNETES_SERVICE_HOST&quot;);</span>
+<span class="fc" id="L66">        String port = System.getenv().getOrDefault(&quot;KUBERNETES_SERVICE_PORT&quot;, &quot;443&quot;);</span>
+<span class="pc bpc" id="L67" title="3 of 4 branches missed.">        if (host == null || host.isBlank()) {</span>
+<span class="fc" id="L68">            throw new StoreException(&quot;Not running in a Kubernetes pod (KUBERNETES_SERVICE_HOST is not set)&quot;);</span>
+        }
+<span class="nc" id="L70">        Path tokenFile = SERVICE_ACCOUNT.resolve(&quot;token&quot;);</span>
+<span class="nc" id="L71">        Path caFile = SERVICE_ACCOUNT.resolve(&quot;ca.crt&quot;);</span>
+<span class="nc bnc" id="L72" title="All 4 branches missed.">        if (!Files.isReadable(tokenFile) || !Files.isReadable(caFile)) {</span>
+<span class="nc" id="L73">            throw new StoreException(&quot;No service-account credentials under &quot; + SERVICE_ACCOUNT</span>
+                    + &quot; (automountServiceAccountToken must be true for the trainer)&quot;);
+        }
+<span class="nc bnc" id="L76" title="All 2 branches missed.">        String authority = host.contains(&quot;:&quot;) ? &quot;[&quot; + host + &quot;]&quot; : host;</span>
+<span class="nc" id="L77">        return new KubeApi(URI.create(&quot;https://&quot; + authority + &quot;:&quot; + port), () -&gt; readToken(tokenFile), trust(caFile), timeout);</span>
+    }
+
+    /** Talks to an API server at {@code base} without credentials: {@code kubectl proxy}, or a test double. */
+    static KubeApi at(URI base, Duration timeout) {
+<span class="fc" id="L82">        return new KubeApi(base, null, null, timeout);</span>
+    }
+
+    Response request(String method, String path, Map&lt;String, Object&gt; body) {
+<span class="fc" id="L86">        HttpRequest.Builder b = HttpRequest.newBuilder(base.resolve(path)).timeout(timeout).header(&quot;Accept&quot;, &quot;application/json&quot;);</span>
+<span class="pc bpc" id="L87" title="1 of 2 branches missed.">        if (token != null) {</span>
+<span class="nc" id="L88">            b.header(&quot;Authorization&quot;, &quot;Bearer &quot; + token.get());</span>
+        }
+<span class="fc bfc" id="L90" title="All 2 branches covered.">        if (body == null) {</span>
+<span class="fc" id="L91">            b.method(method, BodyPublishers.noBody());</span>
+        } else {
+<span class="fc" id="L93">            b.header(&quot;Content-Type&quot;, &quot;application/json&quot;);</span>
+<span class="fc" id="L94">            b.method(method, BodyPublishers.ofString(Json.writeCompact(body), StandardCharsets.UTF_8));</span>
+        }
+        try {
+<span class="fc" id="L97">            HttpResponse&lt;String&gt; r = http.send(b.build(), BodyHandlers.ofString(StandardCharsets.UTF_8));</span>
+<span class="fc" id="L98">            return new Response(r.statusCode(), r.body());</span>
+<span class="fc" id="L99">        } catch (IOException e) {</span>
+<span class="fc" id="L100">            throw new StoreException(&quot;Cannot reach the Kubernetes API at &quot; + base.getAuthority() + &quot;: &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L101">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L102">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L103">            throw new StoreException(&quot;Interrupted while calling the Kubernetes API&quot;, e);</span>
+        }
+    }
+
+    private static String readToken(Path file) {
+        try {
+<span class="nc" id="L109">            return Files.readString(file, StandardCharsets.UTF_8).strip();</span>
+<span class="nc" id="L110">        } catch (IOException e) {</span>
+<span class="nc" id="L111">            throw new StoreException(&quot;Cannot read the service-account token: &quot; + e.getMessage(), e);</span>
+        }
+    }
+
+    private static SSLContext trust(Path caFile) {
+<span class="nc" id="L116">        try (InputStream in = Files.newInputStream(caFile)) {</span>
+<span class="nc" id="L117">            KeyStore store = KeyStore.getInstance(KeyStore.getDefaultType());</span>
+<span class="nc" id="L118">            store.load(null, null);</span>
+<span class="nc" id="L119">            int i = 0;</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">            for (Certificate cert : CertificateFactory.getInstance(&quot;X.509&quot;).generateCertificates(in)) {</span>
+<span class="nc" id="L121">                store.setCertificateEntry(&quot;kube-ca-&quot; + i++, cert);</span>
+<span class="nc" id="L122">            }</span>
+<span class="nc" id="L123">            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());</span>
+<span class="nc" id="L124">            tmf.init(store);</span>
+<span class="nc" id="L125">            SSLContext ctx = SSLContext.getInstance(&quot;TLS&quot;);</span>
+<span class="nc" id="L126">            ctx.init(null, tmf.getTrustManagers(), null);</span>
+<span class="nc" id="L127">            return ctx;</span>
+<span class="nc" id="L128">        } catch (Exception e) {</span>
+<span class="nc" id="L129">            throw new StoreException(&quot;Cannot load the cluster CA from &quot; + caFile + &quot;: &quot; + e.getMessage(), e);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

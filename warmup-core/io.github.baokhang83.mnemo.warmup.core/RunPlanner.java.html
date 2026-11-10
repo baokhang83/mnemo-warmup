@@ -92,7 +92,7 @@ import java.util.Map;
                 }
             }
 <span class="fc" id="L94">        }</span>
-<span class="fc bfc" id="L95" title="All 2 branches covered.">        if (JarExtractor.detect(launch.jar()) == JarExtractor.Kind.SPRING_BOOT) {</span>
+<span class="fc bfc" id="L95" title="All 2 branches covered.">        if (JarExtractor.needsExtraction(launch.jar())) {</span>
 <span class="fc" id="L96">            notes.add(&quot;a Spring Boot fat JAR is launched directly; the archive was trained on the extracted layout, &quot;</span>
                     + &quot;so extract at image build time (java -Djarmode=tools -jar app.jar extract) and run the extracted JAR&quot;);
 <span class="fc" id="L98">            return plain;</span>

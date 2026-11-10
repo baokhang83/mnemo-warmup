@@ -22,10 +22,14 @@ import java.util.stream.Stream;
 public final class JarExtractor {
 
 <span class="fc" id="L24">    public enum Kind {</span>
-        /** A Spring Boot fat JAR that was extracted into a JAR with a {@code lib/} directory. */
-<span class="fc" id="L26">        SPRING_BOOT,</span>
+        /**
+         * A Spring Boot application: a fat JAR (which {@link #prepare} extracts) or one that is already extracted into a
+         * JAR with a {@code lib/} directory. This is the application's framework, which exit modes such as spring-refresh
+         * depend on; whether extraction is still needed is a separate question, see {@link #needsExtraction}.
+         */
+<span class="fc" id="L30">        SPRING_BOOT,</span>
         /** A regular executable JAR, used unchanged. */
-<span class="fc" id="L28">        EXECUTABLE_JAR</span>
+<span class="fc" id="L32">        EXECUTABLE_JAR</span>
     }
 
     /**
@@ -33,25 +37,34 @@ public final class JarExtractor {
      * @param runnableJar the JAR to launch with {@code java -jar}; for Spring Boot this is the
      *                    extracted JAR whose manifest points at the sibling {@code lib/} directory
      */
-<span class="fc" id="L36">    public record ExtractedApp(Kind kind, Path runnableJar) {}</span>
+<span class="fc" id="L40">    public record ExtractedApp(Kind kind, Path runnableJar) {}</span>
 
     private static final String SPRING_LOADER_PREFIX = &quot;org.springframework.boot.loader&quot;;
-<span class="fc" id="L39">    private static final Attributes.Name SPRING_BOOT_VERSION = new Attributes.Name(&quot;Spring-Boot-Version&quot;);</span>
-<span class="fc" id="L40">    private static final Pattern MAJOR_MINOR = Pattern.compile(&quot;^(\\d+)\\.(\\d+)&quot;);</span>
+<span class="fc" id="L43">    private static final Attributes.Name SPRING_BOOT_VERSION = new Attributes.Name(&quot;Spring-Boot-Version&quot;);</span>
+<span class="fc" id="L44">    private static final Pattern MAJOR_MINOR = Pattern.compile(&quot;^(\\d+)\\.(\\d+)&quot;);</span>
 
     private final CommandRunner runner;
 
     public JarExtractor() {
-<span class="fc" id="L45">        this(CommandRunner.system(Duration.ofMinutes(2)));</span>
-<span class="fc" id="L46">    }</span>
-
-<span class="fc" id="L48">    JarExtractor(CommandRunner runner) {</span>
-<span class="fc" id="L49">        this.runner = runner;</span>
+<span class="fc" id="L49">        this(CommandRunner.system(Duration.ofMinutes(2)));</span>
 <span class="fc" id="L50">    }</span>
+
+<span class="fc" id="L52">    JarExtractor(CommandRunner runner) {</span>
+<span class="fc" id="L53">        this.runner = runner;</span>
+<span class="fc" id="L54">    }</span>
 
     /** Classifies a JAR by its manifest. */
     public static Kind detect(Path jar) {
-<span class="fc bfc" id="L54" title="All 2 branches covered.">        return isSpringBoot(readManifest(jar)) ? Kind.SPRING_BOOT : Kind.EXECUTABLE_JAR;</span>
+<span class="fc bfc" id="L58" title="All 2 branches covered.">        return isSpringBootApp(readManifest(jar)) ? Kind.SPRING_BOOT : Kind.EXECUTABLE_JAR;</span>
+    }
+
+    /**
+     * Whether {@code jar} is a Spring Boot FAT JAR that must be extracted before it can be trained or launched with an
+     * archive. The JAR that {@code -Djarmode=tools extract} writes is still a Spring Boot application ({@link #detect}) but
+     * needs no extraction.
+     */
+    public static boolean needsExtraction(Path jar) {
+<span class="fc" id="L67">        return isFatJar(readManifest(jar));</span>
     }
 
     /**
@@ -64,104 +77,119 @@ public final class JarExtractor {
      * @throws IllegalStateException    if the extraction fails
      */
     public ExtractedApp prepare(Path jar, JdkInfo jdk, Path destination) {
-<span class="fc bfc" id="L67" title="All 2 branches covered.">        if (!Files.isRegularFile(jar)) {</span>
-<span class="fc" id="L68">            throw new IllegalArgumentException(&quot;JAR not found: &quot; + jar);</span>
+<span class="fc bfc" id="L80" title="All 2 branches covered.">        if (!Files.isRegularFile(jar)) {</span>
+<span class="fc" id="L81">            throw new IllegalArgumentException(&quot;JAR not found: &quot; + jar);</span>
         }
-<span class="fc" id="L70">        Manifest manifest = readManifest(jar);</span>
-<span class="fc bfc" id="L71" title="All 2 branches covered.">        if (!isSpringBoot(manifest)) {</span>
-<span class="fc" id="L72">            return new ExtractedApp(Kind.EXECUTABLE_JAR, jar.toAbsolutePath());</span>
+<span class="fc" id="L83">        Manifest manifest = readManifest(jar);</span>
+<span class="fc bfc" id="L84" title="All 2 branches covered.">        if (!isFatJar(manifest)) {</span>
+            // a plain executable JAR, or a Spring Boot app that is already extracted: used as it is
+<span class="fc bfc" id="L86" title="All 2 branches covered.">            return new ExtractedApp(isSpringBootApp(manifest) ? Kind.SPRING_BOOT : Kind.EXECUTABLE_JAR, jar.toAbsolutePath());</span>
         }
-<span class="fc" id="L74">        requireToolsMode(manifest);</span>
-<span class="fc" id="L75">        requireEmpty(destination);</span>
+<span class="fc" id="L88">        requireToolsMode(manifest);</span>
+<span class="fc" id="L89">        requireEmpty(destination);</span>
 
-<span class="fc" id="L77">        List&lt;String&gt; command = List.of(</span>
-<span class="fc" id="L78">                jdk.javaExecutable().toString(),</span>
+<span class="fc" id="L91">        List&lt;String&gt; command = List.of(</span>
+<span class="fc" id="L92">                jdk.javaExecutable().toString(),</span>
                 &quot;-Djarmode=tools&quot;,
                 &quot;-jar&quot;,
-<span class="fc" id="L81">                jar.toAbsolutePath().toString(),</span>
+<span class="fc" id="L95">                jar.toAbsolutePath().toString(),</span>
                 &quot;extract&quot;,
                 &quot;--destination&quot;,
-<span class="fc" id="L84">                destination.toAbsolutePath().toString());</span>
+<span class="fc" id="L98">                destination.toAbsolutePath().toString());</span>
         CommandRunner.CommandResult result;
         try {
-<span class="fc" id="L87">            result = runner.run(command);</span>
-<span class="nc" id="L88">        } catch (IOException e) {</span>
-<span class="nc" id="L89">            throw new IllegalStateException(&quot;Failed to run Spring Boot extraction: &quot; + e.getMessage(), e);</span>
-<span class="nc" id="L90">        } catch (InterruptedException e) {</span>
-<span class="nc" id="L91">            Thread.currentThread().interrupt();</span>
-<span class="nc" id="L92">            throw new IllegalStateException(&quot;Interrupted during Spring Boot extraction&quot;, e);</span>
-<span class="fc" id="L93">        }</span>
-<span class="fc bfc" id="L94" title="All 2 branches covered.">        if (result.exitCode() != 0) {</span>
-<span class="fc" id="L95">            throw new IllegalStateException(</span>
-<span class="fc" id="L96">                    &quot;Spring Boot extraction failed (exit &quot; + result.exitCode() + &quot;); tools mode needs Spring Boot 3.3+:\n&quot;</span>
-<span class="fc" id="L97">                            + result.output());</span>
+<span class="fc" id="L101">            result = runner.run(command);</span>
+<span class="nc" id="L102">        } catch (IOException e) {</span>
+<span class="nc" id="L103">            throw new IllegalStateException(&quot;Failed to run Spring Boot extraction: &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L104">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L105">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L106">            throw new IllegalStateException(&quot;Interrupted during Spring Boot extraction&quot;, e);</span>
+<span class="fc" id="L107">        }</span>
+<span class="fc bfc" id="L108" title="All 2 branches covered.">        if (result.exitCode() != 0) {</span>
+<span class="fc" id="L109">            throw new IllegalStateException(</span>
+<span class="fc" id="L110">                    &quot;Spring Boot extraction failed (exit &quot; + result.exitCode() + &quot;); tools mode needs Spring Boot 3.3+:\n&quot;</span>
+<span class="fc" id="L111">                            + result.output());</span>
         }
-<span class="fc" id="L99">        return new ExtractedApp(Kind.SPRING_BOOT, findExtractedJar(destination));</span>
+<span class="fc" id="L113">        return new ExtractedApp(Kind.SPRING_BOOT, findExtractedJar(destination));</span>
     }
 
-    private static boolean isSpringBoot(Manifest manifest) {
-<span class="pc bpc" id="L103" title="1 of 6 branches missed.">        return manifest != null &amp;&amp; (manifestVersion(manifest) != null || launcher(manifest));</span>
+    /** Any Spring Boot application: the loader as Main-Class, or the version attribute (which survives extraction). */
+    private static boolean isSpringBootApp(Manifest manifest) {
+<span class="pc bpc" id="L118" title="1 of 6 branches missed.">        return manifest != null &amp;&amp; (manifestVersion(manifest) != null || launcher(manifest));</span>
+    }
+
+    /**
+     * A Spring Boot FAT JAR: its Main-Class is the Spring loader, or it carries {@code Spring-Boot-Version} and no
+     * {@code Class-Path}. A fat JAR keeps its dependencies inside BOOT-INF, so it never has a Class-Path, whereas the JAR
+     * that {@code -Djarmode=tools extract} writes keeps {@code Spring-Boot-Version} but gets a Class-Path to its lib/
+     * directory and the application's own Main-Class (found by the first real Spring Boot example).
+     */
+    private static boolean isFatJar(Manifest manifest) {
+<span class="pc bpc" id="L128" title="1 of 2 branches missed.">        return manifest != null</span>
+<span class="fc bfc" id="L129" title="All 2 branches covered.">                &amp;&amp; (launcher(manifest)</span>
+<span class="fc bfc" id="L130" title="All 2 branches covered.">                        || (manifestVersion(manifest) != null</span>
+<span class="fc bfc" id="L131" title="All 2 branches covered.">                                &amp;&amp; manifest.getMainAttributes().getValue(Attributes.Name.CLASS_PATH) == null));</span>
     }
 
     private static String manifestVersion(Manifest manifest) {
-<span class="fc" id="L107">        return manifest.getMainAttributes().getValue(SPRING_BOOT_VERSION);</span>
+<span class="fc" id="L135">        return manifest.getMainAttributes().getValue(SPRING_BOOT_VERSION);</span>
     }
 
     private static boolean launcher(Manifest manifest) {
-<span class="fc" id="L111">        String main = manifest.getMainAttributes().getValue(Attributes.Name.MAIN_CLASS);</span>
-<span class="fc bfc" id="L112" title="All 4 branches covered.">        return main != null &amp;&amp; main.startsWith(SPRING_LOADER_PREFIX);</span>
+<span class="fc" id="L139">        String main = manifest.getMainAttributes().getValue(Attributes.Name.MAIN_CLASS);</span>
+<span class="fc bfc" id="L140" title="All 4 branches covered.">        return main != null &amp;&amp; main.startsWith(SPRING_LOADER_PREFIX);</span>
     }
 
     private static void requireToolsMode(Manifest manifest) {
-<span class="fc" id="L116">        String version = manifestVersion(manifest);</span>
-<span class="fc bfc" id="L117" title="All 2 branches covered.">        if (version == null) {</span>
-<span class="fc" id="L118">            return;</span>
+<span class="fc" id="L144">        String version = manifestVersion(manifest);</span>
+<span class="fc bfc" id="L145" title="All 2 branches covered.">        if (version == null) {</span>
+<span class="fc" id="L146">            return;</span>
         }
-<span class="fc" id="L120">        Matcher m = MAJOR_MINOR.matcher(version);</span>
-<span class="pc bpc" id="L121" title="1 of 2 branches missed.">        if (m.find()) {</span>
-<span class="fc" id="L122">            int major = Integer.parseInt(m.group(1));</span>
-<span class="fc" id="L123">            int minor = Integer.parseInt(m.group(2));</span>
-<span class="fc bfc" id="L124" title="All 6 branches covered.">            if (major &lt; 3 || (major == 3 &amp;&amp; minor &lt; 3)) {</span>
-<span class="fc" id="L125">                throw new IllegalArgumentException(</span>
+<span class="fc" id="L148">        Matcher m = MAJOR_MINOR.matcher(version);</span>
+<span class="pc bpc" id="L149" title="1 of 2 branches missed.">        if (m.find()) {</span>
+<span class="fc" id="L150">            int major = Integer.parseInt(m.group(1));</span>
+<span class="fc" id="L151">            int minor = Integer.parseInt(m.group(2));</span>
+<span class="fc bfc" id="L152" title="All 6 branches covered.">            if (major &lt; 3 || (major == 3 &amp;&amp; minor &lt; 3)) {</span>
+<span class="fc" id="L153">                throw new IllegalArgumentException(</span>
                         &quot;Spring Boot &quot; + version + &quot; does not support '-Djarmode=tools extract'; 3.3 or newer is required&quot;);
             }
         }
-<span class="fc" id="L129">    }</span>
+<span class="fc" id="L157">    }</span>
 
     private static Manifest readManifest(Path jar) {
-<span class="fc" id="L132">        try (JarFile file = new JarFile(jar.toFile())) {</span>
-<span class="fc" id="L133">            return file.getManifest();</span>
-<span class="fc" id="L134">        } catch (IOException e) {</span>
-<span class="fc" id="L135">            throw new IllegalArgumentException(&quot;Not a valid JAR file: &quot; + jar, e);</span>
+<span class="fc" id="L160">        try (JarFile file = new JarFile(jar.toFile())) {</span>
+<span class="fc" id="L161">            return file.getManifest();</span>
+<span class="fc" id="L162">        } catch (IOException e) {</span>
+<span class="fc" id="L163">            throw new IllegalArgumentException(&quot;Not a valid JAR file: &quot; + jar, e);</span>
         }
     }
 
     private static void requireEmpty(Path destination) {
-<span class="fc bfc" id="L140" title="All 2 branches covered.">        if (!Files.exists(destination)) {</span>
-<span class="fc" id="L141">            return;</span>
+<span class="fc bfc" id="L168" title="All 2 branches covered.">        if (!Files.exists(destination)) {</span>
+<span class="fc" id="L169">            return;</span>
         }
-<span class="pc bpc" id="L143" title="1 of 2 branches missed.">        try (Stream&lt;Path&gt; entries = Files.isDirectory(destination) ? Files.list(destination) : Stream.of(destination)) {</span>
-<span class="fc bfc" id="L144" title="All 2 branches covered.">            if (entries.findAny().isPresent()) {</span>
-<span class="fc" id="L145">                throw new IllegalArgumentException(</span>
+<span class="pc bpc" id="L171" title="1 of 2 branches missed.">        try (Stream&lt;Path&gt; entries = Files.isDirectory(destination) ? Files.list(destination) : Stream.of(destination)) {</span>
+<span class="fc bfc" id="L172" title="All 2 branches covered.">            if (entries.findAny().isPresent()) {</span>
+<span class="fc" id="L173">                throw new IllegalArgumentException(</span>
                         &quot;Extraction directory already exists and is not empty: &quot; + destination);
             }
-<span class="nc" id="L148">        } catch (IOException e) {</span>
-<span class="nc" id="L149">            throw new IllegalStateException(&quot;Cannot inspect &quot; + destination, e);</span>
-<span class="fc" id="L150">        }</span>
-<span class="fc" id="L151">    }</span>
+<span class="nc" id="L176">        } catch (IOException e) {</span>
+<span class="nc" id="L177">            throw new IllegalStateException(&quot;Cannot inspect &quot; + destination, e);</span>
+<span class="fc" id="L178">        }</span>
+<span class="fc" id="L179">    }</span>
 
     private static Path findExtractedJar(Path destination) {
-<span class="fc" id="L154">        try (Stream&lt;Path&gt; entries = Files.list(destination)) {</span>
-<span class="fc" id="L155">            List&lt;Path&gt; jars = entries</span>
-<span class="pc bpc" id="L156" title="1 of 4 branches missed.">                    .filter(p -&gt; Files.isRegularFile(p) &amp;&amp; p.getFileName().toString().endsWith(&quot;.jar&quot;))</span>
-<span class="fc" id="L157">                    .toList();</span>
-<span class="fc bfc" id="L158" title="All 2 branches covered.">            if (jars.size() != 1) {</span>
-<span class="fc" id="L159">                throw new IllegalStateException(</span>
-<span class="fc" id="L160">                        &quot;Expected exactly one JAR in &quot; + destination + &quot; after extraction, found &quot; + jars.size());</span>
+<span class="fc" id="L182">        try (Stream&lt;Path&gt; entries = Files.list(destination)) {</span>
+<span class="fc" id="L183">            List&lt;Path&gt; jars = entries</span>
+<span class="pc bpc" id="L184" title="1 of 4 branches missed.">                    .filter(p -&gt; Files.isRegularFile(p) &amp;&amp; p.getFileName().toString().endsWith(&quot;.jar&quot;))</span>
+<span class="fc" id="L185">                    .toList();</span>
+<span class="fc bfc" id="L186" title="All 2 branches covered.">            if (jars.size() != 1) {</span>
+<span class="fc" id="L187">                throw new IllegalStateException(</span>
+<span class="fc" id="L188">                        &quot;Expected exactly one JAR in &quot; + destination + &quot; after extraction, found &quot; + jars.size());</span>
             }
-<span class="fc" id="L162">            return jars.get(0);</span>
-<span class="nc" id="L163">        } catch (IOException e) {</span>
-<span class="nc" id="L164">            throw new IllegalStateException(&quot;Cannot read extraction output in &quot; + destination, e);</span>
+<span class="fc" id="L190">            return jars.get(0);</span>
+<span class="nc" id="L191">        } catch (IOException e) {</span>
+<span class="nc" id="L192">            throw new IllegalStateException(&quot;Cannot read extraction output in &quot; + destination, e);</span>
         }
     }
 }

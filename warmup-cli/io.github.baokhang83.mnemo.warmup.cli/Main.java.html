@@ -148,18 +148,18 @@ import picocli.CommandLine.Spec;
 <span class="fc" id="L148">                Path archive = opts.workDir.resolve(&quot;app.&quot; + strategy.extension());</span>
 <span class="fc" id="L149">                out.printf(&quot;Training with exit mode %s ...%n&quot;, mode.name());</span>
 <span class="fc" id="L150">                var result = new AppTrainer()</span>
-<span class="nc" id="L151">                        .train(app, jdk, strategy, mode, archive, Duration.ofSeconds(opts.timeoutSeconds), opts.jvmArgs);</span>
-<span class="nc" id="L152">                out.printf(</span>
+<span class="fc" id="L151">                        .train(app, jdk, strategy, mode, archive, Duration.ofSeconds(opts.timeoutSeconds), opts.jvmArgs);</span>
+<span class="fc" id="L152">                out.printf(</span>
                         &quot;Archive: %s (%.1f MB) in %.1f s%n&quot;,
-<span class="nc" id="L154">                        result.archive(), result.sizeBytes() / 1_048_576.0, result.elapsed().toMillis() / 1000.0);</span>
+<span class="fc" id="L154">                        result.archive(), result.sizeBytes() / 1_048_576.0, result.elapsed().toMillis() / 1000.0);</span>
 
-<span class="nc" id="L156">                var manifest = ArchiveManifest.describe(app, jdk, strategy, opts.jvmArgs, System.getenv(), imageDigest)</span>
-<span class="nc" id="L157">                        .withArchive(result.archive());</span>
-<span class="nc" id="L158">                Path manifestFile = result.archive().resolveSibling(ArchiveManifest.FILE_NAME);</span>
-<span class="nc" id="L159">                manifest.write(manifestFile);</span>
-<span class="nc" id="L160">                out.printf(&quot;Manifest: %s%n&quot;, manifestFile);</span>
-<span class="nc" id="L161">                out.printf(&quot;Fingerprint: %s%n&quot;, manifest.fingerprint());</span>
-<span class="nc" id="L162">                return 0;</span>
+<span class="fc" id="L156">                var manifest = ArchiveManifest.describe(app, jdk, strategy, opts.jvmArgs, System.getenv(), imageDigest)</span>
+<span class="fc" id="L157">                        .withArchive(result.archive());</span>
+<span class="fc" id="L158">                Path manifestFile = result.archive().resolveSibling(ArchiveManifest.FILE_NAME);</span>
+<span class="fc" id="L159">                manifest.write(manifestFile);</span>
+<span class="fc" id="L160">                out.printf(&quot;Manifest: %s%n&quot;, manifestFile);</span>
+<span class="fc" id="L161">                out.printf(&quot;Fingerprint: %s%n&quot;, manifest.fingerprint());</span>
+<span class="fc" id="L162">                return 0;</span>
 <span class="fc" id="L163">            } catch (IllegalArgumentException | IllegalStateException e) {</span>
 <span class="fc" id="L164">                err.println(&quot;error: &quot; + e.getMessage());</span>
 <span class="fc" id="L165">                return 2;</span>
@@ -610,18 +610,18 @@ import picocli.CommandLine.Spec;
                 }
 <span class="fc" id="L611">                JdkInfo jdk = JdkInfo.detect(opts.javaHome, System.getenv());</span>
 <span class="fc" id="L612">                CacheStrategy strategy = CacheType.parse(cacheType).resolve(jdk);</span>
-<span class="fc bfc" id="L613" title="All 2 branches covered.">                if (JarExtractor.detect(opts.jar) == JarExtractor.Kind.SPRING_BOOT) {</span>
+<span class="fc bfc" id="L613" title="All 2 branches covered.">                if (JarExtractor.needsExtraction(opts.jar)) {</span>
 <span class="fc" id="L614">                    throw new IllegalArgumentException(&quot;train needs the extracted layout: extract the Spring Boot JAR at image build time &quot;</span>
                             + &quot;(java -Djarmode=tools -jar app.jar extract) so the trainer and the app run the same files (ADR 0003)&quot;);
                 }
-<span class="pc bpc" id="L617" title="1 of 2 branches missed.">                var probe = opts.url == null</span>
-<span class="nc" id="L618">                        ? null</span>
+<span class="fc bfc" id="L617" title="All 2 branches covered.">                var probe = opts.url == null</span>
+<span class="fc" id="L618">                        ? null</span>
 <span class="fc" id="L619">                        : new HttpProbeExitMode.Settings(</span>
 <span class="fc" id="L620">                                opts.url, Duration.ofMillis(opts.pollIntervalMillis), opts.warmupUrls, opts.warmupScript);</span>
 <span class="fc" id="L621">                ExitMode mode = ExitMode.parse(opts.exitMode, probe);</span>
-                // spring-refresh is only accepted for Spring Boot apps; an extracted Spring Boot app is a plain JAR on disk
-<span class="pc bpc" id="L623" title="1 of 2 branches missed.">                var kind = mode.supports(JarExtractor.Kind.EXECUTABLE_JAR) ? JarExtractor.Kind.EXECUTABLE_JAR : JarExtractor.Kind.SPRING_BOOT;</span>
-<span class="fc" id="L624">                var app = new JarExtractor.ExtractedApp(kind, opts.jar.toAbsolutePath());</span>
+                // the extracted layout is used as it is; prepare() reports its framework (Spring Boot or not), which is
+                // what spring-refresh checks
+<span class="fc" id="L624">                var app = new JarExtractor().prepare(opts.jar, jdk, opts.workDir.resolve(&quot;unused&quot;));</span>
 <span class="fc" id="L625">                ArchiveManifest live = ArchiveManifest.describe(app, jdk, strategy, opts.jvmArgs, System.getenv(), imageDigest);</span>
 
 <span class="fc" id="L627">                Path archive = opts.workDir.resolve(&quot;app.&quot; + strategy.extension());</span>
@@ -687,14 +687,14 @@ import picocli.CommandLine.Spec;
 <span class="fc" id="L687">                    throw new IllegalArgumentException(&quot;--timeout-seconds and --runs must be positive and --warmups not negative&quot;);</span>
                 }
 <span class="fc" id="L689">                JdkInfo jdk = JdkInfo.detect(opts.javaHome, System.getenv());</span>
-<span class="pc bpc" id="L690" title="1 of 2 branches missed.">                var trainProbe = opts.url == null</span>
-<span class="nc" id="L691">                        ? null</span>
+<span class="fc bfc" id="L690" title="All 2 branches covered.">                var trainProbe = opts.url == null</span>
+<span class="fc" id="L691">                        ? null</span>
 <span class="fc" id="L692">                        : new HttpProbeExitMode.Settings(</span>
 <span class="fc" id="L693">                                opts.url, Duration.ofMillis(opts.pollIntervalMillis), opts.warmupUrls, opts.warmupScript);</span>
 <span class="fc" id="L694">                ExitMode trainMode = ExitMode.parse(opts.exitMode, trainProbe);</span>
                 // Same mode for measuring, but no warmup traffic: that would be counted as startup.
-<span class="pc bpc" id="L696" title="1 of 2 branches missed.">                ExitMode measureMode = opts.url == null</span>
-<span class="nc" id="L697">                        ? trainMode</span>
+<span class="fc bfc" id="L696" title="All 2 branches covered.">                ExitMode measureMode = opts.url == null</span>
+<span class="fc" id="L697">                        ? trainMode</span>
 <span class="fc" id="L698">                        : ExitMode.parse(opts.exitMode, HttpProbeExitMode.Settings.of(opts.url)</span>
 <span class="fc" id="L699">                                .withPollInterval(MEASURE_POLL));</span>
 <span class="fc" id="L700">                var app = new JarExtractor().prepare(opts.jar, jdk, opts.workDir.resolve(&quot;app&quot;));</span>

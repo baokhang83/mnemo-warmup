@@ -121,7 +121,7 @@ public final class StartupBench {
 <span class="nc" id="L121">            } catch (TimeoutException e) {</span>
 <span class="nc" id="L122">                throw new TrainingException(variant.name() + &quot;: not ready within &quot; + timeout + &quot;: &quot; + e.getMessage(), logFile, e);</span>
 <span class="fc" id="L123">            }</span>
-<span class="pc bpc" id="L124" title="1 of 4 branches missed.">            if (!process.isAlive() &amp;&amp; process.exitValue() != 0) {</span>
+<span class="fc bfc" id="L124" title="All 4 branches covered.">            if (!process.isAlive() &amp;&amp; process.exitValue() != 0) {</span>
 <span class="fc" id="L125">                throw new TrainingException(</span>
 <span class="fc" id="L126">                        variant.name() + &quot;: application exited with code &quot; + process.exitValue() + &quot; before it was ready&quot;, logFile);</span>
             }

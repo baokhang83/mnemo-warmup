@@ -40,14 +40,15 @@ public record ArchiveManifest(
         String imageDigest,
         List&lt;String&gt; jvmFlags,
         List&lt;ClasspathEntry&gt; classpath,
-        ArchiveInfo archive) {
+        ArchiveInfo archive,
+        String launchDir) {
 
     public static final String FILE_NAME = &quot;mnemo-warmup.manifest.json&quot;;
     public static final int SCHEMA_VERSION = 1;
 
-<span class="fc" id="L48">    public record Jdk(String vendor, String version, String runtimeVersion, int featureVersion) {</span>
+<span class="fc" id="L49">    public record Jdk(String vendor, String version, String runtimeVersion, int featureVersion) {</span>
         static Jdk of(JdkInfo info) {
-<span class="fc" id="L50">            return new Jdk(info.vendor(), info.version(), info.runtimeVersion(), info.featureVersion());</span>
+<span class="fc" id="L51">            return new Jdk(info.vendor(), info.version(), info.runtimeVersion(), info.featureVersion());</span>
         }
     }
 
@@ -55,16 +56,28 @@ public record ArchiveManifest(
      * @param name         path relative to the directory of the launched JAR, with '/' separators
      * @param lastModified informational only
      */
-<span class="fc" id="L58">    public record ClasspathEntry(String name, long sizeBytes, String sha256, Instant lastModified) {}</span>
+<span class="fc" id="L59">    public record ClasspathEntry(String name, long sizeBytes, String sha256, Instant lastModified) {}</span>
 
-<span class="fc" id="L60">    public record ArchiveInfo(String file, long sizeBytes, String sha256) {}</span>
+<span class="fc" id="L61">    public record ArchiveInfo(String file, long sizeBytes, String sha256) {}</span>
 
-<span class="fc" id="L62">    public ArchiveManifest {</span>
-<span class="fc" id="L63">        Objects.requireNonNull(cacheType, &quot;cacheType&quot;);</span>
-<span class="fc" id="L64">        Objects.requireNonNull(jdk, &quot;jdk&quot;);</span>
-<span class="fc" id="L65">        jvmFlags = List.copyOf(jvmFlags);</span>
-<span class="fc" id="L66">        classpath = List.copyOf(classpath);</span>
-<span class="fc" id="L67">    }</span>
+    /** A manifest without a recorded launch directory (see {@link #launchDir()}). */
+    public ArchiveManifest(
+            int schemaVersion,
+            CacheStrategy cacheType,
+            Jdk jdk,
+            String imageDigest,
+            List&lt;String&gt; jvmFlags,
+            List&lt;ClasspathEntry&gt; classpath,
+            ArchiveInfo archive) {
+<span class="fc" id="L72">        this(schemaVersion, cacheType, jdk, imageDigest, jvmFlags, classpath, archive, null);</span>
+<span class="fc" id="L73">    }</span>
+
+<span class="fc" id="L75">    public ArchiveManifest {</span>
+<span class="fc" id="L76">        Objects.requireNonNull(cacheType, &quot;cacheType&quot;);</span>
+<span class="fc" id="L77">        Objects.requireNonNull(jdk, &quot;jdk&quot;);</span>
+<span class="fc" id="L78">        jvmFlags = List.copyOf(jvmFlags);</span>
+<span class="fc" id="L79">        classpath = List.copyOf(classpath);</span>
+<span class="fc" id="L80">    }</span>
 
     // ---- building ----
 
@@ -84,24 +97,25 @@ public record ArchiveManifest(
             List&lt;String&gt; jvmArgs,
             Map&lt;String, String&gt; environment,
             String imageDigest) {
-<span class="fc" id="L87">        return new ArchiveManifest(</span>
+<span class="fc" id="L100">        return new ArchiveManifest(</span>
                 SCHEMA_VERSION,
                 cacheType,
-<span class="fc" id="L90">                Jdk.of(jdk),</span>
+<span class="fc" id="L103">                Jdk.of(jdk),</span>
                 imageDigest,
-<span class="fc" id="L92">                JvmFlags.relevant(jvmArgs, environment),</span>
-<span class="fc" id="L93">                classpathOf(app.runnableJar()),</span>
-                null);
+<span class="fc" id="L105">                JvmFlags.relevant(jvmArgs, environment),</span>
+<span class="fc" id="L106">                classpathOf(app.runnableJar()),</span>
+                null,
+<span class="fc" id="L108">                app.runnableJar().toAbsolutePath().getParent().toString());</span>
     }
 
     /** A copy that also records the written archive's name, size and SHA-256. */
     public ArchiveManifest withArchive(Path archiveFile) {
         try {
-<span class="fc" id="L100">            ArchiveInfo info = new ArchiveInfo(</span>
-<span class="fc" id="L101">                    archiveFile.getFileName().toString(), Files.size(archiveFile), sha256(archiveFile));</span>
-<span class="fc" id="L102">            return new ArchiveManifest(schemaVersion, cacheType, jdk, imageDigest, jvmFlags, classpath, info);</span>
-<span class="nc" id="L103">        } catch (IOException e) {</span>
-<span class="nc" id="L104">            throw new IllegalStateException(&quot;Cannot read archive &quot; + archiveFile + &quot;: &quot; + e.getMessage(), e);</span>
+<span class="fc" id="L114">            ArchiveInfo info = new ArchiveInfo(</span>
+<span class="fc" id="L115">                    archiveFile.getFileName().toString(), Files.size(archiveFile), sha256(archiveFile));</span>
+<span class="fc" id="L116">            return new ArchiveManifest(schemaVersion, cacheType, jdk, imageDigest, jvmFlags, classpath, info, launchDir);</span>
+<span class="nc" id="L117">        } catch (IOException e) {</span>
+<span class="nc" id="L118">            throw new IllegalStateException(&quot;Cannot read archive &quot; + archiveFile + &quot;: &quot; + e.getMessage(), e);</span>
         }
     }
 
@@ -109,20 +123,20 @@ public record ArchiveManifest(
 
     /** {@code sha256:&lt;hex&gt;} over the canonical form of everything that decides archive validity. */
     public String fingerprint() {
-<span class="fc" id="L112">        Map&lt;String, Object&gt; canonical = new LinkedHashMap&lt;&gt;();</span>
-<span class="fc" id="L113">        canonical.put(&quot;schema&quot;, (long) schemaVersion);</span>
-<span class="fc" id="L114">        canonical.put(&quot;cacheType&quot;, cacheType.name());</span>
-<span class="fc" id="L115">        canonical.put(&quot;jdkVendor&quot;, jdk.vendor());</span>
-<span class="fc" id="L116">        canonical.put(&quot;jdkRuntimeVersion&quot;, jdk.runtimeVersion());</span>
-<span class="fc" id="L117">        canonical.put(&quot;jdkFeatureVersion&quot;, (long) jdk.featureVersion());</span>
-<span class="fc" id="L118">        canonical.put(&quot;imageDigest&quot;, imageDigest);</span>
-<span class="fc" id="L119">        canonical.put(&quot;jvmFlags&quot;, new ArrayList&lt;Object&gt;(jvmFlags));</span>
-<span class="fc" id="L120">        List&lt;Object&gt; entries = new ArrayList&lt;&gt;();</span>
-<span class="fc bfc" id="L121" title="All 2 branches covered.">        for (ClasspathEntry e : classpath) {</span>
-<span class="fc" id="L122">            entries.add(List.of(e.name(), e.sizeBytes(), e.sha256()));</span>
-<span class="fc" id="L123">        }</span>
-<span class="fc" id="L124">        canonical.put(&quot;classpath&quot;, entries);</span>
-<span class="fc" id="L125">        return &quot;sha256:&quot; + sha256(Json.writeCompact(canonical).getBytes(StandardCharsets.UTF_8));</span>
+<span class="fc" id="L126">        Map&lt;String, Object&gt; canonical = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L127">        canonical.put(&quot;schema&quot;, (long) schemaVersion);</span>
+<span class="fc" id="L128">        canonical.put(&quot;cacheType&quot;, cacheType.name());</span>
+<span class="fc" id="L129">        canonical.put(&quot;jdkVendor&quot;, jdk.vendor());</span>
+<span class="fc" id="L130">        canonical.put(&quot;jdkRuntimeVersion&quot;, jdk.runtimeVersion());</span>
+<span class="fc" id="L131">        canonical.put(&quot;jdkFeatureVersion&quot;, (long) jdk.featureVersion());</span>
+<span class="fc" id="L132">        canonical.put(&quot;imageDigest&quot;, imageDigest);</span>
+<span class="fc" id="L133">        canonical.put(&quot;jvmFlags&quot;, new ArrayList&lt;Object&gt;(jvmFlags));</span>
+<span class="fc" id="L134">        List&lt;Object&gt; entries = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L135" title="All 2 branches covered.">        for (ClasspathEntry e : classpath) {</span>
+<span class="fc" id="L136">            entries.add(List.of(e.name(), e.sizeBytes(), e.sha256()));</span>
+<span class="fc" id="L137">        }</span>
+<span class="fc" id="L138">        canonical.put(&quot;classpath&quot;, entries);</span>
+<span class="fc" id="L139">        return &quot;sha256:&quot; + sha256(Json.writeCompact(canonical).getBytes(StandardCharsets.UTF_8));</span>
     }
 
     /**
@@ -131,77 +145,116 @@ public record ArchiveManifest(
      * be used.
      */
     public List&lt;String&gt; mismatches(ArchiveManifest live) {
-<span class="fc" id="L134">        List&lt;String&gt; problems = new ArrayList&lt;&gt;();</span>
-<span class="pc bpc" id="L135" title="1 of 2 branches missed.">        if (schemaVersion != live.schemaVersion) {</span>
-<span class="nc" id="L136">            problems.add(&quot;manifest format &quot; + schemaVersion + &quot; vs &quot; + live.schemaVersion);</span>
+<span class="fc" id="L148">        List&lt;String&gt; problems = new ArrayList&lt;&gt;();</span>
+<span class="pc bpc" id="L149" title="1 of 2 branches missed.">        if (schemaVersion != live.schemaVersion) {</span>
+<span class="nc" id="L150">            problems.add(&quot;manifest format &quot; + schemaVersion + &quot; vs &quot; + live.schemaVersion);</span>
         }
-<span class="fc bfc" id="L138" title="All 2 branches covered.">        if (cacheType != live.cacheType) {</span>
-<span class="fc" id="L139">            problems.add(&quot;cache type &quot; + cacheType + &quot; vs &quot; + live.cacheType);</span>
+<span class="fc bfc" id="L152" title="All 2 branches covered.">        if (cacheType != live.cacheType) {</span>
+<span class="fc" id="L153">            problems.add(&quot;cache type &quot; + cacheType + &quot; vs &quot; + live.cacheType);</span>
         }
-<span class="pc bpc" id="L141" title="1 of 2 branches missed.">        if (!Objects.equals(jdk.vendor(), live.jdk.vendor())) {</span>
-<span class="nc" id="L142">            problems.add(&quot;JDK vendor '&quot; + jdk.vendor() + &quot;' vs '&quot; + live.jdk.vendor() + &quot;'&quot;);</span>
+<span class="pc bpc" id="L155" title="1 of 2 branches missed.">        if (!Objects.equals(jdk.vendor(), live.jdk.vendor())) {</span>
+<span class="nc" id="L156">            problems.add(&quot;JDK vendor '&quot; + jdk.vendor() + &quot;' vs '&quot; + live.jdk.vendor() + &quot;'&quot;);</span>
         }
-<span class="fc bfc" id="L144" title="All 2 branches covered.">        if (!Objects.equals(jdk.runtimeVersion(), live.jdk.runtimeVersion())) {</span>
-<span class="fc" id="L145">            problems.add(&quot;JDK build &quot; + jdk.runtimeVersion() + &quot; vs &quot; + live.jdk.runtimeVersion());</span>
+<span class="fc bfc" id="L158" title="All 2 branches covered.">        if (!Objects.equals(jdk.runtimeVersion(), live.jdk.runtimeVersion())) {</span>
+<span class="fc" id="L159">            problems.add(&quot;JDK build &quot; + jdk.runtimeVersion() + &quot; vs &quot; + live.jdk.runtimeVersion());</span>
         }
-<span class="fc bfc" id="L147" title="All 2 branches covered.">        if (!Objects.equals(imageDigest, live.imageDigest)) {</span>
-<span class="fc" id="L148">            problems.add(&quot;image digest &quot; + imageDigest + &quot; vs &quot; + live.imageDigest);</span>
+<span class="fc bfc" id="L161" title="All 2 branches covered.">        if (!Objects.equals(imageDigest, live.imageDigest)) {</span>
+<span class="fc" id="L162">            problems.add(&quot;image digest &quot; + imageDigest + &quot; vs &quot; + live.imageDigest);</span>
         }
-<span class="fc bfc" id="L150" title="All 2 branches covered.">        if (!jvmFlags.equals(live.jvmFlags)) {</span>
-<span class="fc" id="L151">            problems.add(&quot;JVM options &quot; + jvmFlags + &quot; vs &quot; + live.jvmFlags);</span>
+<span class="fc bfc" id="L164" title="All 2 branches covered.">        if (!jvmFlags.equals(live.jvmFlags)) {</span>
+<span class="fc" id="L165">            problems.add(&quot;JVM options &quot; + jvmFlags + &quot; vs &quot; + live.jvmFlags);</span>
         }
-<span class="fc" id="L153">        compareClasspath(live, problems);</span>
-<span class="fc" id="L154">        return problems;</span>
+<span class="fc" id="L167">        compareClasspath(live, problems);</span>
+<span class="fc" id="L168">        return problems;</span>
+    }
+
+    /**
+     * The JVM also checks each classpath JAR's modification time when it maps an archive, which
+     * {@link #mismatches} deliberately ignores (the fingerprint must survive re-created layers with
+     * identical bytes). Compared to whole seconds, as the JVM does. Empty means the times agree.
+     */
+    public List&lt;String&gt; modificationTimeMismatches(ArchiveManifest live) {
+<span class="fc" id="L177">        List&lt;String&gt; problems = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L178" title="All 2 branches covered.">        for (int i = 0; i &lt; Math.min(classpath.size(), live.classpath.size()); i++) {</span>
+<span class="fc" id="L179">            ClasspathEntry a = classpath.get(i);</span>
+<span class="fc" id="L180">            ClasspathEntry b = live.classpath.get(i);</span>
+<span class="pc bpc" id="L181" title="1 of 2 branches missed.">            if (a.name().equals(b.name())</span>
+<span class="pc bpc" id="L182" title="1 of 2 branches missed.">                    &amp;&amp; a.lastModified() != null</span>
+<span class="pc bpc" id="L183" title="1 of 2 branches missed.">                    &amp;&amp; b.lastModified() != null</span>
+<span class="fc bfc" id="L184" title="All 2 branches covered.">                    &amp;&amp; a.lastModified().getEpochSecond() != b.lastModified().getEpochSecond()) {</span>
+<span class="fc" id="L185">                problems.add(&quot;'&quot; + a.name() + &quot;' was modified at &quot; + b.lastModified() + &quot;, the archive was trained at &quot; + a.lastModified());</span>
+            }
+        }
+<span class="fc" id="L188">        return problems;</span>
+    }
+
+    /**
+     * The JVM records the paths of the classpath JARs, so an archive trained from {@code /app-a} is
+     * not used from {@code /app-b} even when every byte and time agrees. {@code mismatches} and
+     * {@link #modificationTimeMismatches} cannot see that (names are relative), so this compares the
+     * directory the launched JAR was in. A manifest without one cannot be checked, which counts as a mismatch.
+     */
+    public List&lt;String&gt; locationMismatches(ArchiveManifest live) {
+<span class="fc bfc" id="L198" title="All 2 branches covered.">        if (launchDir == null) {</span>
+<span class="fc" id="L199">            return List.of(&quot;the manifest does not record where it was trained (retrain with this version)&quot;);</span>
+        }
+<span class="pc bpc" id="L201" title="1 of 4 branches missed.">        if (live.launchDir != null &amp;&amp; !launchDir.equals(live.launchDir)) {</span>
+<span class="fc" id="L202">            return List.of(&quot;trained from &quot; + launchDir + &quot; but launched from &quot; + live.launchDir);</span>
+        }
+<span class="fc" id="L204">        return List.of();</span>
     }
 
     private void compareClasspath(ArchiveManifest live, List&lt;String&gt; problems) {
-<span class="fc bfc" id="L158" title="All 2 branches covered.">        if (classpath.size() != live.classpath.size()) {</span>
-<span class="fc" id="L159">            problems.add(&quot;classpath has &quot; + classpath.size() + &quot; entries vs &quot; + live.classpath.size());</span>
+<span class="fc bfc" id="L208" title="All 2 branches covered.">        if (classpath.size() != live.classpath.size()) {</span>
+<span class="fc" id="L209">            problems.add(&quot;classpath has &quot; + classpath.size() + &quot; entries vs &quot; + live.classpath.size());</span>
         }
-<span class="fc bfc" id="L161" title="All 2 branches covered.">        for (int i = 0; i &lt; Math.min(classpath.size(), live.classpath.size()); i++) {</span>
-<span class="fc" id="L162">            ClasspathEntry a = classpath.get(i);</span>
-<span class="fc" id="L163">            ClasspathEntry b = live.classpath.get(i);</span>
-<span class="fc bfc" id="L164" title="All 2 branches covered.">            if (!a.name().equals(b.name())) {</span>
-<span class="fc" id="L165">                problems.add(&quot;classpath entry &quot; + i + &quot; is '&quot; + a.name() + &quot;' vs '&quot; + b.name() + &quot;'&quot;);</span>
-<span class="pc bpc" id="L166" title="1 of 4 branches missed.">            } else if (a.sizeBytes() != b.sizeBytes() || !a.sha256().equals(b.sha256())) {</span>
-<span class="fc" id="L167">                problems.add(&quot;classpath entry '&quot; + a.name() + &quot;' has different content&quot;);</span>
+<span class="fc bfc" id="L211" title="All 2 branches covered.">        for (int i = 0; i &lt; Math.min(classpath.size(), live.classpath.size()); i++) {</span>
+<span class="fc" id="L212">            ClasspathEntry a = classpath.get(i);</span>
+<span class="fc" id="L213">            ClasspathEntry b = live.classpath.get(i);</span>
+<span class="fc bfc" id="L214" title="All 2 branches covered.">            if (!a.name().equals(b.name())) {</span>
+<span class="fc" id="L215">                problems.add(&quot;classpath entry &quot; + i + &quot; is '&quot; + a.name() + &quot;' vs '&quot; + b.name() + &quot;'&quot;);</span>
+<span class="fc bfc" id="L216" title="All 4 branches covered.">            } else if (a.sizeBytes() != b.sizeBytes() || !a.sha256().equals(b.sha256())) {</span>
+<span class="fc" id="L217">                problems.add(&quot;classpath entry '&quot; + a.name() + &quot;' has different content&quot;);</span>
             }
         }
-<span class="fc" id="L170">    }</span>
+<span class="fc" id="L220">    }</span>
 
     // ---- JSON ----
 
     public String toJson() {
-<span class="fc" id="L175">        Map&lt;String, Object&gt; root = new LinkedHashMap&lt;&gt;();</span>
-<span class="fc" id="L176">        root.put(&quot;schemaVersion&quot;, (long) schemaVersion);</span>
-<span class="fc" id="L177">        root.put(&quot;fingerprint&quot;, fingerprint());</span>
-<span class="fc" id="L178">        root.put(&quot;cacheType&quot;, cacheType.name());</span>
-<span class="fc" id="L179">        Map&lt;String, Object&gt; jdkJson = new LinkedHashMap&lt;&gt;();</span>
-<span class="fc" id="L180">        jdkJson.put(&quot;vendor&quot;, jdk.vendor());</span>
-<span class="fc" id="L181">        jdkJson.put(&quot;version&quot;, jdk.version());</span>
-<span class="fc" id="L182">        jdkJson.put(&quot;runtimeVersion&quot;, jdk.runtimeVersion());</span>
-<span class="fc" id="L183">        jdkJson.put(&quot;featureVersion&quot;, (long) jdk.featureVersion());</span>
-<span class="fc" id="L184">        root.put(&quot;jdk&quot;, jdkJson);</span>
-<span class="fc" id="L185">        root.put(&quot;imageDigest&quot;, imageDigest);</span>
-<span class="fc" id="L186">        root.put(&quot;jvmFlags&quot;, new ArrayList&lt;Object&gt;(jvmFlags));</span>
-<span class="fc" id="L187">        List&lt;Object&gt; cp = new ArrayList&lt;&gt;();</span>
-<span class="fc bfc" id="L188" title="All 2 branches covered.">        for (ClasspathEntry e : classpath) {</span>
-<span class="fc" id="L189">            Map&lt;String, Object&gt; entry = new LinkedHashMap&lt;&gt;();</span>
-<span class="fc" id="L190">            entry.put(&quot;name&quot;, e.name());</span>
-<span class="fc" id="L191">            entry.put(&quot;sizeBytes&quot;, e.sizeBytes());</span>
-<span class="fc" id="L192">            entry.put(&quot;sha256&quot;, e.sha256());</span>
-<span class="pc bpc" id="L193" title="1 of 2 branches missed.">            entry.put(&quot;lastModified&quot;, e.lastModified() == null ? null : e.lastModified().toString());</span>
-<span class="fc" id="L194">            cp.add(entry);</span>
-<span class="fc" id="L195">        }</span>
-<span class="fc" id="L196">        root.put(&quot;classpath&quot;, cp);</span>
-<span class="fc bfc" id="L197" title="All 2 branches covered.">        if (archive != null) {</span>
-<span class="fc" id="L198">            Map&lt;String, Object&gt; a = new LinkedHashMap&lt;&gt;();</span>
-<span class="fc" id="L199">            a.put(&quot;file&quot;, archive.file());</span>
-<span class="fc" id="L200">            a.put(&quot;sizeBytes&quot;, archive.sizeBytes());</span>
-<span class="fc" id="L201">            a.put(&quot;sha256&quot;, archive.sha256());</span>
-<span class="fc" id="L202">            root.put(&quot;archive&quot;, a);</span>
+<span class="fc" id="L225">        Map&lt;String, Object&gt; root = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L226">        root.put(&quot;schemaVersion&quot;, (long) schemaVersion);</span>
+<span class="fc" id="L227">        root.put(&quot;fingerprint&quot;, fingerprint());</span>
+<span class="fc" id="L228">        root.put(&quot;cacheType&quot;, cacheType.name());</span>
+<span class="fc" id="L229">        Map&lt;String, Object&gt; jdkJson = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L230">        jdkJson.put(&quot;vendor&quot;, jdk.vendor());</span>
+<span class="fc" id="L231">        jdkJson.put(&quot;version&quot;, jdk.version());</span>
+<span class="fc" id="L232">        jdkJson.put(&quot;runtimeVersion&quot;, jdk.runtimeVersion());</span>
+<span class="fc" id="L233">        jdkJson.put(&quot;featureVersion&quot;, (long) jdk.featureVersion());</span>
+<span class="fc" id="L234">        root.put(&quot;jdk&quot;, jdkJson);</span>
+<span class="fc" id="L235">        root.put(&quot;imageDigest&quot;, imageDigest);</span>
+<span class="fc" id="L236">        root.put(&quot;jvmFlags&quot;, new ArrayList&lt;Object&gt;(jvmFlags));</span>
+<span class="fc" id="L237">        List&lt;Object&gt; cp = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L238" title="All 2 branches covered.">        for (ClasspathEntry e : classpath) {</span>
+<span class="fc" id="L239">            Map&lt;String, Object&gt; entry = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L240">            entry.put(&quot;name&quot;, e.name());</span>
+<span class="fc" id="L241">            entry.put(&quot;sizeBytes&quot;, e.sizeBytes());</span>
+<span class="fc" id="L242">            entry.put(&quot;sha256&quot;, e.sha256());</span>
+<span class="pc bpc" id="L243" title="1 of 2 branches missed.">            entry.put(&quot;lastModified&quot;, e.lastModified() == null ? null : e.lastModified().toString());</span>
+<span class="fc" id="L244">            cp.add(entry);</span>
+<span class="fc" id="L245">        }</span>
+<span class="fc" id="L246">        root.put(&quot;classpath&quot;, cp);</span>
+<span class="fc bfc" id="L247" title="All 2 branches covered.">        if (launchDir != null) {</span>
+<span class="fc" id="L248">            root.put(&quot;launchDir&quot;, launchDir);</span>
         }
-<span class="fc" id="L204">        return Json.writePretty(root);</span>
+<span class="fc bfc" id="L250" title="All 2 branches covered.">        if (archive != null) {</span>
+<span class="fc" id="L251">            Map&lt;String, Object&gt; a = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L252">            a.put(&quot;file&quot;, archive.file());</span>
+<span class="fc" id="L253">            a.put(&quot;sizeBytes&quot;, archive.sizeBytes());</span>
+<span class="fc" id="L254">            a.put(&quot;sha256&quot;, archive.sha256());</span>
+<span class="fc" id="L255">            root.put(&quot;archive&quot;, a);</span>
+        }
+<span class="fc" id="L257">        return Json.writePretty(root);</span>
     }
 
     /**
@@ -210,189 +263,190 @@ public record ArchiveManifest(
      */
     @SuppressWarnings(&quot;unchecked&quot;)
     public static ArchiveManifest fromJson(String json) {
-<span class="fc" id="L213">        Object parsed = Json.parse(json);</span>
-<span class="fc bfc" id="L214" title="All 2 branches covered.">        if (!(parsed instanceof Map&lt;?, ?&gt;)) {</span>
-<span class="fc" id="L215">            throw new IllegalArgumentException(&quot;Manifest must be a JSON object&quot;);</span>
+<span class="fc" id="L266">        Object parsed = Json.parse(json);</span>
+<span class="fc bfc" id="L267" title="All 2 branches covered.">        if (!(parsed instanceof Map&lt;?, ?&gt;)) {</span>
+<span class="fc" id="L268">            throw new IllegalArgumentException(&quot;Manifest must be a JSON object&quot;);</span>
         }
-<span class="fc" id="L217">        Map&lt;String, Object&gt; root = (Map&lt;String, Object&gt;) parsed;</span>
-<span class="fc" id="L218">        int schema = Math.toIntExact(number(root, &quot;schemaVersion&quot;));</span>
-<span class="fc bfc" id="L219" title="All 2 branches covered.">        if (schema != SCHEMA_VERSION) {</span>
-<span class="fc" id="L220">            throw new IllegalArgumentException(&quot;Unsupported manifest schemaVersion &quot; + schema);</span>
+<span class="fc" id="L270">        Map&lt;String, Object&gt; root = (Map&lt;String, Object&gt;) parsed;</span>
+<span class="fc" id="L271">        int schema = Math.toIntExact(number(root, &quot;schemaVersion&quot;));</span>
+<span class="fc bfc" id="L272" title="All 2 branches covered.">        if (schema != SCHEMA_VERSION) {</span>
+<span class="fc" id="L273">            throw new IllegalArgumentException(&quot;Unsupported manifest schemaVersion &quot; + schema);</span>
         }
         CacheStrategy cacheType;
         try {
-<span class="fc" id="L224">            cacheType = CacheStrategy.valueOf(string(root, &quot;cacheType&quot;));</span>
-<span class="fc" id="L225">        } catch (IllegalArgumentException e) {</span>
-<span class="fc" id="L226">            throw new IllegalArgumentException(&quot;Unknown cacheType in manifest: &quot; + root.get(&quot;cacheType&quot;));</span>
-<span class="fc" id="L227">        }</span>
-<span class="fc" id="L228">        Map&lt;String, Object&gt; jdkJson = object(root, &quot;jdk&quot;);</span>
-<span class="fc" id="L229">        Jdk jdk = new Jdk(</span>
-<span class="fc" id="L230">                string(jdkJson, &quot;vendor&quot;),</span>
-<span class="fc" id="L231">                string(jdkJson, &quot;version&quot;),</span>
-<span class="fc" id="L232">                string(jdkJson, &quot;runtimeVersion&quot;),</span>
-<span class="fc" id="L233">                Math.toIntExact(number(jdkJson, &quot;featureVersion&quot;)));</span>
-<span class="fc" id="L234">        List&lt;String&gt; flags = new ArrayList&lt;&gt;();</span>
-<span class="fc bfc" id="L235" title="All 2 branches covered.">        for (Object f : array(root, &quot;jvmFlags&quot;)) {</span>
-<span class="fc" id="L236">            flags.add(asString(f, &quot;jvmFlags&quot;));</span>
-<span class="fc" id="L237">        }</span>
-<span class="fc" id="L238">        List&lt;ClasspathEntry&gt; cp = new ArrayList&lt;&gt;();</span>
-<span class="fc bfc" id="L239" title="All 2 branches covered.">        for (Object o : array(root, &quot;classpath&quot;)) {</span>
-<span class="fc" id="L240">            Map&lt;String, Object&gt; e = asObject(o, &quot;classpath&quot;);</span>
-<span class="fc" id="L241">            Object modified = e.get(&quot;lastModified&quot;);</span>
-<span class="fc" id="L242">            cp.add(new ClasspathEntry(</span>
-<span class="fc" id="L243">                    string(e, &quot;name&quot;),</span>
-<span class="fc" id="L244">                    number(e, &quot;sizeBytes&quot;),</span>
-<span class="fc" id="L245">                    string(e, &quot;sha256&quot;),</span>
-<span class="pc bpc" id="L246" title="1 of 2 branches missed.">                    modified == null ? null : Instant.parse(asString(modified, &quot;lastModified&quot;))));</span>
-<span class="fc" id="L247">        }</span>
-<span class="fc" id="L248">        ArchiveInfo archive = null;</span>
-<span class="fc bfc" id="L249" title="All 2 branches covered.">        if (root.get(&quot;archive&quot;) != null) {</span>
-<span class="fc" id="L250">            Map&lt;String, Object&gt; a = object(root, &quot;archive&quot;);</span>
-<span class="fc" id="L251">            archive = new ArchiveInfo(string(a, &quot;file&quot;), number(a, &quot;sizeBytes&quot;), string(a, &quot;sha256&quot;));</span>
+<span class="fc" id="L277">            cacheType = CacheStrategy.valueOf(string(root, &quot;cacheType&quot;));</span>
+<span class="fc" id="L278">        } catch (IllegalArgumentException e) {</span>
+<span class="fc" id="L279">            throw new IllegalArgumentException(&quot;Unknown cacheType in manifest: &quot; + root.get(&quot;cacheType&quot;));</span>
+<span class="fc" id="L280">        }</span>
+<span class="fc" id="L281">        Map&lt;String, Object&gt; jdkJson = object(root, &quot;jdk&quot;);</span>
+<span class="fc" id="L282">        Jdk jdk = new Jdk(</span>
+<span class="fc" id="L283">                string(jdkJson, &quot;vendor&quot;),</span>
+<span class="fc" id="L284">                string(jdkJson, &quot;version&quot;),</span>
+<span class="fc" id="L285">                string(jdkJson, &quot;runtimeVersion&quot;),</span>
+<span class="fc" id="L286">                Math.toIntExact(number(jdkJson, &quot;featureVersion&quot;)));</span>
+<span class="fc" id="L287">        List&lt;String&gt; flags = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L288" title="All 2 branches covered.">        for (Object f : array(root, &quot;jvmFlags&quot;)) {</span>
+<span class="fc" id="L289">            flags.add(asString(f, &quot;jvmFlags&quot;));</span>
+<span class="fc" id="L290">        }</span>
+<span class="fc" id="L291">        List&lt;ClasspathEntry&gt; cp = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L292" title="All 2 branches covered.">        for (Object o : array(root, &quot;classpath&quot;)) {</span>
+<span class="fc" id="L293">            Map&lt;String, Object&gt; e = asObject(o, &quot;classpath&quot;);</span>
+<span class="fc" id="L294">            Object modified = e.get(&quot;lastModified&quot;);</span>
+<span class="fc" id="L295">            cp.add(new ClasspathEntry(</span>
+<span class="fc" id="L296">                    string(e, &quot;name&quot;),</span>
+<span class="fc" id="L297">                    number(e, &quot;sizeBytes&quot;),</span>
+<span class="fc" id="L298">                    string(e, &quot;sha256&quot;),</span>
+<span class="pc bpc" id="L299" title="1 of 2 branches missed.">                    modified == null ? null : Instant.parse(asString(modified, &quot;lastModified&quot;))));</span>
+<span class="fc" id="L300">        }</span>
+<span class="fc" id="L301">        ArchiveInfo archive = null;</span>
+<span class="fc bfc" id="L302" title="All 2 branches covered.">        if (root.get(&quot;archive&quot;) != null) {</span>
+<span class="fc" id="L303">            Map&lt;String, Object&gt; a = object(root, &quot;archive&quot;);</span>
+<span class="fc" id="L304">            archive = new ArchiveInfo(string(a, &quot;file&quot;), number(a, &quot;sizeBytes&quot;), string(a, &quot;sha256&quot;));</span>
         }
-<span class="fc" id="L253">        Object digest = root.get(&quot;imageDigest&quot;);</span>
-<span class="fc" id="L254">        ArchiveManifest manifest = new ArchiveManifest(</span>
-<span class="fc bfc" id="L255" title="All 2 branches covered.">                schema, cacheType, jdk, digest == null ? null : asString(digest, &quot;imageDigest&quot;), flags, cp, archive);</span>
-<span class="fc" id="L256">        String recorded = string(root, &quot;fingerprint&quot;);</span>
-<span class="fc bfc" id="L257" title="All 2 branches covered.">        if (!manifest.fingerprint().equals(recorded)) {</span>
-<span class="fc" id="L258">            throw new IllegalArgumentException(</span>
-<span class="fc" id="L259">                    &quot;Manifest fingerprint &quot; + recorded + &quot; does not match its contents (&quot; + manifest.fingerprint()</span>
+<span class="fc" id="L306">        Object digest = root.get(&quot;imageDigest&quot;);</span>
+<span class="fc" id="L307">        ArchiveManifest manifest = new ArchiveManifest(</span>
+<span class="fc bfc" id="L308" title="All 2 branches covered.">                schema, cacheType, jdk, digest == null ? null : asString(digest, &quot;imageDigest&quot;), flags, cp, archive,</span>
+<span class="fc bfc" id="L309" title="All 2 branches covered.">                root.get(&quot;launchDir&quot;) == null ? null : asString(root.get(&quot;launchDir&quot;), &quot;launchDir&quot;));</span>
+<span class="fc" id="L310">        String recorded = string(root, &quot;fingerprint&quot;);</span>
+<span class="fc bfc" id="L311" title="All 2 branches covered.">        if (!manifest.fingerprint().equals(recorded)) {</span>
+<span class="fc" id="L312">            throw new IllegalArgumentException(</span>
+<span class="fc" id="L313">                    &quot;Manifest fingerprint &quot; + recorded + &quot; does not match its contents (&quot; + manifest.fingerprint()</span>
                             + &quot;); the file was edited or is corrupt&quot;);
         }
-<span class="fc" id="L262">        return manifest;</span>
+<span class="fc" id="L316">        return manifest;</span>
     }
 
     public void write(Path file) {
         try {
-<span class="fc" id="L267">            Files.writeString(file, toJson(), StandardCharsets.UTF_8);</span>
-<span class="nc" id="L268">        } catch (IOException e) {</span>
-<span class="nc" id="L269">            throw new IllegalStateException(&quot;Cannot write manifest &quot; + file + &quot;: &quot; + e.getMessage(), e);</span>
-<span class="fc" id="L270">        }</span>
-<span class="fc" id="L271">    }</span>
+<span class="fc" id="L321">            Files.writeString(file, toJson(), StandardCharsets.UTF_8);</span>
+<span class="nc" id="L322">        } catch (IOException e) {</span>
+<span class="nc" id="L323">            throw new IllegalStateException(&quot;Cannot write manifest &quot; + file + &quot;: &quot; + e.getMessage(), e);</span>
+<span class="fc" id="L324">        }</span>
+<span class="fc" id="L325">    }</span>
 
     public static ArchiveManifest read(Path file) {
         try {
-<span class="fc" id="L275">            return fromJson(Files.readString(file, StandardCharsets.UTF_8));</span>
-<span class="fc" id="L276">        } catch (IOException e) {</span>
-<span class="fc" id="L277">            throw new IllegalStateException(&quot;Cannot read manifest &quot; + file + &quot;: &quot; + e.getMessage(), e);</span>
+<span class="fc" id="L329">            return fromJson(Files.readString(file, StandardCharsets.UTF_8));</span>
+<span class="fc" id="L330">        } catch (IOException e) {</span>
+<span class="fc" id="L331">            throw new IllegalStateException(&quot;Cannot read manifest &quot; + file + &quot;: &quot; + e.getMessage(), e);</span>
         }
     }
 
     // ---- classpath ----
 
     private static List&lt;ClasspathEntry&gt; classpathOf(Path launchedJar) {
-<span class="fc" id="L284">        Path dir = launchedJar.toAbsolutePath().getParent();</span>
-<span class="fc" id="L285">        List&lt;Path&gt; files = new ArrayList&lt;&gt;();</span>
-<span class="fc" id="L286">        files.add(launchedJar.toAbsolutePath());</span>
-<span class="fc bfc" id="L287" title="All 2 branches covered.">        for (String token : classPathAttribute(launchedJar)) {</span>
+<span class="fc" id="L338">        Path dir = launchedJar.toAbsolutePath().getParent();</span>
+<span class="fc" id="L339">        List&lt;Path&gt; files = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L340">        files.add(launchedJar.toAbsolutePath());</span>
+<span class="fc bfc" id="L341" title="All 2 branches covered.">        for (String token : classPathAttribute(launchedJar)) {</span>
             Path resolved;
             try {
-<span class="fc" id="L290">                resolved = dir.resolve(new URI(token).getPath()).normalize();</span>
-<span class="nc" id="L291">            } catch (URISyntaxException e) {</span>
-<span class="nc" id="L292">                throw new IllegalStateException(&quot;Bad Class-Path entry '&quot; + token + &quot;' in &quot; + launchedJar, e);</span>
-<span class="fc" id="L293">            }</span>
-<span class="fc bfc" id="L294" title="All 2 branches covered.">            if (!Files.isRegularFile(resolved)) {</span>
-<span class="fc" id="L295">                throw new IllegalStateException(</span>
+<span class="fc" id="L344">                resolved = dir.resolve(new URI(token).getPath()).normalize();</span>
+<span class="nc" id="L345">            } catch (URISyntaxException e) {</span>
+<span class="nc" id="L346">                throw new IllegalStateException(&quot;Bad Class-Path entry '&quot; + token + &quot;' in &quot; + launchedJar, e);</span>
+<span class="fc" id="L347">            }</span>
+<span class="fc bfc" id="L348" title="All 2 branches covered.">            if (!Files.isRegularFile(resolved)) {</span>
+<span class="fc" id="L349">                throw new IllegalStateException(</span>
                         &quot;Class-Path entry '&quot; + token + &quot;' of &quot; + launchedJar + &quot; does not exist: &quot; + resolved);
             }
-<span class="fc" id="L298">            files.add(resolved);</span>
-<span class="fc" id="L299">        }</span>
-<span class="fc" id="L300">        List&lt;ClasspathEntry&gt; entries = new ArrayList&lt;&gt;();</span>
-<span class="fc bfc" id="L301" title="All 2 branches covered.">        for (Path file : files) {</span>
+<span class="fc" id="L352">            files.add(resolved);</span>
+<span class="fc" id="L353">        }</span>
+<span class="fc" id="L354">        List&lt;ClasspathEntry&gt; entries = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L355" title="All 2 branches covered.">        for (Path file : files) {</span>
             try {
-<span class="fc" id="L303">                entries.add(new ClasspathEntry(</span>
-<span class="fc" id="L304">                        dir.relativize(file).toString().replace('\\', '/'),</span>
-<span class="fc" id="L305">                        Files.size(file),</span>
-<span class="fc" id="L306">                        sha256(file),</span>
-<span class="fc" id="L307">                        Files.getLastModifiedTime(file).toInstant()));</span>
-<span class="nc" id="L308">            } catch (IOException e) {</span>
-<span class="nc" id="L309">                throw new IllegalStateException(&quot;Cannot read &quot; + file + &quot;: &quot; + e.getMessage(), e);</span>
-<span class="fc" id="L310">            }</span>
-<span class="fc" id="L311">        }</span>
-<span class="fc" id="L312">        return entries;</span>
+<span class="fc" id="L357">                entries.add(new ClasspathEntry(</span>
+<span class="fc" id="L358">                        dir.relativize(file).toString().replace('\\', '/'),</span>
+<span class="fc" id="L359">                        Files.size(file),</span>
+<span class="fc" id="L360">                        sha256(file),</span>
+<span class="fc" id="L361">                        Files.getLastModifiedTime(file).toInstant()));</span>
+<span class="nc" id="L362">            } catch (IOException e) {</span>
+<span class="nc" id="L363">                throw new IllegalStateException(&quot;Cannot read &quot; + file + &quot;: &quot; + e.getMessage(), e);</span>
+<span class="fc" id="L364">            }</span>
+<span class="fc" id="L365">        }</span>
+<span class="fc" id="L366">        return entries;</span>
     }
 
     private static List&lt;String&gt; classPathAttribute(Path jar) {
-<span class="fc" id="L316">        try (JarFile file = new JarFile(jar.toFile())) {</span>
-<span class="pc bpc" id="L317" title="1 of 2 branches missed.">            if (file.getManifest() == null) {</span>
-<span class="nc" id="L318">                return List.of();</span>
+<span class="fc" id="L370">        try (JarFile file = new JarFile(jar.toFile())) {</span>
+<span class="pc bpc" id="L371" title="1 of 2 branches missed.">            if (file.getManifest() == null) {</span>
+<span class="nc" id="L372">                return List.of();</span>
             }
-<span class="fc" id="L320">            String value = file.getManifest().getMainAttributes().getValue(Attributes.Name.CLASS_PATH);</span>
-<span class="pc bpc" id="L321" title="1 of 4 branches missed.">            return value == null || value.isBlank() ? List.of() : List.of(value.trim().split(&quot;\\s+&quot;));</span>
-<span class="nc" id="L322">        } catch (IOException e) {</span>
-<span class="nc" id="L323">            throw new IllegalStateException(&quot;Cannot read manifest of &quot; + jar + &quot;: &quot; + e.getMessage(), e);</span>
+<span class="fc" id="L374">            String value = file.getManifest().getMainAttributes().getValue(Attributes.Name.CLASS_PATH);</span>
+<span class="pc bpc" id="L375" title="1 of 4 branches missed.">            return value == null || value.isBlank() ? List.of() : List.of(value.trim().split(&quot;\\s+&quot;));</span>
+<span class="nc" id="L376">        } catch (IOException e) {</span>
+<span class="nc" id="L377">            throw new IllegalStateException(&quot;Cannot read manifest of &quot; + jar + &quot;: &quot; + e.getMessage(), e);</span>
         }
     }
 
     // ---- hashing and JSON access ----
 
     private static String sha256(byte[] bytes) {
-<span class="fc" id="L330">        return HexFormat.of().formatHex(digest().digest(bytes));</span>
+<span class="fc" id="L384">        return HexFormat.of().formatHex(digest().digest(bytes));</span>
     }
 
     private static String sha256(Path file) throws IOException {
-<span class="fc" id="L334">        MessageDigest md = digest();</span>
-<span class="fc" id="L335">        try (InputStream in = Files.newInputStream(file)) {</span>
-<span class="fc" id="L336">            byte[] buffer = new byte[64 * 1024];</span>
-<span class="fc bfc" id="L337" title="All 2 branches covered.">            for (int n; (n = in.read(buffer)) &gt; 0; ) {</span>
-<span class="fc" id="L338">                md.update(buffer, 0, n);</span>
+<span class="fc" id="L388">        MessageDigest md = digest();</span>
+<span class="fc" id="L389">        try (InputStream in = Files.newInputStream(file)) {</span>
+<span class="fc" id="L390">            byte[] buffer = new byte[64 * 1024];</span>
+<span class="fc bfc" id="L391" title="All 2 branches covered.">            for (int n; (n = in.read(buffer)) &gt; 0; ) {</span>
+<span class="fc" id="L392">                md.update(buffer, 0, n);</span>
             }
         }
-<span class="fc" id="L341">        return HexFormat.of().formatHex(md.digest());</span>
+<span class="fc" id="L395">        return HexFormat.of().formatHex(md.digest());</span>
     }
 
     private static MessageDigest digest() {
         try {
-<span class="fc" id="L346">            return MessageDigest.getInstance(&quot;SHA-256&quot;);</span>
-<span class="nc" id="L347">        } catch (NoSuchAlgorithmException e) {</span>
-<span class="nc" id="L348">            throw new IllegalStateException(&quot;SHA-256 is not available&quot;, e);</span>
+<span class="fc" id="L400">            return MessageDigest.getInstance(&quot;SHA-256&quot;);</span>
+<span class="nc" id="L401">        } catch (NoSuchAlgorithmException e) {</span>
+<span class="nc" id="L402">            throw new IllegalStateException(&quot;SHA-256 is not available&quot;, e);</span>
         }
     }
 
     @SuppressWarnings(&quot;unchecked&quot;)
     private static Map&lt;String, Object&gt; asObject(Object o, String what) {
-<span class="pc bpc" id="L354" title="1 of 2 branches missed.">        if (o instanceof Map&lt;?, ?&gt; m) {</span>
-<span class="fc" id="L355">            return (Map&lt;String, Object&gt;) m;</span>
+<span class="pc bpc" id="L408" title="1 of 2 branches missed.">        if (o instanceof Map&lt;?, ?&gt; m) {</span>
+<span class="fc" id="L409">            return (Map&lt;String, Object&gt;) m;</span>
         }
-<span class="nc" id="L357">        throw new IllegalArgumentException(&quot;Manifest field '&quot; + what + &quot;' must be an object&quot;);</span>
+<span class="nc" id="L411">        throw new IllegalArgumentException(&quot;Manifest field '&quot; + what + &quot;' must be an object&quot;);</span>
     }
 
     private static String asString(Object o, String what) {
-<span class="pc bpc" id="L361" title="1 of 2 branches missed.">        if (o instanceof String s) {</span>
-<span class="fc" id="L362">            return s;</span>
+<span class="pc bpc" id="L415" title="1 of 2 branches missed.">        if (o instanceof String s) {</span>
+<span class="fc" id="L416">            return s;</span>
         }
-<span class="nc" id="L364">        throw new IllegalArgumentException(&quot;Manifest field '&quot; + what + &quot;' must be a string&quot;);</span>
+<span class="nc" id="L418">        throw new IllegalArgumentException(&quot;Manifest field '&quot; + what + &quot;' must be a string&quot;);</span>
     }
 
     private static Object required(Map&lt;String, Object&gt; m, String key) {
-<span class="fc" id="L368">        Object v = m.get(key);</span>
-<span class="fc bfc" id="L369" title="All 2 branches covered.">        if (v == null) {</span>
-<span class="fc" id="L370">            throw new IllegalArgumentException(&quot;Manifest is missing '&quot; + key + &quot;'&quot;);</span>
+<span class="fc" id="L422">        Object v = m.get(key);</span>
+<span class="fc bfc" id="L423" title="All 2 branches covered.">        if (v == null) {</span>
+<span class="fc" id="L424">            throw new IllegalArgumentException(&quot;Manifest is missing '&quot; + key + &quot;'&quot;);</span>
         }
-<span class="fc" id="L372">        return v;</span>
+<span class="fc" id="L426">        return v;</span>
     }
 
     private static String string(Map&lt;String, Object&gt; m, String key) {
-<span class="fc" id="L376">        return asString(required(m, key), key);</span>
+<span class="fc" id="L430">        return asString(required(m, key), key);</span>
     }
 
     private static long number(Map&lt;String, Object&gt; m, String key) {
-<span class="fc bfc" id="L380" title="All 2 branches covered.">        if (required(m, key) instanceof Long n) {</span>
-<span class="fc" id="L381">            return n;</span>
+<span class="fc bfc" id="L434" title="All 2 branches covered.">        if (required(m, key) instanceof Long n) {</span>
+<span class="fc" id="L435">            return n;</span>
         }
-<span class="fc" id="L383">        throw new IllegalArgumentException(&quot;Manifest field '&quot; + key + &quot;' must be an integer&quot;);</span>
+<span class="fc" id="L437">        throw new IllegalArgumentException(&quot;Manifest field '&quot; + key + &quot;' must be an integer&quot;);</span>
     }
 
     private static Map&lt;String, Object&gt; object(Map&lt;String, Object&gt; m, String key) {
-<span class="fc" id="L387">        return asObject(required(m, key), key);</span>
+<span class="fc" id="L441">        return asObject(required(m, key), key);</span>
     }
 
     @SuppressWarnings(&quot;unchecked&quot;)
     private static List&lt;Object&gt; array(Map&lt;String, Object&gt; m, String key) {
-<span class="pc bpc" id="L392" title="1 of 2 branches missed.">        if (required(m, key) instanceof List&lt;?&gt; l) {</span>
-<span class="fc" id="L393">            return (List&lt;Object&gt;) l;</span>
+<span class="pc bpc" id="L446" title="1 of 2 branches missed.">        if (required(m, key) instanceof List&lt;?&gt; l) {</span>
+<span class="fc" id="L447">            return (List&lt;Object&gt;) l;</span>
         }
-<span class="nc" id="L395">        throw new IllegalArgumentException(&quot;Manifest field '&quot; + key + &quot;' must be an array&quot;);</span>
+<span class="nc" id="L449">        throw new IllegalArgumentException(&quot;Manifest field '&quot; + key + &quot;' must be an array&quot;);</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

@@ -38,6 +38,8 @@
   <modules>
     <module>warmup-core</module>
     <module>warmup-cli</module>
+    <!-- Last, so the other modules' jacoco.exec files exist when it aggregates them. -->
+    <module>coverage</module>
   </modules>
 
   <properties>
@@ -45,6 +47,8 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <junit.version>5.11.4</junit.version>
     <picocli.version>4.7.6</picocli.version>
+    <!-- 0.8.14 is the first release that instruments on a JDK 25 test JVM; the CI matrix runs 21 and 25. -->
+    <jacoco-maven-plugin.version>0.8.14</jacoco-maven-plugin.version>
     <maven-source-plugin.version>3.3.1</maven-source-plugin.version>
     <maven-javadoc-plugin.version>3.8.0</maven-javadoc-plugin.version>
     <maven-gpg-plugin.version>3.2.4</maven-gpg-plugin.version>
@@ -92,6 +96,11 @@
           <version>3.6.0</version>
         </plugin>
         <plugin>
+          <groupId>org.jacoco</groupId>
+          <artifactId>jacoco-maven-plugin</artifactId>
+          <version>${jacoco-maven-plugin.version}</version>
+        </plugin>
+        <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-source-plugin</artifactId>
           <version>${maven-source-plugin.version}</version>
@@ -115,6 +124,23 @@
     </pluginManagement>
 
     <plugins>
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <configuration>
+          <includes>
+            <include>io/github/baokhang83/**</include>
+          </includes>
+        </configuration>
+        <executions>
+          <execution>
+            <id>prepare-agent</id>
+            <goals>
+              <goal>prepare-agent</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-source-plugin</artifactId>

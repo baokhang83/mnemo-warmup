@@ -133,7 +133,7 @@ Maven coordinates: groupId `io.github.baokhang83.mnemo` (same as warden), artifa
 - [x] `mnemo-warmup run` (entrypoint): validate manifest, add archive flag or fall back
 - [x] Archive store backend (open decision 1), including upload from trainer
 - [x] Container image (tools image, see `docs/adr/0004-tools-image.md`)
-- [ ] Trainer CronJob template, Helm chart with `cacheType` value
+- [x] Trainer CronJob, `train` command with a Lease, Helm chart with `cacheType` value (`docs/adr/0005-trainer-and-chart.md`)
 - [ ] Example Spring Boot app, tested on kind with JDK 21 (AppCDS) and JDK 25 (AOT)
 
 ### Phase 3: automation and ecosystem (v0.3.0)

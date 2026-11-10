@@ -1,0 +1,142 @@
+{{- if .Values.trainer.enabled }}
+{{- $v := .Values }}
+{{- if and (eq $v.trainer.exitMode "http-probe") (not $v.trainer.probe.url) }}
+{{- fail "trainer.probe.url is required when trainer.exitMode is http-probe" }}
+{{- end }}
+# Not a Helm hook: Helm never waits for a CronJob, so a failing or slow trainer cannot fail or roll back a release.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "mnemo-warmup.fullname" . }}-trainer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mnemo-warmup.labels" . | nindent 4 }}
+spec:
+  schedule: {{ $v.trainer.schedule | quote }}
+  suspend: {{ $v.trainer.suspend }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: {{ $v.trainer.activeDeadlineSeconds }}
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            {{- include "mnemo-warmup.labels" . | nindent 12 }}
+            {{- with $v.trainer.podLabels }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with $v.trainer.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        spec:
+          serviceAccountName: {{ include "mnemo-warmup.serviceAccountName" . }}
+          automountServiceAccountToken: true
+          restartPolicy: Never
+          {{- with $v.app.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $v.trainer.podSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          initContainers:
+            {{- include "mnemo-warmup.installInitContainer" $v | nindent 12 }}
+          containers:
+            - name: trainer
+              image: {{ include "mnemo-warmup.appImage" $v | quote }}
+              imagePullPolicy: {{ $v.app.image.pullPolicy }}
+              command: ["/mnemo-tools/bin/mnemo-warmup"]
+              args:
+                - train
+                {{- include "mnemo-warmup.launchArgs" $v | nindent 16 }}
+                - --exit-mode
+                - {{ $v.trainer.exitMode | quote }}
+                - --timeout-seconds
+                - {{ $v.trainer.timeoutSeconds | quote }}
+                - --lease-seconds
+                - {{ $v.trainer.leaseSeconds | quote }}
+                {{- if $v.trainer.probe.url }}
+                - --url
+                - {{ $v.trainer.probe.url | quote }}
+                {{- end }}
+                {{- range $v.trainer.probe.warmupUrls }}
+                - --warmup-url
+                - {{ . | quote }}
+                {{- end }}
+              env:
+                - name: POD_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+                {{- if $v.store.pushSecret }}
+                - name: MNEMO_WARMUP_REGISTRY_AUTH
+                  value: /var/run/mnemo-warmup/registry/config.json
+                {{- end }}
+                {{- with $v.app.env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+                {{- with $v.trainer.env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              {{- with $v.trainer.envFrom }}
+              envFrom:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              {{- with $v.trainer.securityContext }}
+              securityContext:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              {{- with $v.trainer.resources }}
+              resources:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              volumeMounts:
+                - name: mnemo-tools
+                  mountPath: /mnemo-tools
+                  readOnly: true
+                - name: mnemo-work
+                  mountPath: /tmp/mnemo-warmup
+                {{- if $v.store.pushSecret }}
+                - name: mnemo-registry-push
+                  mountPath: /var/run/mnemo-warmup/registry
+                  readOnly: true
+                {{- end }}
+                {{- with $v.trainer.volumeMounts }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+          volumes:
+            - name: mnemo-tools
+              emptyDir: {}
+            - name: mnemo-work
+              emptyDir: {}
+            {{- if $v.store.pushSecret }}
+            - name: mnemo-registry-push
+              secret:
+                secretName: {{ $v.store.pushSecret | quote }}
+                items:
+                  - key: .dockerconfigjson
+                    path: config.json
+            {{- end }}
+            {{- with $v.trainer.volumes }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with $v.trainer.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $v.trainer.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $v.trainer.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

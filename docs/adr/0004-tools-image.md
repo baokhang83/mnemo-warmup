@@ -16,7 +16,7 @@ busybox base, linux/amd64 and linux/arm64) holding `/opt/mnemo-warmup/{mnemo-war
 bin/mnemo-warmup-exec}`. The tool always runs **inside the application image**:
 
 - **Copy at deploy time:** an init container based on the tools image runs
-  `cp -a /opt/mnemo-warmup/. /mnemo-tools/` into a shared `emptyDir`. The `fetch` init container and the
+  `cp -R /opt/mnemo-warmup/. /mnemo-tools/` (`-a` also works but prints ownership errors for non-root users) into a shared `emptyDir`. The `fetch` init container and the
   trainer then use the *application image* with `command: [/mnemo-tools/bin/mnemo-warmup, fetch, ...]`,
   and the app container uses `/mnemo-tools/bin/mnemo-warmup-exec`.
 - **Bake in:** `COPY --from=ghcr.io/baokhang83/mnemo-warmup-tools:<version> /opt/mnemo-warmup /opt/mnemo-warmup`.

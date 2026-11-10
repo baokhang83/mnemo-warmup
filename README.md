@@ -239,7 +239,7 @@ or copy it at deploy time with an init container (what the Helm chart will do):
 initContainers:
   - name: mnemo-warmup-install
     image: ghcr.io/baokhang83/mnemo-warmup-tools:0.2.0
-    command: ["cp", "-a", "/opt/mnemo-warmup/.", "/mnemo-tools/"]
+    command: ["cp", "-R", "/opt/mnemo-warmup/.", "/mnemo-tools/"]
     volumeMounts: [{ name: mnemo-tools, mountPath: /mnemo-tools }]
   - name: mnemo-warmup-fetch
     image: my-app:1.0            # the application image itself
@@ -256,6 +256,35 @@ older Java that init container would fail and block the pod, so do not enable it
 `docker build -f image/Dockerfile -t mnemo-warmup-tools .`, and check the whole chain in Docker with
 `scripts/verify-image.sh` (a local registry, JDK 21 with AppCDS and JDK 25 with AOT).
 See [ADR 0004](docs/adr/0004-tools-image.md).
+
+## Kubernetes: the Helm chart and the trainer
+
+[`deploy/helm/mnemo-warmup`](deploy/helm/mnemo-warmup) renders the **trainer**: a CronJob that runs your
+application image, plus the ServiceAccount, Role and RoleBinding it needs. It is deliberately a CronJob and not a Helm
+hook, so a failing trainer can never fail or roll back a release. Each run executes
+`mnemo-warmup train`: compute the fingerprint, stop if the store already has it, otherwise take a Kubernetes
+`Lease` named after the fingerprint (so two trainers never train the same archive; an expired lease from a crashed
+trainer is taken over), train, upload, release. A tag whose entry is incomplete (for example a missing blob) is
+replaced rather than treated as done. It exits 0 for every outcome and logs which one happened.
+
+The chart does **not** render your Deployment. Your own chart includes its named templates to add the init
+containers, volumes, environment and the exec-wrapper entrypoint to your pod template (the chart's README has the
+snippet, and [`deploy/helm/tests/parent`](deploy/helm/tests/parent) is a working example):
+
+```yaml
+dependencies:
+  - { name: mnemo-warmup, version: 0.1.0, repository: "oci://...", alias: warmup }
+```
+
+The values that must match your Deployment are `app.image`, `app.jar`, `app.jvmArgs` and `app.env`: an archive is only
+valid for that exact launch, and a mismatch is safe (the pod starts without the cache). The trainer's ServiceAccount
+may only `get`, `create`, `update` and `delete` Leases in its own namespace; application pods need no extra RBAC.
+
+`mnemo-warmup train` can also be run directly (`--lock none` outside a cluster). It needs the extracted layout and exits
+0 for every outcome unless `--strict`.
+
+Check the chart with `scripts/test-chart.sh` (needs `helm`; set `KUBE_CONTEXT` to also have a cluster's API server
+validate every manifest). See [ADR 0005](docs/adr/0005-trainer-and-chart.md).
 
 ## The manifest and fingerprint
 
@@ -292,7 +321,8 @@ longer matches. The manifest also stores the archive's size and SHA-256.
 - `warmup-core` is on [Maven Central](https://central.sonatype.com/artifact/io.github.baokhang83.mnemo/warmup-core)
   as `io.github.baokhang83.mnemo:warmup-core`.
 
-Not there yet: the trainer CronJob, the Helm chart, and an end-to-end test on a real cluster (see the [roadmap](#roadmap)).
+Not there yet: an end-to-end test of the whole chain on a real cluster (the chart is validated by rendering and by
+a cluster's API server, but no pod has run it yet) (see the [roadmap](#roadmap)).
 
 ## Limitations
 
@@ -329,15 +359,16 @@ call it as `mnemo-warmup`.
 
 ```
 warmup-core/   engine: JDK detection, extraction, training, manifest, OCI store, fetch/run logic
-warmup-cli/    command-line interface (picocli): build, bench, push, fetch, run
+warmup-cli/    command-line interface (picocli): build, bench, push, fetch, run, train
 coverage/      aggregates JaCoCo coverage for the badge (not published)
 image/         Dockerfile and launcher of the tools image
-scripts/       mnemo-warmup-exec wrapper, verify-image.sh, Docker checks for the AppCDS matrix
+deploy/helm/   Helm chart for the trainer plus the reusable pod-template helpers, and a parent-chart test fixture
+scripts/       mnemo-warmup-exec wrapper, verify-image.sh, test-chart.sh, Docker checks for the AppCDS matrix
 docs/PLAN.md   design, decisions and roadmap
 docs/adr/      decisions: archive store, training trigger, run/exec model
 ```
 
-Planned: `deploy/helm/` (chart) and `examples/` (sample Spring Boot app).
+Planned: `examples/` (sample Spring Boot app).
 
 ## Roadmap
 
@@ -354,7 +385,7 @@ Planned: `deploy/helm/` (chart) and `examples/` (sample Spring Boot app).
 - [x] Archive store backend with `push`
 - [x] `fetch` (init container) and `run` (entrypoint)
 - [x] Tools image (JDK-free, runs inside the application image), checked end to end in Docker
-- [ ] Trainer CronJob and Helm chart
+- [x] `train` command with a Kubernetes Lease, trainer CronJob and Helm chart (validated by rendering and API-server dry-run)
 - [ ] Example app tested on kind with JDK 21 and JDK 25
 
 **Phase 3: automation (v0.3.0)**

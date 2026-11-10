@@ -1,9 +1,9 @@
 {
   "schema_version": "1",
-  "feature": "16-tools-image-jdk-free-container-image-with-the-cli-launche",
-  "branch": "feature/16-tools-image-jdk-free-container-image-with-the-cli-launche",
+  "feature": "17-trainer-cronjob-train-command-with-lease-and-helm-chart",
+  "branch": "feature/17-trainer-cronjob-train-command-with-lease-and-helm-chart",
   "stage": "build",
-  "last_session": "002-address-review-launcher-run-fallback-readme-init-example",
+  "last_session": "002-address-review-lease-ownership-expiry-repair-of-broken-e",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

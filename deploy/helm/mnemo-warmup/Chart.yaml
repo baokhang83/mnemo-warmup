@@ -1,0 +1,14 @@
+apiVersion: v2
+name: mnemo-warmup
+description: Trains a startup cache (AppCDS or Leyden AOT) for a JVM application once per fingerprint and shares it with every replica through an init container.
+type: application
+version: 0.1.0
+# The tools image tag that matches this chart (see values.yaml tools.image.tag).
+appVersion: "0.2.0"
+home: https://github.com/baokhang83/mnemo-warmup
+sources:
+  - https://github.com/baokhang83/mnemo-warmup
+keywords: [jvm, appcds, leyden, startup, kubernetes]
+maintainers:
+  - name: baokhang83
+    url: https://github.com/baokhang83

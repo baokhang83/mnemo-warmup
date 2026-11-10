@@ -1,0 +1,25 @@
+mnemo-warmup {{ .Chart.AppVersion }}: the trainer runs {{ if .Values.trainer.enabled }}on schedule "{{ .Values.trainer.schedule }}"{{ else }}NOT (trainer.enabled is false){{ end }}.
+
+This chart does not render your Deployment. To use the cache, add these to the pod template of the Deployment that
+runs {{ include "mnemo-warmup.appImage" .Values }} (use the same image, JVM options and env as in values.yaml):
+
+  volumes:
+    {{ "{{- include \"mnemo-warmup.volumes\" .Values.warmup | nindent 8 }}" }}
+  initContainers:
+    {{ "{{- include \"mnemo-warmup.installInitContainer\" .Values.warmup | nindent 8 }}" }}
+    {{ "{{- include \"mnemo-warmup.fetchInitContainer\" .Values.warmup | nindent 8 }}" }}
+  containers:
+    - name: app
+      command: {{ "{{ include \"mnemo-warmup.command\" .Values.warmup }}" }}
+      args: ["java", ... your usual command ...]     # the exec wrapper starts it
+      env:
+        {{ "{{- include \"mnemo-warmup.env\" .Values.warmup | nindent 12 }}" }}
+      volumeMounts:
+        {{ "{{- include \"mnemo-warmup.volumeMounts\" .Values.warmup | nindent 12 }}" }}
+
+(with this chart as a dependency aliased "warmup"). The first archive appears after the trainer's first successful run;
+pods that start earlier simply run without it.
+{{- if not .Values.store.pushSecret }}
+
+NOTE: store.pushSecret is empty, so the trainer pushes anonymously; most registries refuse that.
+{{- end }}

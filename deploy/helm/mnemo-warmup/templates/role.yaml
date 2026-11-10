@@ -1,0 +1,31 @@
+{{- if .Values.trainer.enabled }}
+# The trainer coordinates through Lease objects named after the fingerprint (ADR 0002). Only the trainer's own
+# ServiceAccount gets this; application pods need no extra permissions.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "mnemo-warmup.fullname" . }}-trainer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mnemo-warmup.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "mnemo-warmup.fullname" . }}-trainer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mnemo-warmup.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "mnemo-warmup.fullname" . }}-trainer
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "mnemo-warmup.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

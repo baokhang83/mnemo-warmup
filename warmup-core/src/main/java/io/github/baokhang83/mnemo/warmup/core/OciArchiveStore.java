@@ -137,6 +137,71 @@ public final class OciArchiveStore implements ArchiveStore {
         };
     }
 
+    /**
+     * A cheap completeness check (no archive download): the manifest parses and is ours, the small config blob matches
+     * its digest and describes THIS fingerprint, and the archive blob exists with the size the manifest declares.
+     * Same-length damage inside the archive is not detected here; {@code fetch} verifies the bytes before any pod uses them.
+     */
+    @Override
+    @SuppressWarnings("unchecked")
+    public Inspection inspect(String fingerprint) {
+        String tag = tagFor(fingerprint);
+        HttpResponse<byte[]> r = call("GET", manifestUri(tag), Map.of("Accept", MANIFEST_TYPE), null, BodyHandlers.ofByteArray(), "pull");
+        if (r.statusCode() == 404) {
+            return Inspection.absent();
+        }
+        if (r.statusCode() != 200) {
+            throw failure("read the manifest", r);
+        }
+        String configDigest;
+        String layerDigest;
+        long layerSize;
+        try {
+            Map<String, Object> image = (Map<String, Object>) Json.parse(new String(r.body(), StandardCharsets.UTF_8));
+            Map<String, Object> config = (Map<String, Object>) image.get("config");
+            List<Object> layers = (List<Object>) image.get("layers");
+            if (!CONFIG_TYPE.equals(config.get("mediaType")) || layers.size() != 1
+                    || !LAYER_TYPE.equals(((Map<String, Object>) layers.get(0)).get("mediaType"))) {
+                return Inspection.broken("the tag is not a mnemo-warmup artifact");
+            }
+            Map<String, Object> layer = (Map<String, Object>) layers.get(0);
+            configDigest = String.valueOf(config.get("digest"));
+            layerDigest = String.valueOf(layer.get("digest"));
+            layerSize = ((Number) layer.get("size")).longValue();
+        } catch (RuntimeException e) {
+            return Inspection.broken("the manifest is unreadable");
+        }
+        HttpResponse<byte[]> configResponse = call("GET", blobUri(configDigest), Map.of(), null, BodyHandlers.ofByteArray(), "pull");
+        if (configResponse.statusCode() == 404) {
+            return Inspection.broken("the manifest blob " + configDigest + " is missing");
+        }
+        if (configResponse.statusCode() != 200) {
+            throw failure("read the manifest blob", configResponse);
+        }
+        if (!configDigest.equals("sha256:" + hex(configResponse.body()))) {
+            return Inspection.broken("the manifest blob does not match its digest");
+        }
+        try {
+            if (!fingerprint.equals(ArchiveManifest.fromJson(new String(configResponse.body(), StandardCharsets.UTF_8)).fingerprint())) {
+                return Inspection.broken("the stored manifest describes another fingerprint");
+            }
+        } catch (RuntimeException e) {
+            return Inspection.broken("the stored manifest is unreadable");
+        }
+        HttpResponse<byte[]> layerResponse = call("HEAD", blobUri(layerDigest), Map.of(), null, BodyHandlers.ofByteArray(), "pull");
+        if (layerResponse.statusCode() == 404) {
+            return Inspection.broken("the archive blob " + layerDigest + " is missing");
+        }
+        if (layerResponse.statusCode() != 200) {
+            throw failure("check the archive blob", layerResponse);
+        }
+        long declared = layerResponse.headers().firstValueAsLong("Content-Length").orElse(-1);
+        if (declared >= 0 && declared != layerSize) {
+            return Inspection.broken("the archive blob has " + declared + " bytes, the manifest declares " + layerSize);
+        }
+        return Inspection.usable();
+    }
+
     @Override
     public void put(ArchiveManifest manifest, Path archiveFile) {
         String tag = tagFor(manifest.fingerprint());

@@ -251,4 +251,82 @@ class OciArchiveStoreTest {
             assertEquals(0, registry.manifests.size());
         }
     }
+
+    // ---- inspect: a tag that exists is not necessarily a usable entry ----
+
+    private static String digestOf(byte[] bytes) throws Exception {
+        return "sha256:" + java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
+    }
+
+    @Test
+    void inspectDistinguishesAbsentUsableAndBrokenEntries() throws Exception {
+        try (var registry = new FakeRegistry()) {
+            Path file = archive("inspect-me");
+            ArchiveManifest manifest = manifestFor(file);
+            var store = store(registry, null);
+            assertEquals(ArchiveStore.Presence.ABSENT, store.inspect(manifest.fingerprint()).presence());
+
+            store.put(manifest, file);
+            assertEquals(ArchiveStore.Presence.USABLE, store.inspect(manifest.fingerprint()).presence());
+
+            registry.blobs.remove(digestOf(Files.readAllBytes(file))); // the archive blob vanishes (a partial push or GC)
+            var broken = store.inspect(manifest.fingerprint());
+            assertEquals(ArchiveStore.Presence.BROKEN, broken.presence());
+            assertTrue(broken.detail().contains("archive blob") && broken.detail().contains("missing"), broken.detail());
+        }
+    }
+
+    @Test
+    void inspectCatchesAWrongSizedArchiveBlobAndADamagedOrMisfiledManifest() throws Exception {
+        try (var registry = new FakeRegistry()) {
+            Path file = archive("size-matters");
+            ArchiveManifest manifest = manifestFor(file);
+            var store = store(registry, null);
+            store.put(manifest, file);
+            String layer = digestOf(Files.readAllBytes(file));
+
+            registry.blobs.put(layer, "short".getBytes(StandardCharsets.UTF_8)); // a different length under the same digest
+            assertTrue(store.inspect(manifest.fingerprint()).detail().contains("declares"), store.inspect(manifest.fingerprint()).detail());
+            registry.blobs.put(layer, Files.readAllBytes(file));
+            assertEquals(ArchiveStore.Presence.USABLE, store.inspect(manifest.fingerprint()).presence());
+
+            String configDigest = registry.blobs.keySet().stream().filter(d -> !d.equals(layer)).findFirst().orElseThrow();
+            byte[] config = registry.blobs.get(configDigest);
+            registry.blobs.put(configDigest, "{}".getBytes(StandardCharsets.UTF_8));
+            assertTrue(store.inspect(manifest.fingerprint()).detail().contains("does not match its digest"), store.inspect(manifest.fingerprint()).detail());
+            registry.blobs.put(configDigest, config);
+
+            // an entry filed under a tag that belongs to another fingerprint
+            String otherFingerprint = "sha256:" + "cd".repeat(32);
+            registry.manifests.put(OciArchiveStore.tagFor(otherFingerprint), registry.manifests.get(OciArchiveStore.tagFor(manifest.fingerprint())));
+            assertTrue(store.inspect(otherFingerprint).detail().contains("another fingerprint"), store.inspect(otherFingerprint).detail());
+
+            registry.manifests.put(OciArchiveStore.tagFor(manifest.fingerprint()), "not json".getBytes(StandardCharsets.UTF_8));
+            assertEquals(ArchiveStore.Presence.BROKEN, store.inspect(manifest.fingerprint()).presence());
+        }
+    }
+
+    @Test
+    void inspectOfAnUnreachableStoreIsAStoreExceptionNotAVerdict() {
+        var store = OciArchiveStore.of("oci://127.0.0.1:1/test/archives", true, null, Duration.ofSeconds(2));
+        assertThrows(StoreException.class, () -> store.inspect("sha256:" + HEX));
+    }
+
+    @Test
+    void putReplacesABrokenEntryUnderTheSameTag() throws Exception {
+        try (var registry = new FakeRegistry()) {
+            Path file = archive("repair-me");
+            ArchiveManifest manifest = manifestFor(file);
+            var store = store(registry, null);
+            store.put(manifest, file);
+            registry.blobs.remove(digestOf(Files.readAllBytes(file)));
+            assertEquals(ArchiveStore.Presence.BROKEN, store.inspect(manifest.fingerprint()).presence());
+
+            store.put(manifest, file); // the trainer's repair: re-uploads the missing blob, rewrites the tag
+
+            assertEquals(ArchiveStore.Presence.USABLE, store.inspect(manifest.fingerprint()).presence());
+            Path out = Files.createDirectory(tmp.resolve("repaired"));
+            assertEquals("repair-me", Files.readString(store.get(manifest.fingerprint(), out).orElseThrow().archiveFile()));
+        }
+    }
 }

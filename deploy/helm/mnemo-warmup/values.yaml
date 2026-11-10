@@ -1,0 +1,70 @@
+# The application the cache is trained for. It must be the SAME image (and JVM options and environment) your
+# Deployment runs: an archive is only valid for that image's JDK build, JAR files, paths and modification times.
+# The image needs Java 21+ (the tool runs inside it) and the JAR must be the extracted layout
+# (java -Djarmode=tools -jar app.jar extract at image build time for Spring Boot), see docs/adr/0003 and 0004.
+app:
+  image:
+    repository: ""            # required
+    tag: ""                   # used when digest is empty
+    digest: ""                # sha256:...; when set it is used instead of the tag AND passed as --image-digest everywhere
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []        # for the application image, as in a Deployment
+  jar: /app/app.jar           # the launched JAR inside the application image
+  jvmArgs: []                 # the JVM options the application really runs with, e.g. ["-Xmx512m"]; fetch and the trainer use them
+  env: []                     # env that changes the JVM (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS): keep it identical to the Deployment's
+
+cacheType: auto               # auto (AOT on JDK 25+, AppCDS otherwise), appcds or aot
+
+# The tools image only carries the CLI into the application image (it contains no JDK).
+tools:
+  image:
+    repository: ghcr.io/baokhang83/mnemo-warmup-tools
+    tag: "0.2.0"              # matches appVersion; published by the image workflow on release tags
+    pullPolicy: IfNotPresent
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities: { drop: [ALL] }
+    seccompProfile: { type: RuntimeDefault }
+
+# Where archives live (ADR 0001): an OCI registry, one tag per fingerprint.
+store:
+  url: ""                     # required, e.g. oci://registry.example.com/team/warmup
+  plainHttp: false            # http instead of https (local registries only)
+  # Names of Secrets of type kubernetes.io/dockerconfigjson. Image-pull secrets are NOT visible to containers (only
+  # to the kubelet), so these are mounted explicitly. fetch needs pull scope, the trainer pull+push scope; keep them
+  # separate. Leave empty for an anonymous registry.
+  pullSecret: ""
+  pushSecret: ""
+
+# The trainer (ADR 0002): a CronJob, not a Helm hook, so a failing trainer can never fail a release. Each run
+# computes the fingerprint, exits if the store has it, otherwise takes a Lease, trains, uploads, and exits 0.
+trainer:
+  enabled: true
+  schedule: "*/10 * * * *"    # the first archive can wait up to one interval
+  suspend: false
+  exitMode: spring-refresh    # spring-refresh (Spring Boot, startup path only) or http-probe (any framework)
+  timeoutSeconds: 300         # how long the app may take to become ready during training
+  leaseSeconds: 1800          # how long a crashed trainer blocks others
+  activeDeadlineSeconds: 3600 # hard limit for one run; keep it above timeoutSeconds plus the upload time
+  probe:                      # http-probe only
+    url: ""                   # e.g. http://localhost:8080/actuator/health
+    warmupUrls: []            # GET requests sent once ready, to train the serving path
+  # The trainer runs your application for real, so it needs your real configuration:
+  env: []
+  envFrom: []
+  volumes: []
+  volumeMounts: []
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  securityContext: {}         # container security context of the trainer (it runs your application image)
+  podSecurityContext: {}
+  serviceAccount:
+    create: true
+    name: ""

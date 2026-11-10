@@ -610,7 +610,7 @@ public class Main implements Runnable {
                 }
                 JdkInfo jdk = JdkInfo.detect(opts.javaHome, System.getenv());
                 CacheStrategy strategy = CacheType.parse(cacheType).resolve(jdk);
-                if (JarExtractor.detect(opts.jar) == JarExtractor.Kind.SPRING_BOOT) {
+                if (JarExtractor.needsExtraction(opts.jar)) {
                     throw new IllegalArgumentException("train needs the extracted layout: extract the Spring Boot JAR at image build time "
                             + "(java -Djarmode=tools -jar app.jar extract) so the trainer and the app run the same files (ADR 0003)");
                 }
@@ -619,9 +619,9 @@ public class Main implements Runnable {
                         : new HttpProbeExitMode.Settings(
                                 opts.url, Duration.ofMillis(opts.pollIntervalMillis), opts.warmupUrls, opts.warmupScript);
                 ExitMode mode = ExitMode.parse(opts.exitMode, probe);
-                // spring-refresh is only accepted for Spring Boot apps; an extracted Spring Boot app is a plain JAR on disk
-                var kind = mode.supports(JarExtractor.Kind.EXECUTABLE_JAR) ? JarExtractor.Kind.EXECUTABLE_JAR : JarExtractor.Kind.SPRING_BOOT;
-                var app = new JarExtractor.ExtractedApp(kind, opts.jar.toAbsolutePath());
+                // the extracted layout is used as it is; prepare() reports its framework (Spring Boot or not), which is
+                // what spring-refresh checks
+                var app = new JarExtractor().prepare(opts.jar, jdk, opts.workDir.resolve("unused"));
                 ArchiveManifest live = ArchiveManifest.describe(app, jdk, strategy, opts.jvmArgs, System.getenv(), imageDigest);
 
                 Path archive = opts.workDir.resolve("app." + strategy.extension());

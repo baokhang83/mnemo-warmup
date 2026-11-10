@@ -92,7 +92,7 @@ public final class RunPlanner {
                 }
             }
         }
-        if (JarExtractor.detect(launch.jar()) == JarExtractor.Kind.SPRING_BOOT) {
+        if (JarExtractor.needsExtraction(launch.jar())) {
             notes.add("a Spring Boot fat JAR is launched directly; the archive was trained on the extracted layout, "
                     + "so extract at image build time (java -Djarmode=tools -jar app.jar extract) and run the extracted JAR");
             return plain;

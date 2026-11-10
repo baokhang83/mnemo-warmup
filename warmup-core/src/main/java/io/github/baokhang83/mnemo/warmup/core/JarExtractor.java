@@ -22,7 +22,11 @@ import java.util.stream.Stream;
 public final class JarExtractor {
 
     public enum Kind {
-        /** A Spring Boot fat JAR that was extracted into a JAR with a {@code lib/} directory. */
+        /**
+         * A Spring Boot application: a fat JAR (which {@link #prepare} extracts) or one that is already extracted into a
+         * JAR with a {@code lib/} directory. This is the application's framework, which exit modes such as spring-refresh
+         * depend on; whether extraction is still needed is a separate question, see {@link #needsExtraction}.
+         */
         SPRING_BOOT,
         /** A regular executable JAR, used unchanged. */
         EXECUTABLE_JAR
@@ -51,7 +55,16 @@ public final class JarExtractor {
 
     /** Classifies a JAR by its manifest. */
     public static Kind detect(Path jar) {
-        return isSpringBoot(readManifest(jar)) ? Kind.SPRING_BOOT : Kind.EXECUTABLE_JAR;
+        return isSpringBootApp(readManifest(jar)) ? Kind.SPRING_BOOT : Kind.EXECUTABLE_JAR;
+    }
+
+    /**
+     * Whether {@code jar} is a Spring Boot FAT JAR that must be extracted before it can be trained or launched with an
+     * archive. The JAR that {@code -Djarmode=tools extract} writes is still a Spring Boot application ({@link #detect}) but
+     * needs no extraction.
+     */
+    public static boolean needsExtraction(Path jar) {
+        return isFatJar(readManifest(jar));
     }
 
     /**
@@ -68,8 +81,9 @@ public final class JarExtractor {
             throw new IllegalArgumentException("JAR not found: " + jar);
         }
         Manifest manifest = readManifest(jar);
-        if (!isSpringBoot(manifest)) {
-            return new ExtractedApp(Kind.EXECUTABLE_JAR, jar.toAbsolutePath());
+        if (!isFatJar(manifest)) {
+            // a plain executable JAR, or a Spring Boot app that is already extracted: used as it is
+            return new ExtractedApp(isSpringBootApp(manifest) ? Kind.SPRING_BOOT : Kind.EXECUTABLE_JAR, jar.toAbsolutePath());
         }
         requireToolsMode(manifest);
         requireEmpty(destination);
@@ -99,14 +113,18 @@ public final class JarExtractor {
         return new ExtractedApp(Kind.SPRING_BOOT, findExtractedJar(destination));
     }
 
+    /** Any Spring Boot application: the loader as Main-Class, or the version attribute (which survives extraction). */
+    private static boolean isSpringBootApp(Manifest manifest) {
+        return manifest != null && (manifestVersion(manifest) != null || launcher(manifest));
+    }
+
     /**
      * A Spring Boot FAT JAR: its Main-Class is the Spring loader, or it carries {@code Spring-Boot-Version} and no
-     * {@code Class-Path}. The second case matters: a fat JAR keeps its dependencies inside BOOT-INF, so it never has a
-     * Class-Path, whereas the JAR that {@code -Djarmode=tools extract} writes keeps {@code Spring-Boot-Version} but gets a
-     * Class-Path to its lib/ directory and the application's own Main-Class. That extracted JAR is exactly the layout
-     * ADR 0003 requires, so it must be an ordinary executable JAR here (found by the first real Spring Boot example).
+     * {@code Class-Path}. A fat JAR keeps its dependencies inside BOOT-INF, so it never has a Class-Path, whereas the JAR
+     * that {@code -Djarmode=tools extract} writes keeps {@code Spring-Boot-Version} but gets a Class-Path to its lib/
+     * directory and the application's own Main-Class (found by the first real Spring Boot example).
      */
-    private static boolean isSpringBoot(Manifest manifest) {
+    private static boolean isFatJar(Manifest manifest) {
         return manifest != null
                 && (launcher(manifest)
                         || (manifestVersion(manifest) != null

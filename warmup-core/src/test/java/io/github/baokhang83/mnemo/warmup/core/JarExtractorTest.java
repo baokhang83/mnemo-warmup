@@ -1,6 +1,7 @@
 package io.github.baokhang83.mnemo.warmup.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -73,26 +74,31 @@ class JarExtractorTest {
     }
 
     @Test
-    void theJarThatToolsExtractWritesIsAnExecutableJarNotAFatJar() throws IOException {
+    void theJarThatToolsExtractWritesIsASpringBootAppThatNeedsNoExtraction() throws IOException {
         // what `java -Djarmode=tools -jar app.jar extract` really writes (checked on Spring Boot 3.5): the version attribute
         // survives, the loader is gone, the application's Main-Class and a Class-Path to lib/ are added
         Path extracted = jar("extracted.jar",
                 "Spring-Boot-Version", "3.5.16",
                 "Main-Class", "com.acme.DemoApplication",
                 "Class-Path", "lib/spring-boot-3.5.16.jar lib/spring-core-6.2.19.jar");
-        assertEquals(Kind.EXECUTABLE_JAR, JarExtractor.detect(extracted));
+        assertEquals(Kind.SPRING_BOOT, JarExtractor.detect(extracted), "it is still a Spring Boot application");
+        assertFalse(JarExtractor.needsExtraction(extracted), "but it needs no extraction");
 
         var app = new JarExtractor((cmd) -> { throw new AssertionError("an extracted JAR must not be extracted again"); })
                 .prepare(extracted, JdkInfo.current(), dir.resolve("never"));
-        assertEquals(Kind.EXECUTABLE_JAR, app.kind());
+        assertEquals(Kind.SPRING_BOOT, app.kind(), "spring-refresh and friends still see a Spring Boot app");
         assertEquals(extracted.toAbsolutePath(), app.runnableJar());
     }
 
     @Test
     void aFatJarIsRecognisedEvenWithAClassPathLessManifestOrTheLoaderAsMain() throws IOException {
-        assertEquals(Kind.SPRING_BOOT, JarExtractor.detect(jar("fat1.jar", "Spring-Boot-Version", "3.5.16", "Start-Class", "com.acme.DemoApplication")));
-        assertEquals(Kind.SPRING_BOOT, JarExtractor.detect(jar("fat2.jar",
-                "Main-Class", "org.springframework.boot.loader.launch.JarLauncher", "Class-Path", "ignored")));
+        Path fat1 = jar("fat1.jar", "Spring-Boot-Version", "3.5.16", "Start-Class", "com.acme.DemoApplication");
+        Path fat2 = jar("fat2.jar", "Main-Class", "org.springframework.boot.loader.launch.JarLauncher", "Class-Path", "ignored");
+        assertEquals(Kind.SPRING_BOOT, JarExtractor.detect(fat1));
+        assertEquals(Kind.SPRING_BOOT, JarExtractor.detect(fat2));
+        assertTrue(JarExtractor.needsExtraction(fat1));
+        assertTrue(JarExtractor.needsExtraction(fat2));
+        assertFalse(JarExtractor.needsExtraction(jar("plain.jar", "Main-Class", "com.acme.Main")));
     }
 
     @Test

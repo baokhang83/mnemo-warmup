@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ArchiveFetcher.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">ArchiveFetcher.java</span></div><h1>ArchiveFetcher.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
+/**
+ * The init-container side of the store: looks the live environment up, in order of preference, and
+ * leaves the first verified archive, its manifest and a flags file in an output directory. A pod
+ * with no usable archive gets an output directory without a flags file and starts uncached
+ * (constitution §1). It never throws for a store problem: those become notes on the result.
+ */
+<span class="fc" id="L18">public final class ArchiveFetcher {</span>
+
+    /** One line of JVM options that make the JVM use the archive; empty or absent means &quot;run plain&quot;. */
+    public static final String FLAGS_FILE = &quot;mnemo-warmup.flags&quot;;
+
+<span class="fc" id="L23">    public enum Outcome {</span>
+<span class="fc" id="L24">        HIT,</span>
+<span class="fc" id="L25">        MISS</span>
+    }
+
+    /**
+     * @param archive   the downloaded archive, or null on a miss
+     * @param flagsFile the written flags file, or null on a miss
+     * @param notes     why each earlier candidate was not used, for the log
+     */
+<span class="fc" id="L33">    public record Result(</span>
+            Outcome outcome, String fingerprint, CacheStrategy cacheType, Path archive, Path flagsFile, List&lt;String&gt; notes) {}
+
+    /**
+     * Withdraws what a previous fetch published, so a miss can never leave flags that point at an old
+     * archive. The flags file is the only thing the JVM launch reads, so it goes first: if it cannot
+     * be deleted it is emptied, and an empty flags file means &quot;run plain&quot;. If neither works the
+     * exception says so, and the caller must treat the output directory as unreliable (the consumer's
+     * own manifest check, and the JVM's refusal of a mismatched archive, are then the only guard).
+     */
+    public static void clear(Path outDir) {
+<span class="fc" id="L44">        Path flags = outDir.resolve(FLAGS_FILE);</span>
+        try {
+<span class="fc" id="L46">            Files.deleteIfExists(flags);</span>
+<span class="fc" id="L47">        } catch (IOException deleteFailure) {</span>
+            try {
+<span class="fc" id="L49">                Files.writeString(flags, &quot;&quot;, StandardCharsets.UTF_8);</span>
+<span class="fc" id="L50">            } catch (IOException truncateFailure) {</span>
+<span class="fc" id="L51">                throw new StoreException(</span>
+<span class="fc" id="L52">                        &quot;Cannot remove or empty the stale &quot; + flags + &quot; (&quot; + deleteFailure.getMessage()</span>
+                                + &quot;); an old archive may still be referenced&quot;,
+                        deleteFailure);
+<span class="fc" id="L55">            }</span>
+<span class="fc" id="L56">        }</span>
+        try {
+<span class="fc" id="L58">            Files.deleteIfExists(outDir.resolve(ArchiveManifest.FILE_NAME));</span>
+<span class="nc" id="L59">        } catch (IOException e) {</span>
+<span class="nc" id="L60">            throw new StoreException(&quot;Cannot remove the stale manifest in &quot; + outDir + &quot;: &quot; + e.getMessage(), e);</span>
+<span class="fc" id="L61">        }</span>
+<span class="fc" id="L62">    }</span>
+
+    /**
+     * @param candidates the live manifests to look for, most preferred first (one per cache type)
+     */
+    public Result fetch(ArchiveStore store, List&lt;ArchiveManifest&gt; candidates, Path outDir) {
+        try {
+<span class="fc" id="L69">            Files.createDirectories(outDir);</span>
+<span class="nc" id="L70">        } catch (IOException e) {</span>
+<span class="nc" id="L71">            throw new StoreException(&quot;Cannot create &quot; + outDir + &quot;: &quot; + e.getMessage(), e);</span>
+<span class="fc" id="L72">        }</span>
+<span class="fc" id="L73">        clear(outDir);</span>
+        try {
+<span class="fc" id="L75">            return lookUp(store, candidates, outDir);</span>
+<span class="fc" id="L76">        } catch (RuntimeException e) {</span>
+            // Whatever failed, never leave a flags file behind that the app would act on.
+            try {
+<span class="fc" id="L79">                clear(outDir);</span>
+<span class="nc" id="L80">            } catch (RuntimeException suppressed) {</span>
+<span class="nc" id="L81">                e.addSuppressed(suppressed);</span>
+<span class="fc" id="L82">            }</span>
+<span class="fc" id="L83">            throw e;</span>
+        }
+    }
+
+    private Result lookUp(ArchiveStore store, List&lt;ArchiveManifest&gt; candidates, Path outDir) {
+<span class="fc" id="L88">        List&lt;String&gt; notes = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L89" title="All 2 branches covered.">        for (ArchiveManifest live : candidates) {</span>
+<span class="fc" id="L90">            String fingerprint = live.fingerprint();</span>
+            Optional&lt;ArchiveStore.StoredArchive&gt; stored;
+            try {
+<span class="fc" id="L93">                stored = store.get(fingerprint, outDir);</span>
+<span class="fc" id="L94">            } catch (StoreException e) {</span>
+<span class="fc" id="L95">                notes.add(live.cacheType() + &quot;: &quot; + e.getMessage());</span>
+<span class="fc" id="L96">                continue;</span>
+<span class="fc" id="L97">            }</span>
+<span class="fc bfc" id="L98" title="All 2 branches covered.">            if (stored.isEmpty()) {</span>
+<span class="fc" id="L99">                notes.add(live.cacheType() + &quot;: no archive stored for &quot; + fingerprint);</span>
+<span class="fc" id="L100">                continue;</span>
+            }
+<span class="fc" id="L102">            ArchiveStore.StoredArchive hit = stored.get();</span>
+<span class="fc" id="L103">            List&lt;String&gt; problems = hit.manifest().mismatches(live);</span>
+<span class="fc bfc" id="L104" title="All 2 branches covered.">            if (!problems.isEmpty()) {</span>
+<span class="fc" id="L105">                deleteQuietly(hit.archiveFile());</span>
+<span class="fc" id="L106">                notes.add(live.cacheType() + &quot;: stored manifest does not match this environment: &quot; + problems);</span>
+<span class="fc" id="L107">                continue;</span>
+            }
+            // The flags file is the commit point: it is written last, so every other file is in place
+            // before anything can act on it.
+<span class="fc" id="L111">            write(outDir, ArchiveManifest.FILE_NAME, hit.manifest().toJson());</span>
+<span class="fc" id="L112">            Path flags = write(outDir, FLAGS_FILE, live.cacheType().runtimeFlag(hit.archiveFile().toAbsolutePath().toString()) + &quot;\n&quot;);</span>
+<span class="fc" id="L113">            return new Result(Outcome.HIT, fingerprint, live.cacheType(), hit.archiveFile(), flags, notes);</span>
+        }
+<span class="fc" id="L115">        return new Result(Outcome.MISS, null, null, null, null, notes);</span>
+    }
+
+    private static Path write(Path dir, String name, String content) {
+        try {
+<span class="fc" id="L120">            Path tmp = Files.createTempFile(dir, name, &quot;.part&quot;);</span>
+<span class="fc" id="L121">            Files.writeString(tmp, content, StandardCharsets.UTF_8);</span>
+<span class="fc" id="L122">            Path target = dir.resolve(name);</span>
+<span class="fc" id="L123">            Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);</span>
+<span class="fc" id="L124">            return target;</span>
+<span class="fc" id="L125">        } catch (IOException e) {</span>
+<span class="fc" id="L126">            throw new StoreException(&quot;Cannot write &quot; + name + &quot; in &quot; + dir + &quot;: &quot; + e.getMessage(), e);</span>
+        }
+    }
+
+    private static void deleteQuietly(Path file) {
+        try {
+<span class="fc" id="L132">            Files.deleteIfExists(file);</span>
+<span class="nc" id="L133">        } catch (IOException ignored) {</span>
+            // best effort; without a flags file the file is never used
+<span class="fc" id="L135">        }</span>
+<span class="fc" id="L136">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

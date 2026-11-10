@@ -2,6 +2,7 @@
 
 import io.github.baokhang83.mnemo.warmup.core.CacheStrategy;
 import io.github.baokhang83.mnemo.warmup.core.AppTrainer;
+import io.github.baokhang83.mnemo.warmup.core.ArchiveFetcher;
 import io.github.baokhang83.mnemo.warmup.core.ArchiveManifest;
 import io.github.baokhang83.mnemo.warmup.core.BenchReport;
 import io.github.baokhang83.mnemo.warmup.core.StartupBench;
@@ -33,19 +34,19 @@ import picocli.CommandLine.Spec;
         mixinStandardHelpOptions = true,
         version = &quot;mnemo-warmup 0.1.0-SNAPSHOT&quot;,
         description = &quot;Build, validate and benchmark AppCDS / Leyden AOT caches.&quot;,
-        subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class})
-<span class="fc" id="L37">public class Main implements Runnable {</span>
+        subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class, Main.Fetch.class})
+<span class="fc" id="L38">public class Main implements Runnable {</span>
 
     @Spec
     CommandSpec spec;
 
     @Override
     public void run() {
-<span class="nc" id="L44">        spec.commandLine().usage(spec.commandLine().getOut());</span>
-<span class="nc" id="L45">    }</span>
+<span class="nc" id="L45">        spec.commandLine().usage(spec.commandLine().getOut());</span>
+<span class="nc" id="L46">    }</span>
 
     /** Options that describe the application and how to start and stop it; shared by build and bench. */
-<span class="fc" id="L48">    static class AppOptions {</span>
+<span class="fc" id="L49">    static class AppOptions {</span>
 
         @Option(
                 names = &quot;--java-home&quot;,
@@ -73,7 +74,7 @@ import picocli.CommandLine.Spec;
                 description = &quot;How long the application may take to reach its ready state. Default: ${DEFAULT-VALUE}.&quot;)
         long timeoutSeconds;
 
-<span class="fc" id="L76">        @Option(</span>
+<span class="fc" id="L77">        @Option(</span>
                 names = &quot;--jvm-arg&quot;,
                 description = &quot;JVM option for the training run, e.g. --jvm-arg=-Xmx512m. Repeatable. Use the options the app will run with: the archive is only valid for them.&quot;)
         List&lt;String&gt; jvmArgs = new ArrayList&lt;&gt;();
@@ -84,7 +85,7 @@ import picocli.CommandLine.Spec;
         @Option(names = &quot;--poll-interval-millis&quot;, defaultValue = &quot;500&quot;, description = &quot;http-probe: pause between probes. Default: ${DEFAULT-VALUE}.&quot;)
         long pollIntervalMillis;
 
-<span class="fc" id="L87">        @Option(</span>
+<span class="fc" id="L88">        @Option(</span>
                 names = &quot;--warmup-url&quot;,
                 description = &quot;http-probe: GET request made once the app is ready (absolute URL or a path such as /api/items). Repeatable.&quot;)
         List&lt;String&gt; warmupUrls = new ArrayList&lt;&gt;();
@@ -98,7 +99,7 @@ import picocli.CommandLine.Spec;
     @Command(name = &quot;build&quot;,
             mixinStandardHelpOptions = true,
             description = &quot;Run a training run and produce the archive + manifest.&quot;)
-<span class="fc" id="L101">    static class Build implements Callable&lt;Integer&gt; {</span>
+<span class="fc" id="L102">    static class Build implements Callable&lt;Integer&gt; {</span>
 
         @Spec
         CommandSpec spec;
@@ -117,57 +118,69 @@ import picocli.CommandLine.Spec;
 
         @Override
         public Integer call() {
-<span class="fc" id="L120">            var out = spec.commandLine().getOut();</span>
-<span class="fc" id="L121">            var err = spec.commandLine().getErr();</span>
+<span class="fc" id="L121">            var out = spec.commandLine().getOut();</span>
+<span class="fc" id="L122">            var err = spec.commandLine().getErr();</span>
             try {
-<span class="fc" id="L123">                JdkInfo jdk = JdkInfo.detect(opts.javaHome, System.getenv());</span>
-<span class="fc" id="L124">                CacheStrategy strategy = CacheType.parse(cacheType).resolve(jdk);</span>
-<span class="fc" id="L125">                out.printf(&quot;Target JDK: %s %s (feature %d)%n&quot;, jdk.vendor(), jdk.version(), jdk.featureVersion());</span>
-<span class="fc" id="L126">                out.printf(&quot;Cache: %s (.%s)%n&quot;, strategy, strategy.extension());</span>
-<span class="fc bfc" id="L127" title="All 2 branches covered.">                if (opts.jar == null) {</span>
-<span class="fc" id="L128">                    err.println(&quot;build: no --jar given, nothing to train&quot;);</span>
-<span class="fc" id="L129">                    return 0;</span>
+<span class="fc" id="L124">                JdkInfo jdk = JdkInfo.detect(opts.javaHome, System.getenv());</span>
+<span class="fc" id="L125">                CacheStrategy strategy = CacheType.parse(cacheType).resolve(jdk);</span>
+<span class="fc" id="L126">                out.printf(&quot;Target JDK: %s %s (feature %d)%n&quot;, jdk.vendor(), jdk.version(), jdk.featureVersion());</span>
+<span class="fc" id="L127">                out.printf(&quot;Cache: %s (.%s)%n&quot;, strategy, strategy.extension());</span>
+<span class="fc bfc" id="L128" title="All 2 branches covered.">                if (opts.jar == null) {</span>
+<span class="fc" id="L129">                    err.println(&quot;build: no --jar given, nothing to train&quot;);</span>
+<span class="fc" id="L130">                    return 0;</span>
                 }
-<span class="pc bpc" id="L131" title="1 of 2 branches missed.">                if (opts.timeoutSeconds &lt;= 0) {</span>
-<span class="nc" id="L132">                    throw new IllegalArgumentException(&quot;--timeout-seconds must be positive&quot;);</span>
+<span class="pc bpc" id="L132" title="1 of 2 branches missed.">                if (opts.timeoutSeconds &lt;= 0) {</span>
+<span class="nc" id="L133">                    throw new IllegalArgumentException(&quot;--timeout-seconds must be positive&quot;);</span>
                 }
-<span class="fc bfc" id="L134" title="All 2 branches covered.">                var probe = opts.url == null</span>
-<span class="fc" id="L135">                        ? null</span>
-<span class="fc" id="L136">                        : new HttpProbeExitMode.Settings(</span>
-<span class="pc" id="L137">                                opts.url, Duration.ofMillis(opts.pollIntervalMillis), opts.warmupUrls, opts.warmupScript);</span>
-<span class="fc" id="L138">                ExitMode mode = ExitMode.parse(opts.exitMode, probe);</span>
-<span class="fc" id="L139">                var app = new JarExtractor().prepare(opts.jar, jdk, opts.workDir.resolve(&quot;app&quot;));</span>
-<span class="fc" id="L140">                out.printf(&quot;Application: %s -&gt; %s%n&quot;, app.kind(), app.runnableJar());</span>
+<span class="fc bfc" id="L135" title="All 2 branches covered.">                var probe = opts.url == null</span>
+<span class="fc" id="L136">                        ? null</span>
+<span class="fc" id="L137">                        : new HttpProbeExitMode.Settings(</span>
+<span class="pc" id="L138">                                opts.url, Duration.ofMillis(opts.pollIntervalMillis), opts.warmupUrls, opts.warmupScript);</span>
+<span class="fc" id="L139">                ExitMode mode = ExitMode.parse(opts.exitMode, probe);</span>
+<span class="fc" id="L140">                var app = new JarExtractor().prepare(opts.jar, jdk, opts.workDir.resolve(&quot;app&quot;));</span>
+<span class="fc" id="L141">                out.printf(&quot;Application: %s -&gt; %s%n&quot;, app.kind(), app.runnableJar());</span>
 
-<span class="fc" id="L142">                Path archive = opts.workDir.resolve(&quot;app.&quot; + strategy.extension());</span>
-<span class="fc" id="L143">                out.printf(&quot;Training with exit mode %s ...%n&quot;, mode.name());</span>
-<span class="fc" id="L144">                var result = new AppTrainer()</span>
-<span class="nc" id="L145">                        .train(app, jdk, strategy, mode, archive, Duration.ofSeconds(opts.timeoutSeconds), opts.jvmArgs);</span>
-<span class="nc" id="L146">                out.printf(</span>
+<span class="fc" id="L143">                Path archive = opts.workDir.resolve(&quot;app.&quot; + strategy.extension());</span>
+<span class="fc" id="L144">                out.printf(&quot;Training with exit mode %s ...%n&quot;, mode.name());</span>
+<span class="fc" id="L145">                var result = new AppTrainer()</span>
+<span class="nc" id="L146">                        .train(app, jdk, strategy, mode, archive, Duration.ofSeconds(opts.timeoutSeconds), opts.jvmArgs);</span>
+<span class="nc" id="L147">                out.printf(</span>
                         &quot;Archive: %s (%.1f MB) in %.1f s%n&quot;,
-<span class="nc" id="L148">                        result.archive(), result.sizeBytes() / 1_048_576.0, result.elapsed().toMillis() / 1000.0);</span>
+<span class="nc" id="L149">                        result.archive(), result.sizeBytes() / 1_048_576.0, result.elapsed().toMillis() / 1000.0);</span>
 
-<span class="nc" id="L150">                var manifest = ArchiveManifest.describe(app, jdk, strategy, opts.jvmArgs, System.getenv(), imageDigest)</span>
-<span class="nc" id="L151">                        .withArchive(result.archive());</span>
-<span class="nc" id="L152">                Path manifestFile = result.archive().resolveSibling(ArchiveManifest.FILE_NAME);</span>
-<span class="nc" id="L153">                manifest.write(manifestFile);</span>
-<span class="nc" id="L154">                out.printf(&quot;Manifest: %s%n&quot;, manifestFile);</span>
-<span class="nc" id="L155">                out.printf(&quot;Fingerprint: %s%n&quot;, manifest.fingerprint());</span>
-<span class="nc" id="L156">                return 0;</span>
-<span class="fc" id="L157">            } catch (IllegalArgumentException | IllegalStateException e) {</span>
-<span class="fc" id="L158">                err.println(&quot;error: &quot; + e.getMessage());</span>
-<span class="fc" id="L159">                return 2;</span>
-<span class="nc" id="L160">            } catch (TrainingException e) {</span>
-<span class="nc" id="L161">                err.println(&quot;error: &quot; + e.getMessage());</span>
-<span class="nc" id="L162">                return 1;</span>
+<span class="nc" id="L151">                var manifest = ArchiveManifest.describe(app, jdk, strategy, opts.jvmArgs, System.getenv(), imageDigest)</span>
+<span class="nc" id="L152">                        .withArchive(result.archive());</span>
+<span class="nc" id="L153">                Path manifestFile = result.archive().resolveSibling(ArchiveManifest.FILE_NAME);</span>
+<span class="nc" id="L154">                manifest.write(manifestFile);</span>
+<span class="nc" id="L155">                out.printf(&quot;Manifest: %s%n&quot;, manifestFile);</span>
+<span class="nc" id="L156">                out.printf(&quot;Fingerprint: %s%n&quot;, manifest.fingerprint());</span>
+<span class="nc" id="L157">                return 0;</span>
+<span class="fc" id="L158">            } catch (IllegalArgumentException | IllegalStateException e) {</span>
+<span class="fc" id="L159">                err.println(&quot;error: &quot; + e.getMessage());</span>
+<span class="fc" id="L160">                return 2;</span>
+<span class="nc" id="L161">            } catch (TrainingException e) {</span>
+<span class="nc" id="L162">                err.println(&quot;error: &quot; + e.getMessage());</span>
+<span class="nc" id="L163">                return 1;</span>
             }
         }
+    }
+
+    /** The store named by {@code --store}, with the login from {@code --registry-auth} or the environment, if any. */
+    static OciArchiveStore openStore(String store, Path registryAuth, boolean plainHttp, long timeoutSeconds) {
+<span class="fc" id="L170">        Path auth = registryAuth;</span>
+<span class="pc bpc" id="L171" title="2 of 4 branches missed.">        if (auth == null &amp;&amp; System.getenv(&quot;MNEMO_WARMUP_REGISTRY_AUTH&quot;) != null) {</span>
+<span class="nc" id="L172">            auth = Path.of(System.getenv(&quot;MNEMO_WARMUP_REGISTRY_AUTH&quot;));</span>
+        }
+<span class="pc bpc" id="L174" title="1 of 2 branches missed.">        RegistryCredentials credentials = auth == null</span>
+<span class="fc" id="L175">                ? null</span>
+<span class="pc" id="L176">                : RegistryCredentials.fromDockerConfig(auth, OciArchiveStore.registryHost(store)).orElse(null);</span>
+<span class="fc" id="L177">        return OciArchiveStore.of(store, plainHttp, credentials, Duration.ofSeconds(timeoutSeconds));</span>
     }
 
     @Command(name = &quot;push&quot;,
             mixinStandardHelpOptions = true,
             description = &quot;Upload the archive and manifest produced by build to an OCI registry, tagged by fingerprint.&quot;)
-<span class="fc" id="L170">    static class Push implements Callable&lt;Integer&gt; {</span>
+<span class="fc" id="L183">    static class Push implements Callable&lt;Integer&gt; {</span>
 
         @Spec
         CommandSpec spec;
@@ -194,56 +207,207 @@ import picocli.CommandLine.Spec;
 
         @Override
         public Integer call() {
-<span class="fc" id="L197">            var out = spec.commandLine().getOut();</span>
-<span class="fc" id="L198">            var err = spec.commandLine().getErr();</span>
+<span class="fc" id="L210">            var out = spec.commandLine().getOut();</span>
+<span class="fc" id="L211">            var err = spec.commandLine().getErr();</span>
             try {
-<span class="fc" id="L200">                Path manifestFile = workDir.resolve(ArchiveManifest.FILE_NAME);</span>
-<span class="fc bfc" id="L201" title="All 2 branches covered.">                if (!Files.isRegularFile(manifestFile)) {</span>
-<span class="fc" id="L202">                    err.println(&quot;error: no &quot; + manifestFile + &quot; (run build first)&quot;);</span>
-<span class="fc" id="L203">                    return 2;</span>
+<span class="fc" id="L213">                Path manifestFile = workDir.resolve(ArchiveManifest.FILE_NAME);</span>
+<span class="fc bfc" id="L214" title="All 2 branches covered.">                if (!Files.isRegularFile(manifestFile)) {</span>
+<span class="fc" id="L215">                    err.println(&quot;error: no &quot; + manifestFile + &quot; (run build first)&quot;);</span>
+<span class="fc" id="L216">                    return 2;</span>
                 }
-<span class="fc" id="L205">                ArchiveManifest manifest = ArchiveManifest.read(manifestFile);</span>
-<span class="pc bpc" id="L206" title="1 of 2 branches missed.">                if (manifest.archive() == null) {</span>
-<span class="nc" id="L207">                    err.println(&quot;error: &quot; + manifestFile + &quot; does not describe an archive&quot;);</span>
-<span class="nc" id="L208">                    return 2;</span>
+<span class="fc" id="L218">                ArchiveManifest manifest = ArchiveManifest.read(manifestFile);</span>
+<span class="pc bpc" id="L219" title="1 of 2 branches missed.">                if (manifest.archive() == null) {</span>
+<span class="nc" id="L220">                    err.println(&quot;error: &quot; + manifestFile + &quot; does not describe an archive&quot;);</span>
+<span class="nc" id="L221">                    return 2;</span>
                 }
-<span class="fc" id="L210">                Path archive = workDir.resolve(manifest.archive().file());</span>
-<span class="pc bpc" id="L211" title="1 of 2 branches missed.">                if (!Files.isRegularFile(archive)) {</span>
-<span class="nc" id="L212">                    err.println(&quot;error: archive &quot; + archive + &quot; not found&quot;);</span>
-<span class="nc" id="L213">                    return 2;</span>
+<span class="fc" id="L223">                Path archive = workDir.resolve(manifest.archive().file());</span>
+<span class="pc bpc" id="L224" title="1 of 2 branches missed.">                if (!Files.isRegularFile(archive)) {</span>
+<span class="nc" id="L225">                    err.println(&quot;error: archive &quot; + archive + &quot; not found&quot;);</span>
+<span class="nc" id="L226">                    return 2;</span>
                 }
-<span class="pc bpc" id="L215" title="1 of 2 branches missed.">                if (timeoutSeconds &lt;= 0) {</span>
-<span class="nc" id="L216">                    throw new IllegalArgumentException(&quot;--timeout-seconds must be positive&quot;);</span>
+<span class="pc bpc" id="L228" title="1 of 2 branches missed.">                if (timeoutSeconds &lt;= 0) {</span>
+<span class="nc" id="L229">                    throw new IllegalArgumentException(&quot;--timeout-seconds must be positive&quot;);</span>
                 }
-<span class="fc" id="L218">                Path auth = registryAuth;</span>
-<span class="pc bpc" id="L219" title="2 of 4 branches missed.">                if (auth == null &amp;&amp; System.getenv(&quot;MNEMO_WARMUP_REGISTRY_AUTH&quot;) != null) {</span>
-<span class="nc" id="L220">                    auth = Path.of(System.getenv(&quot;MNEMO_WARMUP_REGISTRY_AUTH&quot;));</span>
-                }
-<span class="pc bpc" id="L222" title="1 of 2 branches missed.">                RegistryCredentials credentials = auth == null</span>
-<span class="fc" id="L223">                        ? null</span>
-<span class="pc" id="L224">                        : RegistryCredentials.fromDockerConfig(auth, OciArchiveStore.registryHost(store)).orElse(null);</span>
-<span class="fc" id="L225">                var target = OciArchiveStore.of(store, plainHttp, credentials, Duration.ofSeconds(timeoutSeconds));</span>
-<span class="fc" id="L226">                out.printf(&quot;Uploading %s (%.1f MB) to %s%n&quot;, archive, manifest.archive().sizeBytes() / 1_048_576.0, store);</span>
-<span class="nc" id="L227">                target.put(manifest, archive);</span>
-<span class="nc" id="L228">                out.printf(&quot;Stored fingerprint %s as tag %s%n&quot;, manifest.fingerprint(), OciArchiveStore.tagFor(manifest.fingerprint()));</span>
-<span class="nc" id="L229">                return 0;</span>
-<span class="fc" id="L230">            } catch (IllegalArgumentException | IllegalStateException e) {</span>
-<span class="fc" id="L231">                err.println(&quot;error: &quot; + e.getMessage());</span>
-<span class="fc" id="L232">                return 2;</span>
-<span class="fc" id="L233">            } catch (StoreException e) {</span>
-<span class="fc" id="L234">                err.println(&quot;error: &quot; + e.getMessage());</span>
-<span class="fc" id="L235">                return 1;</span>
+<span class="fc" id="L231">                var target = openStore(store, registryAuth, plainHttp, timeoutSeconds);</span>
+<span class="fc" id="L232">                out.printf(&quot;Uploading %s (%.1f MB) to %s%n&quot;, archive, manifest.archive().sizeBytes() / 1_048_576.0, store);</span>
+<span class="nc" id="L233">                target.put(manifest, archive);</span>
+<span class="nc" id="L234">                out.printf(&quot;Stored fingerprint %s as tag %s%n&quot;, manifest.fingerprint(), OciArchiveStore.tagFor(manifest.fingerprint()));</span>
+<span class="nc" id="L235">                return 0;</span>
+<span class="fc" id="L236">            } catch (IllegalArgumentException | IllegalStateException e) {</span>
+<span class="fc" id="L237">                err.println(&quot;error: &quot; + e.getMessage());</span>
+<span class="fc" id="L238">                return 2;</span>
+<span class="fc" id="L239">            } catch (StoreException e) {</span>
+<span class="fc" id="L240">                err.println(&quot;error: &quot; + e.getMessage());</span>
+<span class="fc" id="L241">                return 1;</span>
             }
+        }
+    }
+
+    @Command(name = &quot;fetch&quot;,
+            mixinStandardHelpOptions = true,
+            description = &quot;Init container: look up the archive for this JDK, classpath and options, verify it and write it with a flags file. &quot;
+                    + &quot;Always exits 0 unless --strict, so a missing or bad archive never stops the pod.&quot;)
+<span class="fc" id="L250">    static class Fetch implements Callable&lt;Integer&gt; {</span>
+
+        @Spec
+        CommandSpec spec;
+
+        @Mixin
+        AppOptions opts;
+
+        @Option(names = &quot;--store&quot;, description = &quot;Archive store: oci://host[:port]/repository.&quot;)
+        String store;
+
+        @Option(
+                names = &quot;--out&quot;,
+                defaultValue = &quot;.mnemo-warmup/cache&quot;,
+                description = &quot;Directory that receives the archive, manifest and &quot; + ArchiveFetcher.FLAGS_FILE + &quot;. Default: ${DEFAULT-VALUE}.&quot;)
+        Path out;
+
+        @Option(
+                names = &quot;--cache-type&quot;,
+                defaultValue = &quot;auto&quot;,
+                description = &quot;auto (try AOT on JDK 25+, then AppCDS), appcds or aot. Default: ${DEFAULT-VALUE}.&quot;)
+        String cacheType;
+
+        @Option(names = &quot;--image-digest&quot;, description = &quot;Container image digest, as given to build.&quot;)
+        String imageDigest;
+
+        @Option(
+                names = &quot;--registry-auth&quot;,
+                description = &quot;Docker-config style JSON with the registry login (pull scope). Defaults to $MNEMO_WARMUP_REGISTRY_AUTH, then anonymous.&quot;)
+        Path registryAuth;
+
+        @Option(names = &quot;--plain-http&quot;, description = &quot;Talk to the registry over http instead of https (local registries only).&quot;)
+        boolean plainHttp;
+
+        @Option(names = &quot;--store-timeout-seconds&quot;, defaultValue = &quot;120&quot;, description = &quot;Per registry request and download stall. Default: ${DEFAULT-VALUE}.&quot;)
+        long storeTimeoutSeconds;
+
+        @Option(names = &quot;--strict&quot;, description = &quot;Exit 1 on a store problem and 2 on bad arguments instead of 0. For CI and debugging only.&quot;)
+        boolean strict;
+
+        @Override
+        public Integer call() {
+<span class="fc" id="L292">            var o = spec.commandLine().getOut();</span>
+<span class="fc" id="L293">            var e = spec.commandLine().getErr();</span>
+            try {
+<span class="fc" id="L295">                ArchiveFetcher.clear(out);</span>
+<span class="nc" id="L296">            } catch (RuntimeException ex) {</span>
+<span class="nc" id="L297">                return fail(e, &quot;warning: &quot; + ex.getMessage(), 1);</span>
+<span class="fc" id="L298">            }</span>
+            try {
+<span class="pc bpc" id="L300" title="1 of 4 branches missed.">                if (store == null || opts.jar == null) {</span>
+<span class="fc" id="L301">                    throw new IllegalArgumentException(&quot;fetch needs --store and --jar&quot;);</span>
+                }
+<span class="pc bpc" id="L303" title="1 of 2 branches missed.">                if (storeTimeoutSeconds &lt;= 0) {</span>
+<span class="nc" id="L304">                    throw new IllegalArgumentException(&quot;--store-timeout-seconds must be positive&quot;);</span>
+                }
+<span class="fc" id="L306">                JdkInfo jdk = JdkInfo.detect(opts.javaHome, System.getenv());</span>
+<span class="fc" id="L307">                List&lt;CacheStrategy&gt; order = candidates(jdk);</span>
+                // Extraction (needed to hash a Spring Boot fat JAR's libraries) goes to a fresh directory every
+                // time, because JarExtractor refuses a non-empty destination and fetch must be repeatable,
+                // for example after an init container restart on a shared volume. The fingerprint uses entry
+                // names and content, never the extraction path.
+                Path scratch;
+                try {
+<span class="fc" id="L314">                    Files.createDirectories(opts.workDir);</span>
+<span class="fc" id="L315">                    scratch = Files.createTempDirectory(opts.workDir, &quot;fetch-&quot;);</span>
+<span class="nc" id="L316">                } catch (java.io.IOException io) {</span>
+<span class="nc" id="L317">                    throw new IllegalStateException(&quot;Cannot create scratch space in &quot; + opts.workDir + &quot;: &quot; + io.getMessage(), io);</span>
+<span class="fc" id="L318">                }</span>
+<span class="fc" id="L319">                List&lt;ArchiveManifest&gt; live = new ArrayList&lt;&gt;();</span>
+                try {
+<span class="fc" id="L321">                    var app = new JarExtractor().prepare(opts.jar, jdk, scratch.resolve(&quot;app&quot;));</span>
+<span class="fc bfc" id="L322" title="All 2 branches covered.">                    for (CacheStrategy strategy : order) {</span>
+<span class="fc" id="L323">                        live.add(ArchiveManifest.describe(app, jdk, strategy, opts.jvmArgs, System.getenv(), imageDigest));</span>
+<span class="fc" id="L324">                    }</span>
+                } finally {
+<span class="fc" id="L326">                    deleteTree(scratch);</span>
+                }
+<span class="fc" id="L328">                var archiveStore = openStore(store, registryAuth, plainHttp, storeTimeoutSeconds);</span>
+<span class="fc" id="L329">                var result = new ArchiveFetcher().fetch(archiveStore, live, out);</span>
+<span class="fc" id="L330">                result.notes().forEach(n -&gt; e.println(&quot;fetch: &quot; + n));</span>
+<span class="pc bpc" id="L331" title="1 of 2 branches missed.">                if (result.outcome() == ArchiveFetcher.Outcome.HIT) {</span>
+<span class="nc" id="L332">                    o.printf(&quot;Archive: %s (%s), fingerprint %s%n&quot;, result.archive(), result.cacheType(), result.fingerprint());</span>
+<span class="nc" id="L333">                    o.printf(&quot;Flags: %s%n&quot;, result.flagsFile());</span>
+<span class="nc" id="L334">                    return 0;</span>
+                }
+<span class="fc" id="L336">                o.println(&quot;No usable archive; the application will start without one.&quot;);</span>
+<span class="fc bfc" id="L337" title="All 2 branches covered.">                return strict ? 1 : 0;</span>
+<span class="fc" id="L338">            } catch (IllegalArgumentException | IllegalStateException ex) {</span>
+<span class="fc" id="L339">                return fail(e, &quot;warning: &quot; + ex.getMessage(), 2);</span>
+<span class="nc" id="L340">            } catch (RuntimeException ex) {</span>
+<span class="nc" id="L341">                return fail(e, &quot;warning: &quot; + ex.getMessage(), 1);</span>
+            }
+        }
+
+        private static void deleteTree(Path root) {
+<span class="fc" id="L346">            try (var paths = Files.walk(root)) {</span>
+<span class="fc" id="L347">                paths.sorted(java.util.Comparator.reverseOrder()).forEach(p -&gt; p.toFile().delete());</span>
+<span class="nc" id="L348">            } catch (java.io.IOException | RuntimeException ignored) {</span>
+                // best effort: the directory is scratch space
+<span class="fc" id="L350">            }</span>
+<span class="fc" id="L351">        }</span>
+
+        /**
+         * Picocli rejects bad options before call() runs, so this is the fail-open path for them: it
+         * withdraws any stale flags (best effort, from --out if it can be found) and exits 0 unless
+         * --strict was given.
+         */
+        static int failOpenOnParseError(CommandLine.ParameterException ex, String[] args) {
+<span class="fc" id="L359">            var err = ex.getCommandLine().getErr();</span>
+<span class="fc" id="L360">            boolean strict = java.util.Arrays.asList(args).contains(&quot;--strict&quot;);</span>
+<span class="fc" id="L361">            err.println(&quot;warning: &quot; + ex.getMessage());</span>
+<span class="fc" id="L362">            Path outDir = Path.of(&quot;.mnemo-warmup/cache&quot;);</span>
+<span class="fc bfc" id="L363" title="All 2 branches covered.">            for (int i = 0; i &lt; args.length; i++) {</span>
+<span class="pc bpc" id="L364" title="1 of 4 branches missed.">                if (args[i].equals(&quot;--out&quot;) &amp;&amp; i + 1 &lt; args.length) {</span>
+<span class="fc" id="L365">                    outDir = Path.of(args[i + 1]);</span>
+<span class="pc bpc" id="L366" title="1 of 2 branches missed.">                } else if (args[i].startsWith(&quot;--out=&quot;)) {</span>
+<span class="nc" id="L367">                    outDir = Path.of(args[i].substring(&quot;--out=&quot;.length()));</span>
+                }
+            }
+            try {
+<span class="fc" id="L371">                ArchiveFetcher.clear(outDir);</span>
+<span class="nc" id="L372">            } catch (RuntimeException clearFailure) {</span>
+<span class="nc" id="L373">                err.println(&quot;warning: &quot; + clearFailure.getMessage());</span>
+<span class="fc" id="L374">            }</span>
+<span class="fc bfc" id="L375" title="All 2 branches covered.">            err.println(&quot;fetch: continuing without an archive&quot; + (strict ? &quot; (--strict: failing)&quot; : &quot;&quot;));</span>
+<span class="fc bfc" id="L376" title="All 2 branches covered.">            return strict ? 2 : 0;</span>
+        }
+
+        static int failOpenOnUnexpectedError(Exception ex, CommandLine commandLine) {
+<span class="nc" id="L380">            var err = commandLine.getErr();</span>
+<span class="nc bnc" id="L381" title="All 4 branches missed.">            boolean strict = commandLine.getCommand() instanceof Fetch f &amp;&amp; f.strict;</span>
+<span class="nc" id="L382">            err.println(&quot;warning: unexpected error: &quot; + ex);</span>
+<span class="nc bnc" id="L383" title="All 2 branches missed.">            err.println(&quot;fetch: continuing without an archive&quot; + (strict ? &quot; (--strict: failing)&quot; : &quot;&quot;));</span>
+<span class="nc bnc" id="L384" title="All 2 branches missed.">            return strict ? 1 : 0;</span>
+        }
+
+        private List&lt;CacheStrategy&gt; candidates(JdkInfo jdk) {
+<span class="pc bpc" id="L388" title="2 of 3 branches missed.">            return switch (CacheType.parse(cacheType)) {</span>
+<span class="pc bpc" id="L389" title="1 of 2 branches missed.">                case AUTO -&gt; jdk.featureVersion() &gt;= CacheStrategy.LEYDEN_MIN_FEATURE</span>
+<span class="nc" id="L390">                        ? List.of(CacheStrategy.LEYDEN_AOT, CacheStrategy.APP_CDS)</span>
+<span class="fc" id="L391">                        : List.of(CacheStrategy.APP_CDS);</span>
+<span class="nc" id="L392">                case APPCDS -&gt; List.of(CacheStrategy.APP_CDS);</span>
+<span class="nc" id="L393">                case AOT -&gt; List.of(CacheType.AOT.resolve(jdk));</span>
+            };
+        }
+
+        private int fail(java.io.PrintWriter err, String message, int strictExit) {
+<span class="fc" id="L398">            err.println(message);</span>
+<span class="fc bfc" id="L399" title="All 2 branches covered.">            err.println(&quot;fetch: continuing without an archive&quot; + (strict ? &quot; (--strict: failing)&quot; : &quot;&quot;));</span>
+<span class="fc bfc" id="L400" title="All 2 branches covered.">            return strict ? strictExit : 0;</span>
         }
     }
 
     @Command(name = &quot;bench&quot;,
             mixinStandardHelpOptions = true,
             description = &quot;Compare cold starts with no archive, AppCDS and AOT, and print a Markdown table.&quot;)
-<span class="fc" id="L243">    static class Bench implements Callable&lt;Integer&gt; {</span>
+<span class="fc" id="L407">    static class Bench implements Callable&lt;Integer&gt; {</span>
 
         /** Fixed so every variant is timed with the same resolution: a reading can be late by at most this much. */
-<span class="fc" id="L246">        private static final Duration MEASURE_POLL = Duration.ofMillis(20);</span>
+<span class="fc" id="L410">        private static final Duration MEASURE_POLL = Duration.ofMillis(20);</span>
 
         @Spec
         CommandSpec spec;
@@ -262,79 +426,89 @@ import picocli.CommandLine.Spec;
 
         @Override
         public Integer call() {
-<span class="fc" id="L265">            var out = spec.commandLine().getOut();</span>
-<span class="fc" id="L266">            var err = spec.commandLine().getErr();</span>
+<span class="fc" id="L429">            var out = spec.commandLine().getOut();</span>
+<span class="fc" id="L430">            var err = spec.commandLine().getErr();</span>
             try {
-<span class="fc bfc" id="L268" title="All 2 branches covered.">                if (opts.jar == null) {</span>
-<span class="fc" id="L269">                    throw new IllegalArgumentException(&quot;bench needs --jar&quot;);</span>
+<span class="fc bfc" id="L432" title="All 2 branches covered.">                if (opts.jar == null) {</span>
+<span class="fc" id="L433">                    throw new IllegalArgumentException(&quot;bench needs --jar&quot;);</span>
                 }
-<span class="pc bpc" id="L271" title="2 of 6 branches missed.">                if (opts.timeoutSeconds &lt;= 0 || runs &lt; 1 || warmups &lt; 0) {</span>
-<span class="fc" id="L272">                    throw new IllegalArgumentException(&quot;--timeout-seconds and --runs must be positive and --warmups not negative&quot;);</span>
+<span class="pc bpc" id="L435" title="2 of 6 branches missed.">                if (opts.timeoutSeconds &lt;= 0 || runs &lt; 1 || warmups &lt; 0) {</span>
+<span class="fc" id="L436">                    throw new IllegalArgumentException(&quot;--timeout-seconds and --runs must be positive and --warmups not negative&quot;);</span>
                 }
-<span class="fc" id="L274">                JdkInfo jdk = JdkInfo.detect(opts.javaHome, System.getenv());</span>
-<span class="pc bpc" id="L275" title="1 of 2 branches missed.">                var trainProbe = opts.url == null</span>
-<span class="nc" id="L276">                        ? null</span>
-<span class="fc" id="L277">                        : new HttpProbeExitMode.Settings(</span>
-<span class="fc" id="L278">                                opts.url, Duration.ofMillis(opts.pollIntervalMillis), opts.warmupUrls, opts.warmupScript);</span>
-<span class="fc" id="L279">                ExitMode trainMode = ExitMode.parse(opts.exitMode, trainProbe);</span>
+<span class="fc" id="L438">                JdkInfo jdk = JdkInfo.detect(opts.javaHome, System.getenv());</span>
+<span class="pc bpc" id="L439" title="1 of 2 branches missed.">                var trainProbe = opts.url == null</span>
+<span class="nc" id="L440">                        ? null</span>
+<span class="fc" id="L441">                        : new HttpProbeExitMode.Settings(</span>
+<span class="fc" id="L442">                                opts.url, Duration.ofMillis(opts.pollIntervalMillis), opts.warmupUrls, opts.warmupScript);</span>
+<span class="fc" id="L443">                ExitMode trainMode = ExitMode.parse(opts.exitMode, trainProbe);</span>
                 // Same mode for measuring, but no warmup traffic: that would be counted as startup.
-<span class="pc bpc" id="L281" title="1 of 2 branches missed.">                ExitMode measureMode = opts.url == null</span>
-<span class="nc" id="L282">                        ? trainMode</span>
-<span class="fc" id="L283">                        : ExitMode.parse(opts.exitMode, HttpProbeExitMode.Settings.of(opts.url)</span>
-<span class="fc" id="L284">                                .withPollInterval(MEASURE_POLL));</span>
-<span class="fc" id="L285">                var app = new JarExtractor().prepare(opts.jar, jdk, opts.workDir.resolve(&quot;app&quot;));</span>
-<span class="fc" id="L286">                Duration timeout = Duration.ofSeconds(opts.timeoutSeconds);</span>
+<span class="pc bpc" id="L445" title="1 of 2 branches missed.">                ExitMode measureMode = opts.url == null</span>
+<span class="nc" id="L446">                        ? trainMode</span>
+<span class="fc" id="L447">                        : ExitMode.parse(opts.exitMode, HttpProbeExitMode.Settings.of(opts.url)</span>
+<span class="fc" id="L448">                                .withPollInterval(MEASURE_POLL));</span>
+<span class="fc" id="L449">                var app = new JarExtractor().prepare(opts.jar, jdk, opts.workDir.resolve(&quot;app&quot;));</span>
+<span class="fc" id="L450">                Duration timeout = Duration.ofSeconds(opts.timeoutSeconds);</span>
 
-<span class="fc" id="L288">                var variants = new ArrayList&lt;StartupBench.Variant&gt;();</span>
-<span class="fc" id="L289">                variants.add(StartupBench.Variant.none());</span>
-<span class="fc bfc" id="L290" title="All 2 branches covered.">                for (CacheStrategy strategy : strategiesFor(jdk)) {</span>
-<span class="fc" id="L291">                    Path archive = opts.workDir.resolve(&quot;bench.&quot; + strategy.extension());</span>
-<span class="fc" id="L292">                    err.printf(&quot;Training %s ...%n&quot;, strategy);</span>
-<span class="fc" id="L293">                    new AppTrainer().train(app, jdk, strategy, trainMode, archive, timeout, opts.jvmArgs);</span>
-<span class="fc" id="L294">                    variants.add(StartupBench.Variant.of(label(strategy), strategy, archive));</span>
-<span class="fc" id="L295">                }</span>
+<span class="fc" id="L452">                var variants = new ArrayList&lt;StartupBench.Variant&gt;();</span>
+<span class="fc" id="L453">                variants.add(StartupBench.Variant.none());</span>
+<span class="fc bfc" id="L454" title="All 2 branches covered.">                for (CacheStrategy strategy : strategiesFor(jdk)) {</span>
+<span class="fc" id="L455">                    Path archive = opts.workDir.resolve(&quot;bench.&quot; + strategy.extension());</span>
+<span class="fc" id="L456">                    err.printf(&quot;Training %s ...%n&quot;, strategy);</span>
+<span class="fc" id="L457">                    new AppTrainer().train(app, jdk, strategy, trainMode, archive, timeout, opts.jvmArgs);</span>
+<span class="fc" id="L458">                    variants.add(StartupBench.Variant.of(label(strategy), strategy, archive));</span>
+<span class="fc" id="L459">                }</span>
 
-<span class="fc" id="L297">                var entries = new ArrayList&lt;BenchReport.Entry&gt;();</span>
-<span class="fc bfc" id="L298" title="All 2 branches covered.">                for (var variant : variants) {</span>
-<span class="fc" id="L299">                    err.printf(&quot;Measuring %s (%d warmup + %d timed starts) ...%n&quot;, variant.name(), warmups, runs);</span>
-<span class="fc" id="L300">                    var samples = new StartupBench().measure(</span>
+<span class="fc" id="L461">                var entries = new ArrayList&lt;BenchReport.Entry&gt;();</span>
+<span class="fc bfc" id="L462" title="All 2 branches covered.">                for (var variant : variants) {</span>
+<span class="fc" id="L463">                    err.printf(&quot;Measuring %s (%d warmup + %d timed starts) ...%n&quot;, variant.name(), warmups, runs);</span>
+<span class="fc" id="L464">                    var samples = new StartupBench().measure(</span>
                             jdk, variant, app, measureMode, opts.jvmArgs, timeout, warmups, runs,
-<span class="fc" id="L302">                            opts.workDir.resolve(&quot;bench-&quot; + variant.name() + &quot;.log&quot;));</span>
-<span class="fc" id="L303">                    entries.add(new BenchReport.Entry(variant.name(), samples));</span>
-<span class="fc" id="L304">                }</span>
-<span class="fc" id="L305">                out.printf(&quot;JDK %s %s, %d timed starts per variant (median):%n%n&quot;, jdk.vendor(), jdk.version(), runs);</span>
-<span class="fc" id="L306">                out.println(BenchReport.markdown(entries));</span>
-<span class="fc" id="L307">                return 0;</span>
-<span class="fc" id="L308">            } catch (IllegalArgumentException | IllegalStateException e) {</span>
-<span class="fc" id="L309">                err.println(&quot;error: &quot; + e.getMessage());</span>
-<span class="fc" id="L310">                return 2;</span>
-<span class="nc" id="L311">            } catch (TrainingException e) {</span>
-<span class="nc" id="L312">                err.println(&quot;error: &quot; + e.getMessage());</span>
-<span class="nc" id="L313">                return 1;</span>
+<span class="fc" id="L466">                            opts.workDir.resolve(&quot;bench-&quot; + variant.name() + &quot;.log&quot;));</span>
+<span class="fc" id="L467">                    entries.add(new BenchReport.Entry(variant.name(), samples));</span>
+<span class="fc" id="L468">                }</span>
+<span class="fc" id="L469">                out.printf(&quot;JDK %s %s, %d timed starts per variant (median):%n%n&quot;, jdk.vendor(), jdk.version(), runs);</span>
+<span class="fc" id="L470">                out.println(BenchReport.markdown(entries));</span>
+<span class="fc" id="L471">                return 0;</span>
+<span class="fc" id="L472">            } catch (IllegalArgumentException | IllegalStateException e) {</span>
+<span class="fc" id="L473">                err.println(&quot;error: &quot; + e.getMessage());</span>
+<span class="fc" id="L474">                return 2;</span>
+<span class="nc" id="L475">            } catch (TrainingException e) {</span>
+<span class="nc" id="L476">                err.println(&quot;error: &quot; + e.getMessage());</span>
+<span class="nc" id="L477">                return 1;</span>
             }
         }
 
         /** AppCDS is available on every supported JDK; AOT only where the single-step flags exist. */
         static List&lt;CacheStrategy&gt; strategiesFor(JdkInfo jdk) {
-<span class="fc" id="L319">            var list = new ArrayList&lt;CacheStrategy&gt;();</span>
-<span class="fc" id="L320">            list.add(CacheStrategy.APP_CDS);</span>
-<span class="pc bpc" id="L321" title="1 of 2 branches missed.">            if (jdk.featureVersion() &gt;= CacheStrategy.LEYDEN_MIN_FEATURE) {</span>
-<span class="nc" id="L322">                list.add(CacheStrategy.LEYDEN_AOT);</span>
+<span class="fc" id="L483">            var list = new ArrayList&lt;CacheStrategy&gt;();</span>
+<span class="fc" id="L484">            list.add(CacheStrategy.APP_CDS);</span>
+<span class="pc bpc" id="L485" title="1 of 2 branches missed.">            if (jdk.featureVersion() &gt;= CacheStrategy.LEYDEN_MIN_FEATURE) {</span>
+<span class="nc" id="L486">                list.add(CacheStrategy.LEYDEN_AOT);</span>
             }
-<span class="fc" id="L324">            return list;</span>
+<span class="fc" id="L488">            return list;</span>
         }
 
         private static String label(CacheStrategy strategy) {
-<span class="pc bpc" id="L328" title="1 of 2 branches missed.">            return strategy == CacheStrategy.APP_CDS ? &quot;appcds&quot; : &quot;aot&quot;;</span>
+<span class="pc bpc" id="L492" title="1 of 2 branches missed.">            return strategy == CacheStrategy.APP_CDS ? &quot;appcds&quot; : &quot;aot&quot;;</span>
         }
     }
 
     static CommandLine commandLine() {
-<span class="fc" id="L333">        return new CommandLine(new Main());</span>
+<span class="fc" id="L497">        var cmd = new CommandLine(new Main());</span>
+        // fetch runs as an init container: a bad option or an unexpected error must not stop the pod (§3).
+<span class="fc" id="L499">        var defaultParseHandler = cmd.getParameterExceptionHandler();</span>
+<span class="fc bfc" id="L500" title="All 2 branches covered.">        cmd.setParameterExceptionHandler((ex, args) -&gt; &quot;fetch&quot;.equals(ex.getCommandLine().getCommandName())</span>
+<span class="fc" id="L501">                ? Fetch.failOpenOnParseError(ex, args)</span>
+<span class="fc" id="L502">                : defaultParseHandler.handleParseException(ex, args));</span>
+<span class="fc" id="L503">        var defaultExecutionHandler = cmd.getExecutionExceptionHandler();</span>
+<span class="pc bnc" id="L504" title="All 2 branches missed.">        cmd.setExecutionExceptionHandler((ex, commandLine, parseResult) -&gt; &quot;fetch&quot;.equals(commandLine.getCommandName())</span>
+<span class="nc" id="L505">                ? Fetch.failOpenOnUnexpectedError(ex, commandLine)</span>
+<span class="nc" id="L506">                : defaultExecutionHandler.handleExecutionException(ex, commandLine, parseResult));</span>
+<span class="fc" id="L507">        return cmd;</span>
     }
 
     public static void main(String[] args) {
-<span class="nc" id="L337">        System.exit(commandLine().execute(args));</span>
-<span class="nc" id="L338">    }</span>
+<span class="nc" id="L511">        System.exit(commandLine().execute(args));</span>
+<span class="nc" id="L512">    }</span>
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

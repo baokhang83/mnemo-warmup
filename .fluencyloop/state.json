@@ -1,11 +1,11 @@
 {
   "schema_version": "1",
-  "feature": "8-add-bench-command-comparing-none-vs-appcds-vs-aot-cold-sta",
-  "branch": "feature/8-add-bench-command-comparing-none-vs-appcds-vs-aot-cold-sta",
+  "feature": "12-decision-who-trains-one-off-job-vs-first-pod-and-training",
+  "branch": "feature/12-decision-who-trains-one-off-job-vs-first-pod-and-training",
   "stage": "build",
-  "last_session": "001-add-startupbench-benchreport-and-the-bench-command",
+  "last_session": "001-record-adr-0002-job-per-fingerprint-trainer-and-training",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",
-  "updated": "2026-11-09"
+  "updated": "2026-11-10"
 }

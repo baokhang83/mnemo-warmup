@@ -103,5 +103,10 @@ check "$out" "kind: CronJob" "example renders the trainer"
 check "$out" '"-Xmx512m"' "the Deployment's java command uses warmup.app.jvmArgs"
 check "$out" '"-Xlog:gc"' "javaOptions reach the java command"
 check "$out" '- "--jvm-arg=-Xmx512m"' "the same jvm args reach fetch and the trainer"
+absent "$out" "imagePullSecrets" "no imagePullSecrets unless configured"
+out=$(helm template ex "$EXAMPLE" -n default --set 'warmup.app.imagePullSecrets[0].name=regcred')
+validate "example chart with an image pull secret" "$out"
+secrets=$(grep -c "name: regcred" <<<"$out")
+if [ "$secrets" -ge 2 ]; then ok "an application image pull secret reaches both the Deployment and the trainer ($secrets places)"; else fail "regcred should appear in the Deployment and the trainer, found $secrets"; fi
 
 if [ "$failures" -eq 0 ]; then echo "ALL OK"; else echo "$failures FAILED"; exit 1; fi

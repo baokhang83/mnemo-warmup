@@ -3,364 +3,290 @@
   <h1>mnemo-warmup</h1>
 </div>
 
-**Cluster-aware startup caches for JVM workloads on Kubernetes.**
-Train an AppCDS or Project Leyden AOT cache once, share it with every replica through an
-init container, and fall back to a normal start whenever the cache doesn't match.
+<div align="center">
 
-[![build](https://github.com/baokhang83/mnemo-warmup/actions/workflows/build.yml/badge.svg)](https://github.com/baokhang83/mnemo-warmup/actions/workflows/build.yml)
-[![coverage](https://raw.githubusercontent.com/baokhang83/mnemo-warmup/refs/heads/gh-pages/badges/jacoco.svg)](https://baokhang83.github.io/mnemo-warmup/)
-[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-![Status: alpha](https://img.shields.io/badge/status-alpha-yellow)
-![Java 21+](https://img.shields.io/badge/java-21%2B-informational)
+<b>Shared JVM startup caches for Kubernetes.</b>
 
-> **Status: alpha.** The whole chain works and is checked end to end on a real Kubernetes cluster (kind) with JDK 21
-> (AppCDS) and JDK 25 (AOT): `build` trains an archive, `push` stores it in an OCI registry, a trainer CronJob does that
-> in the cluster, `fetch` (init container) retrieves and verifies it, and `run` (entrypoint) starts the JVM with it only if
-> it still fits; `bench` measures the savings. What is **not** proven yet: it has only run on arm64, with one small Spring
-> Boot application, and the Helm chart is not published (use it from this repository). The command-line options, chart
-> values and the manifest format can still change. See the [roadmap](#roadmap) and the [project plan](docs/PLAN.md).
-> Part of the Mnemo suite (`mnemo-jvm-warden`, `mnemo-cache`, `mnemo-warmup`).
+<p>
+mnemo-warmup trains an AppCDS or Project Leyden AOT archive <b>once, inside your cluster</b>, and delivers it to every replica of your
+Java application. A pod starts from the archive when it fits its launch exactly, and starts the ordinary way when it does not.
+Built for services whose pods start often: frequent deployments, autoscaling scale-ups and node moves.
+</p>
 
----
+<a href="https://github.com/baokhang83/mnemo-warmup/actions/workflows/build.yml"><img alt="build" src="https://github.com/baokhang83/mnemo-warmup/actions/workflows/build.yml/badge.svg"></a>
+<a href="https://baokhang83.github.io/mnemo-warmup/"><img alt="coverage" src="https://raw.githubusercontent.com/baokhang83/mnemo-warmup/refs/heads/gh-pages/badges/jacoco.svg"></a>
+<a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-blue.svg"></a>
+<img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-yellow">
+<img alt="Java 21+" src="https://img.shields.io/badge/java-21%2B-informational">
 
-## Why
+<p>
+<a href="#try-the-example">Try the example</a> &middot;
+<a href="#configure-it-on-a-cluster">Configure it on a cluster</a> &middot;
+<a href="docs/reference.md">Reference</a>
+</p>
 
-The JVM can start much faster when it reuses an archive of already-loaded and linked
-classes. Depending on the application, startup improvements of 30-60% are commonly
-reported for **AppCDS** (JDK 13+) and **Project Leyden's AOT cache** (JDK 24+; single-step
-creation since JDK 25, JEP 514). Almost nobody runs them in production, because:
+</div>
 
-1. **Training is a ceremony.** You unpack the JAR, run the app, exercise it, and stop it
-   cleanly so the archive is written.
-2. **Archives are fragile.** They are bound to the exact JDK build, classpath and JVM flags.
-   A mismatch silently disables the archive or fails startup.
-3. **CI is the wrong place to train.** Real config, secrets and dependencies live in the
-   cluster, not in the build.
-4. **Nobody measures it.** There is no routine way to see what an archive actually saves.
+## What you get
+
+- **A shorter JVM start-up, with no application source changes.** It integrates through your image build and your Helm chart. Pods start from a
+  ready-made JVM archive instead of loading and linking every class from scratch; whether that shortens pod readiness in your cluster is something to
+  [measure](#measure-the-benefit).
+- **Your pods keep starting, whatever happens to the cache.** If the archive is missing, outdated or the registry is unreachable, the pod starts exactly
+  as it does today, and its log says why.
+- **Set it up once.** When your image or JVM options change, the trainer builds a fresh archive on its own and replaces damaged entries; nothing to
+  schedule by hand.
+- **Fits what you already run.** A Helm chart, two init containers and the registry you already have. No controller, no webhook, no CRD, and `java`
+  stays PID 1.
+- **AppCDS or the AOT cache, chosen for you** from your image's JDK (AppCDS on 21 and later, the Leyden AOT cache on 25).
 
 ## How it works
 
-```
-            +------------------------+
- trainer    | trainer CronJob        |  computes the fingerprint, trains if missing, pushes
- (CronJob)  | (train: build + push)  |--------------------+
-            +------------------------+                    v
-                                             +------------------------+
-                                             | archive store          |
-                                             | OCI registry, tag =    |
-                                             | fp-<fingerprint hex>   |
-                                             +------------------------+
-                                                         |
- every pod:  init container (mnemo-warmup fetch) <-------+  look up, verify digest
-                |
-                v  writes archive + manifest + flags file to a shared emptyDir
-          app container: mnemo-warmup-exec -> mnemo-warmup run -> exec java [archive flag] -jar ...
-                         (a plain start if nothing fits)
-```
 
-Everything in the picture exists: `build`, `push`, `train`, `fetch`, `run`, the tools image and the Helm chart
-(a Helm *hook* was rejected because a failing trainer would fail the release; see
-[ADR 0002](docs/adr/0002-training-trigger-and-traffic.md)).
+<div align="center">
+  <img width="557" height="313" alt="How mnemo-warmup works: a trainer CronJob fills the registry, every pod fetches and validates the archive" src="https://github.com/user-attachments/assets/6e775dcb-7c3f-42ec-8e26-cc7403750373" />
+</div>
 
-- **Fingerprint:** `(image digest, JDK vendor and build, cache type, classpath hashes, GC and heap flags)`.
-  The same fingerprint is recorded in a manifest next to the archive.
-- **Train once, reuse everywhere:** the first training run for a fingerprint populates the
-  store; later replicas and scale-ups just fetch.
-- **Safe by default:** at pod start the order is matching AOT archive, then matching
-  AppCDS archive, then a plain JVM start. A cache problem never prevents the app from
-  starting: `fetch` exits 0 on every problem (unless `--strict`), and `run` starts the command
-  unchanged whenever the archive does not fit this exact launch.
-- **Verified before use:** every downloaded archive is checked against its content digest, and
-  `run` re-hashes the archive against its manifest right before handing it to the JVM.
+- A **fingerprint** identifies what an archive is valid for: the JDK build, the classpath JAR contents, and the heap and GC options.
+- A **trainer CronJob** runs your application image with the tool, trains an archive for the fingerprint and uploads it, once.
+- Each **pod** gets two extra init containers and starts through a small wrapper; `java` is still PID 1.
+- If looking up or validating the archive fails, the pod starts without it and logs why. Deployment problems are different, see
+  [What can still stop a pod](#what-can-still-stop-a-pod).
 
-## Relationship to mnemo-jvm-warden
+## Try the example
 
-[`mnemo-jvm-warden`](https://github.com/baokhang83/mnemo-jvm-warden) resizes running pods
-in place; mnemo-warmup makes the pods that do start (deploys, scale-ups) boot faster. They
-are separate projects. Warmup works on its own; the planned integration is that warden
-depends on `warmup-core` as a library and handles injecting the init container into
-workloads, so this repo does not ship its own controller or webhook.
-
-## Cache types
-
-AppCDS and the AOT cache are alternatives: the JVM is given one archive per run
-(`-XX:SharedArchiveFile` or `-XX:AOTCache`). The AOT cache builds on the CDS machinery and
-stores more.
-
-| JDK | AppCDS (`.jsa`) | AOT cache (`.aot`) |
-|-----|-----------------|--------------------|
-| 21-23 | Supported | Not available |
-| 24 | Supported | Needs a two-step flow; not supported yet |
-| 25+ | Supported (fallback) | **Preferred**, single step (`-XX:AOTCacheOutput`) |
-
-`cacheType: auto` (the default) chooses AOT on JDK 25+ and AppCDS otherwise. You can also
-force `appcds` or `aot`.
-
-## Usage
-
-Build the CLI (see [Building from source](#building-from-source)), then train an archive:
+Before changing your own deployment, run the bundled one: a small Spring Boot application, an example chart, and a script that does everything on a
+throw-away [kind](https://kind.sigs.k8s.io/) cluster, for JDK 21 (AppCDS) or JDK 25 (AOT):
 
 ```bash
-# Spring Boot 3.3+ fat JAR: extract it, then let Spring end the run after the context refresh
-mnemo-warmup build --jar app.jar
-
-# Any framework: wait for a health endpoint, send some warmup traffic, then stop the app
-mnemo-warmup build --jar app.jar --exit-mode http-probe \
-    --url http://localhost:8080/actuator/health \
-    --warmup-url /api/items --warmup-url /api/orders
-
-# Train for a different JDK than the one running the tool, and force a cache type
-mnemo-warmup build --jar app.jar --java-home /opt/jdk-21 --cache-type appcds
+git clone --depth 1 --branch v0.2.0 https://github.com/baokhang83/mnemo-warmup.git mnemo-warmup-src
+cd mnemo-warmup-src
+scripts/e2e-kind.sh 21        # needs docker, kind, kubectl and helm; builds the images, creates and deletes its own cluster
 ```
 
-The archive is written to `<work-dir>/app.aot` or `<work-dir>/app.jsa` (default work
-directory `.mnemo-warmup`), next to a `mnemo-warmup.manifest.json` (see below). Run the application later with the same JDK, JAR and flags and
-pass `-XX:AOTCache=<file>` (AOT) or `-XX:SharedArchiveFile=<file>` (AppCDS).
+It starts the application without an archive, trains one, restarts the pods onto it, and then changes a JVM option to show the fallback; it takes several
+minutes. Read [`examples/`](examples/README.md) to see how the pieces fit before you copy them.
 
-| Option | Meaning |
-|--------|---------|
-| `--jar` | Application JAR. Spring Boot 3.3+ fat JARs are extracted with `-Djarmode=tools`; other executable JARs are used as they are. |
-| `--java-home` | JDK of the target app. Defaults to `$JAVA_HOME`, then the JDK running the tool. |
-| `--cache-type` | `auto` (default), `appcds` or `aot`. `auto` picks AOT on JDK 25+, AppCDS otherwise. |
-| `--exit-mode` | `spring-refresh` (default) or `http-probe`. |
-| `--url` | `http-probe`: endpoint that must return 2xx. Required for that mode. |
-| `--warmup-url` | `http-probe`: GET request after the probe succeeds (repeatable; absolute URL or path). |
-| `--warmup-script` | `http-probe`: program run after the warmup requests; gets the base URL, must exit 0. |
-| `--poll-interval-millis` | `http-probe`: pause between probes (default 500). |
-| `--timeout-seconds` | How long the app may take to become ready (default 300). |
-| `--jvm-arg` | JVM option for the training run, e.g. `--jvm-arg=-Xmx512m` (repeatable). Use the options the app will run with. |
-| `--image-digest` | Container image digest to record in the fingerprint. |
-| `--work-dir` | Where files are written (default `.mnemo-warmup`). |
+## Requirements
 
-Exit codes: `0` success, `1` training failed (the message includes the app's last log
-lines), `2` invalid input. A failed run never leaves an archive behind.
+What the setup below needs from your application and your cluster.
 
-**Exit modes.** `spring-refresh` passes `-Dspring.context.exit=onRefresh`, so only the
-startup path is trained. `http-probe` also trains the classes used while serving the
-warmup requests you send, and works for any framework.
+- **Application image:** Java **21 or newer**, and **`/bin/sh`** (the chart's launcher and wrapper are shell scripts, so shell-free images such
+  as distroless are not supported by the chart).
+- **Launch command:** `java [options] -jar <jar> [args]`. Launches with `-cp` and a main class are left to start normally, without a cache.
+- **JARs fixed at build time:** a Spring Boot **3.3+** application extracted with `-Djarmode=tools extract` (step 1), or another executable JAR
+  whose dependencies are listed in its `Class-Path`.
+- **Registry:** an OCI registry (the OCI distribution API) that your cluster can reach and that accepts **Basic or Bearer-token** login from a
+  Docker-config Secret, with **tag immutability off** for the archive repository. Cloud credential helpers and workload identity (for example
+  ECR with IAM roles) are not supported yet. Archives can reach hundreds of MB, so check the registry's blob-size limit.
+- **Kubernetes:** `batch/v1` CronJobs (1.21 or newer) and the `coordination.k8s.io/v1` Lease API.
+- **Your application's startup runs once more, for real, during training** (see [What it costs](#what-it-costs)).
 
-### Measure the savings: `bench`
+## Configure it on a cluster
 
-```bash
-mnemo-warmup bench --jar app.jar --runs 3
-```
+The Helm chart is part of the [v0.2.0 release](https://github.com/baokhang83/mnemo-warmup/releases/tag/v0.2.0); it is not published to a chart
+repository yet. Pick the release that matches the image tag in the chart's defaults.
 
-Starts the app with no archive, with AppCDS and (on JDK 25+) with AOT, in fresh JVMs, discards a
-warm-up start and prints a Markdown table of median cold-start times. It takes the same application
-options as `build`, plus `--runs` (timed starts per variant, default 3) and `--warmups` (default 1).
+### 1. Fix the JARs when you build the image
 
-### Share the archive: `push`, `fetch`
-
-```bash
-# trainer: after `build`, upload the archive and manifest (tag = fp-<fingerprint hex>)
-mnemo-warmup push --store oci://registry.example.com/team/warmup --registry-auth ~/.docker/config.json
-
-# every pod, as an init container: look up, verify and write the archive
-mnemo-warmup fetch --jar /app/app.jar --jvm-arg=-Xmx512m --image-digest sha256:... \
-    --store oci://registry.example.com/team/warmup --out /mnemo-cache
-```
-
-`fetch` computes the live fingerprint the same way `build` does, so give it the same `--jar`,
-`--jvm-arg` and `--image-digest` as the training run. With `--cache-type auto` it looks for an AOT
-archive first (JDK 25+) and then AppCDS. A hit writes the archive, its manifest and a one-line
-`mnemo-warmup.flags` file (for example `-XX:SharedArchiveFile=/mnemo-cache/app.jsa`) to `--out`.
-
-| Option | Meaning |
-|--------|---------|
-| `--store` | `oci://host[:port]/repository`. Archives are OCI artifacts tagged `fp-<hex>`. |
-| `--registry-auth` | Docker-config style JSON (a mounted `dockerconfigjson` Secret). `push` needs push scope, `fetch` pull scope. Defaults to `$MNEMO_WARMUP_REGISTRY_AUTH`, then anonymous. Basic and Bearer-token auth are supported; credential helpers and cloud workload identity are not yet. |
-| `--plain-http` | Use http instead of https (local registries only). |
-| `--out` | `fetch`: output directory (default `.mnemo-warmup/cache`). |
-| `--cache-type` | `fetch`: `auto` (default), `appcds` or `aot`. |
-| `--store-timeout-seconds` | `fetch`: per request and download stall (default 120). |
-| `--strict` | `fetch`: exit 1 on a store problem and 2 on bad arguments, for CI. |
-
-**`fetch` exits 0 by default**, whatever goes wrong (unreachable registry, bad login, corrupt
-download, bad options). An init container that exits non-zero keeps the pod from starting, so the
-failure is logged and any old flags file is removed instead. `push` uses exit codes normally:
-`0` success, `1` store failure, `2` invalid input (including an archive that does not match its manifest).
-
-### Start the app: `run`
-
-```bash
-# prints the final command; the wrapper script then execs it, so java is PID 1
-mnemo-warmup run --print --cache-dir /mnemo-cache -- java -Xmx512m -jar /app/app.jar
-```
-
-`run` rebuilds the description of this exact launch and compares it with the manifest `fetch`
-stored. Only if the JDK build, JVM options, classpath content, JAR modification times and the
-directory the app was trained from all agree, it inserts `-XX:SharedArchiveFile=` or
-`-XX:AOTCache=` right after `java`. Otherwise it starts the command exactly as given and logs why
-(for example `-Xmx512m` against `-Xmx1g`). Only `java [options] -jar <jar> [args]` launches are
-supported; anything else is left unchanged.
-
-In a Dockerfile, use [`scripts/mnemo-warmup-exec`](scripts/mnemo-warmup-exec) as the entrypoint:
+An archive remembers the JAR files it was trained on, so the trainer and every pod must run the same files. For Spring Boot, extract
+the JAR at build time:
 
 ```dockerfile
-# Extract a Spring Boot fat JAR at build time, so training and running use the same files.
-RUN java -Djarmode=tools -jar app.jar extract --destination /app
-ENTRYPOINT ["/opt/mnemo-warmup/mnemo-warmup-exec"]
-CMD ["java", "-Xmx512m", "-jar", "/app/app.jar"]
-```
-
-The script runs `mnemo-warmup run --print` and then `exec`s the result, so the JVM replaces the
-shell as PID 1 and receives Kubernetes' SIGTERM directly with no extra process. If `mnemo-warmup`
-is missing or fails, it execs your original command. Images without `/bin/sh` can use
-`mnemo-warmup run --spawn -- java ...` instead: it starts the command as a child process,
-forwards SIGTERM, waits for it (up to `--stop-timeout-seconds`, default 25) and returns its exit
-code, but keeps a second JVM resident.
-
-Why extraction at build time: the JVM silently ignores an archive when a classpath JAR's size,
-modification time or path differs from training. Run the same extracted files, at the same path,
-in the trainer and in the app. If a Spring Boot fat JAR is launched directly, `run` says so and
-starts it plain. See [ADR 0003](docs/adr/0003-run-exec-model-and-layout.md).
-
-`run` options: `--cache-dir` (default `$MNEMO_WARMUP_CACHE_DIR`, then `.mnemo-warmup/cache`),
-`--image-digest` (default `$MNEMO_WARMUP_IMAGE_DIGEST`), `--print`, `--spawn`, `--stop-timeout-seconds`.
-
-## Container image
-
-The tool has to run **inside your application image**, because an archive is only valid for that
-image's JDK build, JAR files, paths and modification times. So the published image
-`ghcr.io/baokhang83/mnemo-warmup-tools:<version>` (about 7 MB, amd64 and arm64) contains no JDK; it only
-carries `/opt/mnemo-warmup/mnemo-warmup.jar`, a launcher `bin/mnemo-warmup` and the exec wrapper
-`bin/mnemo-warmup-exec`. Your application image needs Java 21 or newer.
-
-Bake it into your image:
-
-```dockerfile
-COPY --from=ghcr.io/baokhang83/mnemo-warmup-tools:0.2.0 /opt/mnemo-warmup /opt/mnemo-warmup
-ENTRYPOINT ["/opt/mnemo-warmup/bin/mnemo-warmup-exec"]
+RUN java -Djarmode=tools -jar target/app.jar extract --destination /out
+...
+COPY --from=build /out /app
 CMD ["java", "-jar", "/app/app.jar"]
 ```
 
-or copy it at deploy time with an init container (what the Helm chart will do):
+Build one image per JDK you run: the image's JDK decides the cache type (AppCDS on 21 and later, the AOT cache on 25).
 
-```yaml
-initContainers:
-  - name: mnemo-warmup-install
-    image: ghcr.io/baokhang83/mnemo-warmup-tools:0.2.0
-    command: ["cp", "-R", "/opt/mnemo-warmup/.", "/mnemo-tools/"]
-    volumeMounts: [{ name: mnemo-tools, mountPath: /mnemo-tools }]
-  - name: mnemo-warmup-fetch
-    image: my-app:1.0            # the application image itself
-    command: ["/mnemo-tools/bin/mnemo-warmup", "fetch", "--jar", "/app/app.jar",
-              "--store", "oci://registry.example.com/team/warmup", "--out", "/mnemo-cache"]
-    volumeMounts: [{ name: mnemo-tools, mountPath: /mnemo-tools }, { name: mnemo-cache, mountPath: /mnemo-cache }]
+### 2. Add the chart to your application's chart
+
+The layout you want is two sibling directories, `your-chart/` and `mnemo-warmup/`:
+
+
+```bash
+git clone --depth 1 --branch v0.2.0 https://github.com/baokhang83/mnemo-warmup.git mnemo-warmup-src
+cp -R mnemo-warmup-src/deploy/helm/mnemo-warmup ./mnemo-warmup      # beside your-chart/; its defaults point at the 0.2.0 tools image
 ```
 
-If the image has no Java, or one older than 21, the launcher makes `fetch` skip itself with exit 0 and
-`run` start your original command unchanged, so the pod still starts. That safety net needs `/bin/sh`.
-**Shell-free (distroless) application images** have no launcher: call
-`java -jar /mnemo-tools/mnemo-warmup.jar ...` directly, which requires Java 21+ in the image. On an
-older Java that init container would fail and block the pod, so do not enable it there. Build it locally with
-`docker build -f image/Dockerfile -t mnemo-warmup-tools .`, and check the whole chain in Docker with
-`scripts/verify-image.sh` (a local registry, JDK 21 with AppCDS and JDK 25 with AOT).
-See [ADR 0004](docs/adr/0004-tools-image.md).
-
-## Kubernetes: the Helm chart and the trainer
-
-[`deploy/helm/mnemo-warmup`](deploy/helm/mnemo-warmup) renders the **trainer**: a CronJob that runs your
-application image, plus the ServiceAccount, Role and RoleBinding it needs. It is deliberately a CronJob and not a Helm
-hook, so a failing trainer can never fail or roll back a release. Each run executes
-`mnemo-warmup train`: compute the fingerprint, stop if the store already has it, otherwise take a Kubernetes
-`Lease` named after the fingerprint (so two trainers never train the same archive; an expired lease from a crashed
-trainer is taken over), train, upload, release. A tag whose entry is incomplete (for example a missing blob) is
-replaced rather than treated as done. It exits 0 for every outcome and logs which one happened.
-
-The chart does **not** render your Deployment. Your own chart includes its named templates to add the init
-containers, volumes, environment and the exec-wrapper entrypoint to your pod template (the chart's README has the
-snippet, and [`deploy/helm/tests/parent`](deploy/helm/tests/parent) is a working example):
-
 ```yaml
+# your-chart/Chart.yaml
 dependencies:
-  - { name: mnemo-warmup, version: 0.1.0, repository: "file://path/to/mnemo-warmup/deploy/helm/mnemo-warmup", alias: warmup }
+  - name: mnemo-warmup
+    version: 0.1.0
+    repository: file://../mnemo-warmup
+    alias: warmup
 ```
 
-The values that must match your Deployment are `app.image`, `app.jar`, `app.jvmArgs` and `app.env`: an archive is only
-valid for that exact launch, and a mismatch is safe (the pod starts without the cache). The trainer's ServiceAccount
-may only `get`, `create`, `update` and `delete` Leases in its own namespace; application pods need no extra RBAC.
+### 3. Create the namespace and the Secrets
 
-`mnemo-warmup train` can also be run directly (`--lock none` outside a cluster). It needs the extracted layout and exits
-0 for every outcome unless `--strict`.
+The Secrets must exist in the namespace you deploy to, before you deploy (a missing Secret keeps the pod from starting). Two of them let the tool
+talk to the **archive** registry (skip them only for an anonymous registry): the pull Secret needs read access to the archive repository, the push
+Secret read and write. They are mounted into containers and do **not** authenticate image pulls, which the kubelet does with `imagePullSecrets`.
+If your application image is in a private registry, create an image-pull Secret as well (it may hold the same credentials):
 
-Check the chart with `scripts/test-chart.sh` (needs `helm`; set `KUBE_CONTEXT` to also have a cluster's API server
-validate every manifest). See [ADR 0005](docs/adr/0005-trainer-and-chart.md).
+```bash
+export NS=my-namespace
+kubectl create namespace $NS
+kubectl -n $NS create secret docker-registry warmup-pull --docker-server=registry.example.com --docker-username=... --docker-password=...
+kubectl -n $NS create secret docker-registry warmup-push --docker-server=registry.example.com --docker-username=... --docker-password=...
+kubectl -n $NS create secret docker-registry regcred --docker-server=registry.example.com --docker-username=... --docker-password=...   # image pulls
+```
 
-## Example and end-to-end test
+### 4. Set the values
 
-[`examples/`](examples/README.md) has a small Spring Boot application, an example workload chart that uses the
-mnemo-warmup chart, and `scripts/e2e-kind.sh`, which runs the whole chain on a kind cluster for JDK 21 (AppCDS) and
-JDK 25 (AOT): the app starts without an archive; the trainer trains and uploads once and releases its Lease; a second run
-finds the entry complete; after a restart `fetch` finds the archive, the application's own classes load from it and `java`
-is PID 1; and a JVM option changed only in the Deployment makes the pod start uncached, healthy, with a logged reason.
+```yaml
+# your-chart/values.yaml
+warmup:
+  app:
+    image: { repository: registry.example.com/team/my-app, tag: "1.4.2" }  # the SAME image your Deployment runs
+    imagePullSecrets: [{ name: regcred }]   # for that image if it is private; the trainer uses it, and so does the Deployment below
+    jar: /app/app.jar
+    jvmArgs: ["-Xmx512m"]          # the heap/GC options your app really runs with; the Deployment's java command is built from this list
+  store:
+    url: oci://registry.example.com/team/warmup     # where archives are kept
+    pullSecret: warmup-pull                          # omit both for an anonymous registry
+    pushSecret: warmup-push
+  trainer:
+    exitMode: spring-refresh       # use http-probe (and trainer.probe.url) for apps that are not Spring Boot
+```
 
-## The manifest and fingerprint
+The trainer runs your application for real, so it needs your configuration too (`warmup.trainer.env`, `envFrom`, `volumes`, `volumeMounts`).
+If your Deployment sets `JAVA_TOOL_OPTIONS` or `JDK_JAVA_OPTIONS`, repeat them in `warmup.app.env`: they are part of what an archive is valid for.
 
-`build` writes `mnemo-warmup.manifest.json` next to the archive. It records what the archive
-was trained against, and a `fingerprint` (`sha256:...`) derived from it:
+### 5. Wire your Deployment
 
-- the cache type and the JDK vendor and full build,
-- the optional `--image-digest`,
-- the JVM options that can invalidate an archive: heap size and percentages, GC choice,
-  `ObjectAlignmentInBytes`, compressed oops/class pointers, compact object headers. This is a
-  deliberately conservative list (it also reads `JAVA_TOOL_OPTIONS` and `JDK_JAVA_OPTIONS`);
-  [#20](https://github.com/baokhang83/mnemo-warmup/issues/20) will measure which of these really
-  matter, and others such as `-D` properties are ignored,
-- every classpath entry in order, with its size and SHA-256 (the launched JAR plus what its
-  `Class-Path` lists, which is the `lib/` directory for an extracted Spring Boot JAR).
+The helpers print list items, so put each `include` **inside the list you already have** and keep your own entries next to them. A complete example is
+[`examples/helm/example-app`](examples/helm/example-app/templates/deployment.yaml).
 
-File modification times, the directory the app was launched from, and the JDK's install path are
-recorded but are not part of the fingerprint, because they can legitimately differ between a trainer
-and a replica. `run` checks the modification times and the launch directory separately, since the
-JVM does. Editing the file by hand makes it fail to load, because the recorded fingerprint no
-longer matches. The manifest also stores the archive's size and SHA-256.
+```yaml
+spec:
+  template:
+    spec:
+      {{- with .Values.warmup.app.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        # ...your own volumes...
+        {{- include "mnemo-warmup.volumes" .Values.warmup | nindent 8 }}
+      initContainers:
+        # ...your own init containers, if any...
+        {{- include "mnemo-warmup.installInitContainer" .Values.warmup | nindent 8 }}
+        {{- include "mnemo-warmup.fetchInitContainer" .Values.warmup | nindent 8 }}
+      containers:
+        - name: app
+          image: {{ include "mnemo-warmup.appImage" .Values.warmup | quote }}
+          command: {{ include "mnemo-warmup.command" .Values.warmup }}     # the wrapper decides, then execs java
+          args:                                                              # your original command, moved here
+            - java
+            {{- range .Values.warmup.app.jvmArgs }}
+            - {{ . | quote }}
+            {{- end }}
+            - -jar
+            - {{ .Values.warmup.app.jar | quote }}
+          env:
+            # ...your own env...
+            {{- include "mnemo-warmup.env" .Values.warmup | nindent 12 }}
+          volumeMounts:
+            # ...your own mounts...
+            {{- include "mnemo-warmup.volumeMounts" .Values.warmup | nindent 12 }}
+```
 
-## What works today
+The wrapper replaces the container's entrypoint, so whatever `command` and `args` the container had (or the image's `ENTRYPOINT`) must become the
+`java ...` arguments above. Options that do not affect an archive (`-D` properties, logging) can be added after the `jvmArgs` loop.
 
-- Target-JDK detection (`--java-home`, `$JAVA_HOME`, or the running JVM) and the choice
-  between AppCDS and the AOT cache.
-- Spring Boot fat-JAR extraction on the target JDK.
-- The training runner: starts the app with the recording flag, waits for the exit mode,
-  stops it with SIGTERM so the JVM writes the archive, and verifies the archive exists.
-- Exit modes `spring-refresh` and `http-probe`.
-- The manifest and fingerprint, and a function that explains how two environments differ.
-- `bench`, `push` and `fetch` against an OCI registry (checked against a real `registry:2`), and `run`
-  with the exec wrapper (a real JVM was started with a planned archive and loaded classes from it).
-- `warmup-core` is on [Maven Central](https://central.sonatype.com/artifact/io.github.baokhang83.mnemo/warmup-core)
-  as `io.github.baokhang83.mnemo:warmup-core`.
+### 6. Deploy, train, then check
 
-Not there yet: a published Helm chart (use `deploy/helm/mnemo-warmup` from this repository), results on amd64, and
-more than one application (see the [roadmap](#roadmap)).
+```bash
+helm dependency update your-chart
+helm upgrade --install my-app your-chart -n $NS
+kubectl -n $NS get cronjob                                         # the trainer, e.g. my-app-warmup-trainer
+kubectl -n $NS create job first-train --from=cronjob/my-app-warmup-trainer
+kubectl -n $NS wait --for=condition=complete job/first-train --timeout=15m
+kubectl -n $NS logs job/first-train -c trainer                     # must say: train: TRAINED ...  (FAILED prints the reason)
+```
 
-## Limitations
+The trainer also runs every 10 minutes by itself (`warmup.trainer.schedule`). Pods that start before the first archive exists run without it.
+Only when the outcome says `TRAINED` (or `ALREADY_STORED`), restart the pods and look at what they did:
 
-- **Tested on arm64 only so far** (Apple silicon, Docker, kind). The code is not architecture specific and the image is built
-  for amd64 as well, but no amd64 run has been done.
-- **Linux and macOS only.** Stopping the app with SIGTERM is what makes the JVM write the
-  archive; Windows kills the process instead.
-- **AOT needs JDK 25+.** JDK 24 has the AOT cache but a two-step flow that is not
-  supported yet; it uses AppCDS.
-- **Spring Boot is tested with one small application** (the example, a web app with one controller), on JDK 21 and 25.
-  To check your own Spring Boot 3.3+ JAR, run
-  `mvn verify -pl warmup-core -Dwarmup.test.springBootJar=/path/to/app.jar`.
-- AppCDS behaviour on JDK 21-24 was checked in Docker ([results](docs/appcds-jdk-matrix.md)); CI runs
-  the tests on 21 and 25.
-- **Registry login:** Docker-config Basic/Bearer auth only. ECR/GCR/ACR credential helpers and
-  workload-identity token exchange are not implemented, and only plain registries were tested (not TLS
-  or a cloud registry).
-- **`run` hashes the classpath JARs and the archive at start.** That costs startup time on a large
-  classpath; it has not been measured yet.
+```bash
+kubectl -n $NS rollout restart deploy/my-app
+kubectl -n $NS logs <new-pod> -c mnemo-warmup-fetch     # Archive: ... (APP_CDS)    or    (LEYDEN_AOT) on JDK 25
+kubectl -n $NS logs <new-pod> -c app | grep "run:"      # run: using APP_CDS archive ...
+```
 
-## Getting it
+## What it costs
 
-- **The tool in a pod:** the tools image `ghcr.io/baokhang83/mnemo-warmup-tools:<version>` (see [Container image](#container-image)),
-  published for each release tag. It is the only way the CLI is distributed; build from source to run it elsewhere.
-- **As a library:** `warmup-core` is on Maven Central (`io.github.baokhang83.mnemo:warmup-core`), for example for
-  mnemo-jvm-warden.
-- **The Helm chart:** `deploy/helm/mnemo-warmup` in this repository (not published to a chart repository yet).
+- **Training runs a real instance of your application**, once per new fingerprint (for Spring Boot until the context has refreshed). Whatever your
+  startup does (connections, migrations, background jobs, calls to other services) happens in the trainer pod too, so give it a safe configuration
+  with `warmup.trainer.env` and `envFrom`.
+- **Pods do extra work before they are ready:** two init containers, the archive download, and hashing the classpath JARs (`fetch`, `run`) and the archive
+  (`run`). Larger classpaths and archives cost more. The saving only counts if it exceeds this.
+- **One archive per fingerprint** (per image, JDK and relevant JVM options) is stored in your registry; old ones are not removed automatically.
 
-`mnemo-warmup --version` prints the version of the jar you run.
+## Measure the benefit
+
+An archive being selected proves nothing about speed. Compare **pod start to Ready**, with and without the cache, over several restarts:
+
+```bash
+kubectl -n $NS get pods -l app=my-app -o json | jq -r '.items[] | [.metadata.name,
+  (((.status.conditions[]|select(.type=="Ready").lastTransitionTime|fromdate) - (.status.startTime|fromdate)))] | @tsv'
+```
+
+That is seconds from the kubelet starting the pod (including both init containers) to Ready. For JVM startup alone,
+`mnemo-warmup bench --jar /app/app.jar` compares no cache, AppCDS and AOT locally ([reference](docs/reference.md#measure-the-savings-bench)).
+The example's `scripts/e2e-kind.sh` proves behaviour, not speed.
+
+## What can still stop a pod
+
+Failures **looking up or validating** the archive never stop a pod: it runs without the cache and says why in its log.
+
+| Situation | What you see |
+|---|---|
+| No archive yet (first deploy) | `fetch`: "No usable archive"; `run`: "no archive was fetched" |
+| JVM options or env differ from the trainer's | `run`: "archive does not match this launch: [...]" |
+| New image or JARs | a new fingerprint: the trainer trains again within one schedule interval |
+| Registry unreachable or login refused | `fetch` logs the reason and exits 0 |
+| The image has no Java, or Java older than 21 | the launcher skips the tool and your app starts as before |
+
+**Deployment failures are not covered**, because the pod cannot get as far as running the tool:
+
+- a `warmup.store.pullSecret` / `pushSecret` that does not exist in the namespace (the pod waits for the missing volume);
+- the tools image or the application image cannot be pulled;
+- the application image has no `/bin/sh` (the init container cannot start);
+- a Deployment edit that gets the entrypoint or arguments wrong (the app command fails as it would anyway).
+
+## Disable or remove it
+
+Suspending the trainer (`warmup.trainer.suspend: true`) only stops **new training**: pods keep fetching and using the archives that already exist. To stop
+using the cache:
+
+1. Take the `include` lines out of your Deployment and restore its original `command` and `args`; redeploy. New pods start without the init containers, the
+   wrapper or the cache.
+2. Set `warmup.trainer.enabled: false` (or remove the dependency) to delete the trainer CronJob, its ServiceAccount and its Role.
+3. Optionally delete the archives from the registry (tags `fp-<hex>` in the archive repository) and any Leases left behind
+   (`kubectl -n $NS get lease | grep mnemo-warmup`; they expire on their own).
+
+## Current scope
+
+**Tested with:** amd64 (in CI) and arm64 (locally); Kubernetes 1.35 on kind; JDK 21 (AppCDS) and JDK 25 (AOT); one Spring Boot 3.5 application (the
+bundled example); an anonymous plain-HTTP `registry:2`. CI runs the whole chain on a real cluster. More applications, registries and architectures are being added.
+
+- Alpha: command-line options, chart values and the manifest format may still change.
+- The application image needs **Java 21+ and `/bin/sh`**, and the JARs must be fixed at build time (step 1).
+- The first archive appears after the trainer's first run (up to one schedule interval, unless you start a job by hand).
+- Registry login supports Docker-config basic and token auth; cloud credential helpers and workload identity are not implemented.
+- The Helm chart is not published; use it from this repository.
+
+## More
+
+- [Reference](docs/reference.md): every command and option, the cache types, the manifest and fingerprint, the container image, the trainer and chart in detail.
+- [Example](examples/README.md): a Spring Boot app, an example chart, and `scripts/e2e-kind.sh`, which runs the whole chain on a kind cluster.
+- [Design decisions](docs/adr/) and the [project plan and roadmap](docs/PLAN.md).
+- Related: [`mnemo-jvm-warden`](https://github.com/baokhang83/mnemo-jvm-warden) resizes running pods in place; the planned integration is that warden injects the init containers (not built yet). `warmup-core` is on Maven Central (`io.github.baokhang83.mnemo:warmup-core`).
 
 ## Building from source
 
@@ -375,45 +301,6 @@ java -jar warmup-cli/target/mnemo-warmup.jar build --help
 
 The build produces a self-contained `warmup-cli/target/mnemo-warmup.jar`; the examples above
 call it as `mnemo-warmup`.
-
-## Repository layout
-
-```
-warmup-core/   engine: JDK detection, extraction, training, manifest, OCI store, fetch/run logic
-warmup-cli/    command-line interface (picocli): build, bench, push, fetch, run, train
-coverage/      aggregates JaCoCo coverage for the badge (not published)
-image/         Dockerfile and launcher of the tools image
-deploy/helm/   Helm chart for the trainer plus the reusable pod-template helpers, and a parent-chart test fixture
-examples/      a Spring Boot app, an example workload chart, and the notes behind scripts/e2e-kind.sh
-scripts/       mnemo-warmup-exec wrapper, verify-image.sh, test-chart.sh, Docker checks for the AppCDS matrix
-docs/PLAN.md   design, decisions and roadmap
-docs/adr/      decisions: archive store, training trigger, run/exec model
-```
-
-
-## Roadmap
-
-**Phase 1: engine and CLI (v0.1.0, released)**
-- [x] Project skeleton, JDK detection and flag selection
-- [x] `cacheType` option with validation against the JDK
-- [x] Spring Boot fat-JAR extraction
-- [x] Training runner (`spring-refresh` and `http-probe` exit modes)
-- [x] Fingerprint and manifest
-- [x] `bench`: none vs AppCDS vs AOT
-
-**Phase 2: Kubernetes delivery (v0.2.0)**
-- [x] Decisions: archive store (OCI), training trigger (CronJob + Lease), run/exec model
-- [x] Archive store backend with `push`
-- [x] `fetch` (init container) and `run` (entrypoint)
-- [x] Tools image (JDK-free, runs inside the application image), checked end to end in Docker
-- [x] `train` command with a Kubernetes Lease, trainer CronJob and Helm chart (rendered, accepted by a real API server, and run in a kind cluster)
-- [x] Example Spring Boot app, tested on kind with JDK 21 (AppCDS) and JDK 25 (AOT) by `scripts/e2e-kind.sh`
-
-**Phase 3: automation (v0.3.0)**
-- [ ] Investigate which JVM flags invalidate an archive (multi-profile archives), metrics
-- [ ] Warden integration (implemented in the warden repo)
-
-Design decisions and their reasons are in [docs/PLAN.md](docs/PLAN.md) and [docs/adr/](docs/adr/).
 
 ## Contributing
 

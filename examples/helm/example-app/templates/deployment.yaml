@@ -14,6 +14,10 @@ spec:
       labels:
         app: {{ .Release.Name }}-app
     spec:
+      {{- with .Values.warmup.app.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       volumes:
         {{- include "mnemo-warmup.volumes" .Values.warmup | nindent 8 }}
       initContainers:

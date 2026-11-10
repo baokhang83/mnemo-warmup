@@ -3,17 +3,11 @@
   <h1>mnemo-warmup</h1>
 </div>
 
-**mnemo-warmup helps Java applications on Kubernetes start faster by sharing JVM startup caches across replicas.**
+**Shared JVM startup caches for Kubernetes.**
 
-It is for services whose pods start often: frequent deployments, autoscaling scale-ups, node moves. The JVM can reuse an archive of
-classes it has already loaded and linked (AppCDS, or the Leyden AOT cache on JDK 25). mnemo-warmup trains that archive **once, inside
-your cluster**, keeps it in a registry, and has every pod fetch it before the application starts. If the archive cannot be used, the
-pod starts the ordinary way.
-
-**What has been measured.** On the bundled example application (a small Spring Boot web app, JDK 25, one laptop, median of 2 runs after
-1 warm-up), `mnemo-warmup bench` measured JVM startup of **523 ms with no cache, 338 ms with AppCDS and 275 ms with AOT**. That is JVM
-startup only, not pod readiness, from a very small sample, and no prediction for your application. The gain depends on your classpath
-and startup work; [measure your own](#measure-the-benefit).
+mnemo-warmup trains an AppCDS or Project Leyden AOT archive **once, inside your cluster**, and delivers it to every replica of your
+Java application. A pod starts from the archive when it fits its launch exactly, and starts the ordinary way when it does not.
+Built for services whose pods start often: frequent deployments, autoscaling scale-ups and node moves.
 
 [![build](https://github.com/baokhang83/mnemo-warmup/actions/workflows/build.yml/badge.svg)](https://github.com/baokhang83/mnemo-warmup/actions/workflows/build.yml)
 [![coverage](https://raw.githubusercontent.com/baokhang83/mnemo-warmup/refs/heads/gh-pages/badges/jacoco.svg)](https://baokhang83.github.io/mnemo-warmup/)
@@ -21,24 +15,18 @@ and startup work; [measure your own](#measure-the-benefit).
 ![Status: alpha](https://img.shields.io/badge/status-alpha-yellow)
 ![Java 21+](https://img.shields.io/badge/java-21%2B-informational)
 
-> **Status: alpha.** The whole chain is verified on a real kind cluster with JDK 21 (AppCDS) and JDK 25 (AOT). Not proven yet: amd64
-> runs, more than one application, private-registry login. The Helm chart is not published (use it from this repository), and
-> options and formats may still change. Details in [Limitations](#limitations) and the [project plan](docs/PLAN.md).
 
-## Before you start
+## What you get
 
-Check these first; they decide whether the setup below fits your application.
-
-- **Application image:** Java **21 or newer**, and **`/bin/sh`** (the chart's launcher and wrapper are shell scripts, so shell-free images such
-  as distroless are not supported by the chart).
-- **Launch command:** `java [options] -jar <jar> [args]`. Launches with `-cp` and a main class are left to start normally, without a cache.
-- **JARs fixed at build time:** a Spring Boot **3.3+** application extracted with `-Djarmode=tools extract` (step 1), or another executable JAR
-  whose dependencies are listed in its `Class-Path`.
-- **Registry:** an OCI registry (the OCI distribution API) that your cluster can reach and that accepts **Basic or Bearer-token** login from a
-  Docker-config Secret, with **tag immutability off** for the archive repository. Cloud credential helpers and workload identity (for example
-  ECR with IAM roles) are not supported yet. Archives can reach hundreds of MB, so check the registry's blob-size limit.
-- **Kubernetes:** `batch/v1` CronJobs (1.21 or newer) and the `coordination.k8s.io/v1` Lease API; tested only on 1.35.
-- **Your application's startup runs once more, for real, during training** (see [What it costs](#what-it-costs)).
+- **Faster pod starts, without touching your application.** Your code and build stay as they are. Pods start from a ready-made JVM archive instead of
+  loading and linking every class from scratch.
+- **Your pods keep starting, whatever happens to the cache.** If the archive is missing, outdated or the registry is unreachable, the pod starts exactly
+  as it does today, and its log says why.
+- **Set it up once.** When your image or JVM options change, the trainer builds a fresh archive on its own and replaces damaged entries; nothing to
+  schedule by hand.
+- **Fits what you already run.** A Helm chart, two init containers and the registry you already have. No controller, no webhook, no CRD, and `java`
+  stays PID 1.
+- **AppCDS or the AOT cache, chosen for you** from your image's JDK (AppCDS on 21 and later, the Leyden AOT cache on 25).
 
 ## How it works
 
@@ -52,6 +40,21 @@ Check these first; they decide whether the setup below fits your application.
 - Each **pod** gets two extra init containers and starts through a small wrapper; `java` is still PID 1.
 - If looking up or validating the archive fails, the pod starts without it and logs why. Deployment problems are different, see
   [What can still stop a pod](#what-can-still-stop-a-pod).
+
+## Requirements
+
+What the setup below needs from your application and your cluster.
+
+- **Application image:** Java **21 or newer**, and **`/bin/sh`** (the chart's launcher and wrapper are shell scripts, so shell-free images such
+  as distroless are not supported by the chart).
+- **Launch command:** `java [options] -jar <jar> [args]`. Launches with `-cp` and a main class are left to start normally, without a cache.
+- **JARs fixed at build time:** a Spring Boot **3.3+** application extracted with `-Djarmode=tools extract` (step 1), or another executable JAR
+  whose dependencies are listed in its `Class-Path`.
+- **Registry:** an OCI registry (the OCI distribution API) that your cluster can reach and that accepts **Basic or Bearer-token** login from a
+  Docker-config Secret, with **tag immutability off** for the archive repository. Cloud credential helpers and workload identity (for example
+  ECR with IAM roles) are not supported yet. Archives can reach hundreds of MB, so check the registry's blob-size limit.
+- **Kubernetes:** `batch/v1` CronJobs (1.21 or newer) and the `coordination.k8s.io/v1` Lease API; tested only on 1.35.
+- **Your application's startup runs once more, for real, during training** (see [What it costs](#what-it-costs)).
 
 ## Configure it on a cluster
 
@@ -230,8 +233,10 @@ using the cache:
 3. Optionally delete the archives from the registry (tags `fp-<hex>` in the archive repository) and any Leases left behind
    (`kubectl -n $NS get lease | grep mnemo-warmup`; they expire on their own).
 
-## Limitations
+## Current scope
 
+- Alpha: command-line options, chart values and the manifest format may still change.
+- Verified in CI on a real Kubernetes cluster for JDK 21 (AppCDS) and JDK 25 (AOT); more applications and architectures are being added.
 - The tool needs **Java 21+ and `/bin/sh` in your application image**, and the JARs must be fixed at build time (step 1).
 - The first archive appears after the trainer's first run (up to one schedule interval, unless you start a job by hand).
 - Tested on **arm64 only**, with one small Spring Boot application, on JDK 21 and 25. Several trainers racing and private-registry login are untested.

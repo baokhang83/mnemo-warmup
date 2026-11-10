@@ -137,11 +137,13 @@ Maven coordinates: groupId `io.github.baokhang83.mnemo` (same as warden), artifa
 - [x] Example Spring Boot app, tested on kind with JDK 21 (AppCDS) and JDK 25 (AOT) (`examples/`, `scripts/e2e-kind.sh`)
 
 ### Phase 3: automation and ecosystem (v0.3.0)
-- [ ] Publish `warmup-core` to Maven Central so warden can depend on it
+- [x] Publish `warmup-core` to Maven Central so warden can depend on it (0.1.0, 0.2.0)
 - [ ] Investigate which JVM flags invalidate an archive (e.g. `SoftMaxHeapSize` vs `-Xmx`)
       and support multi-profile archives accordingly
 - [ ] Warden integration (implemented in the warden repo): inject the init container
 - [ ] Savings metrics exported (startup ms, RSS) for dashboards
+- [ ] Evidence: run it on many real applications (frameworks, sizes, JDKs, amd64 and arm64, private registries,
+      several replicas) and publish the results, including pod start to Ready, not only JVM startup
 - [ ] JDK 24 two-step AOT flow, only if users ask
 
 ### Later

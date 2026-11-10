@@ -51,7 +51,11 @@ die() { # <namespace> <message>
   echo "  FATAL: $2"; dump "$1"; failures=$((failures + 1)); summary; exit 1
 }
 
-summary() { if [ "$failures" -eq 0 ]; then echo "ALL OK"; else echo "$failures FAILED"; fi; }
+summary() {
+  if [ "$failures" -eq 0 ]; then echo "ALL OK"; return; fi
+  echo "$failures FAILED"
+  for n in "${JDKS[@]}"; do [ -f "$ARTIFACTS/dump-e2e-$n.txt" ] || dump "e2e-$n" 2>/dev/null || true; done
+}
 
 cleanup() {
   rm -rf "$WORK"
@@ -110,7 +114,25 @@ YAML
 
   # an aliased subchart names its resources after the alias, so find the CronJob by its release label
   cronjob() { k -n "$ns" get cronjob -l app.kubernetes.io/instance=ex -o name | head -1 | sed 's|.*/||'; }
-  app_pods() { k -n "$ns" get pods -l app=ex-app --field-selector=status.phase=Running -o name; }
+  # Running pods that are NOT being deleted. During a rollout the old pods stay phase Running while they terminate; picking
+  # one of them reads the previous generation's logs (no archive) and then fails to exec (found on the slower CI runner).
+  app_pods() {
+    k -n "$ns" get pods -l app=ex-app -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\t"}{.metadata.deletionTimestamp}{"\n"}{end}' \
+      | awk -F'\t' '$2 == "" { print "pod/" $1 }'
+  }
+  # waits until the rollout has fully replaced the old pods: only live, ready pods remain, as many as the replicas
+  settle() {
+    local want=2 i
+    for i in $(seq 1 90); do
+      if [ "$(k -n "$ns" get pods -l app=ex-app -o name | wc -l | tr -d ' ')" = "$want" ] \
+         && [ -z "$(k -n "$ns" get pods -l app=ex-app -o jsonpath='{.items[*].metadata.deletionTimestamp}')" ] \
+         && [ "$(k -n "$ns" get pods -l app=ex-app -o jsonpath='{.items[*].status.containerStatuses[*].ready}' | tr ' ' '\n' | grep -c true)" = "$want" ]; then
+        return 0
+      fi
+      sleep 2
+    done
+    die "$ns" "the rollout did not settle (old pods still terminating or new pods not ready)"
+  }
   # Prints the class-load line of the application's own class. It FAILS (and prints nothing) if the exec, the log or the
   # line is missing, so a check can never pass just because it could not look.
   source_line() { k -n "$ns" exec "$1" -c app -- grep -m1 "DemoApplication source:" /tmp/classload.log 2>/dev/null; }
@@ -141,7 +163,9 @@ YAML
   # ---- D. new pods use the archive ----
   k -n "$ns" rollout restart deploy/ex-app >/dev/null
   k -n "$ns" rollout status deploy/ex-app --timeout=300s >/dev/null 2>&1 || die "$ns" "the restarted Deployment did not become ready"
+  settle
   pod=$(app_pods | head -1)
+  [ -n "$pod" ] || die "$ns" "no live application pod after the restart"
   fetch_log=$(k -n "$ns" logs "$pod" -c mnemo-warmup-fetch 2>&1)
   if has "$fetch_log" "($expect_type)"; then ok "fetch found the $expect_type archive"; else fail "fetch log: $fetch_log"; fi
   app_log=$(k -n "$ns" logs "$pod" -c app 2>&1)
@@ -154,6 +178,7 @@ YAML
   # ---- E. a changed JVM option: still starts, uncached, with a reason ----
   helm --kube-context "$CTX" upgrade ex "$CHART" -n "$ns" -f "$ARTIFACTS.values-$n.yaml" -f "$ARTIFACTS.fallback-$n.yaml" --wait --timeout 6m >/dev/null 2>&1 \
     || die "$ns" "the Deployment with a changed JVM option did not become ready"
+  settle
   pod=$(app_pods | head -1)
   app_log=$(k -n "$ns" logs "$pod" -c app 2>&1)
   if has "$app_log" "run: archive does not match this launch"; then ok "a changed -Xmx falls back with a logged reason"; else fail "app log: $(grep 'run:' <<<"$app_log")"; fi

@@ -37,7 +37,7 @@ import picocli.CommandLine.Spec;
 @Command(
         name = "mnemo-warmup",
         mixinStandardHelpOptions = true,
-        version = "mnemo-warmup 0.1.0-SNAPSHOT",
+        versionProvider = Main.VersionProvider.class,
         description = "Build, validate and benchmark AppCDS / Leyden AOT caches.",
         subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class, Main.Fetch.class, Main.Run.class, Main.Train.class})
 public class Main implements Runnable {
@@ -48,6 +48,22 @@ public class Main implements Runnable {
     @Override
     public void run() {
         spec.commandLine().usage(spec.commandLine().getOut());
+    }
+
+    /**
+     * {@code --version} reports the version this jar was built as. The shaded jar's manifest carries it
+     * ({@code Implementation-Version}, stamped from the pom, so a release build reports the release). Outside a jar, for
+     * example in tests, there is no manifest and it says {@code dev}.
+     */
+    public static final class VersionProvider implements CommandLine.IVersionProvider {
+        @Override
+        public String[] getVersion() {
+            return new String[] {format(Main.class.getPackage().getImplementationVersion())};
+        }
+
+        static String format(String implementationVersion) {
+            return "mnemo-warmup " + (implementationVersion == null || implementationVersion.isBlank() ? "dev" : implementationVersion);
+        }
     }
 
     /** Options that describe the application and how to start and stop it; shared by build and bench. */

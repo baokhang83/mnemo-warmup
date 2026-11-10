@@ -47,6 +47,10 @@
               <transformers>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                   <mainClass>io.github.baokhang83.mnemo.warmup.cli.Main</mainClass>
+                  <manifestEntries>
+                    <!-- what the version option prints; it follows versions:set on a release -->
+                    <Implementation-Version>${project.version}</Implementation-Version>
+                  </manifestEntries>
                 </transformer>
               </transformers>
             </configuration>

@@ -73,6 +73,29 @@ class JarExtractorTest {
     }
 
     @Test
+    void theJarThatToolsExtractWritesIsAnExecutableJarNotAFatJar() throws IOException {
+        // what `java -Djarmode=tools -jar app.jar extract` really writes (checked on Spring Boot 3.5): the version attribute
+        // survives, the loader is gone, the application's Main-Class and a Class-Path to lib/ are added
+        Path extracted = jar("extracted.jar",
+                "Spring-Boot-Version", "3.5.16",
+                "Main-Class", "com.acme.DemoApplication",
+                "Class-Path", "lib/spring-boot-3.5.16.jar lib/spring-core-6.2.19.jar");
+        assertEquals(Kind.EXECUTABLE_JAR, JarExtractor.detect(extracted));
+
+        var app = new JarExtractor((cmd) -> { throw new AssertionError("an extracted JAR must not be extracted again"); })
+                .prepare(extracted, JdkInfo.current(), dir.resolve("never"));
+        assertEquals(Kind.EXECUTABLE_JAR, app.kind());
+        assertEquals(extracted.toAbsolutePath(), app.runnableJar());
+    }
+
+    @Test
+    void aFatJarIsRecognisedEvenWithAClassPathLessManifestOrTheLoaderAsMain() throws IOException {
+        assertEquals(Kind.SPRING_BOOT, JarExtractor.detect(jar("fat1.jar", "Spring-Boot-Version", "3.5.16", "Start-Class", "com.acme.DemoApplication")));
+        assertEquals(Kind.SPRING_BOOT, JarExtractor.detect(jar("fat2.jar",
+                "Main-Class", "org.springframework.boot.loader.launch.JarLauncher", "Class-Path", "ignored")));
+    }
+
+    @Test
     void otherJarsAreExecutableJars() throws IOException {
         assertEquals(Kind.EXECUTABLE_JAR, JarExtractor.detect(jar("c.jar", "Main-Class", "com.acme.Main")));
         assertEquals(Kind.EXECUTABLE_JAR, JarExtractor.detect(jar("d.jar")));

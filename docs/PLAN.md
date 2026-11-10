@@ -134,7 +134,7 @@ Maven coordinates: groupId `io.github.baokhang83.mnemo` (same as warden), artifa
 - [x] Archive store backend (open decision 1), including upload from trainer
 - [x] Container image (tools image, see `docs/adr/0004-tools-image.md`)
 - [x] Trainer CronJob, `train` command with a Lease, Helm chart with `cacheType` value (`docs/adr/0005-trainer-and-chart.md`)
-- [ ] Example Spring Boot app, tested on kind with JDK 21 (AppCDS) and JDK 25 (AOT)
+- [x] Example Spring Boot app, tested on kind with JDK 21 (AppCDS) and JDK 25 (AOT) (`examples/`, `scripts/e2e-kind.sh`)
 
 ### Phase 3: automation and ecosystem (v0.3.0)
 - [ ] Publish `warmup-core` to Maven Central so warden can depend on it

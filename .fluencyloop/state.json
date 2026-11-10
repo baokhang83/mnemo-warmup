@@ -1,9 +1,9 @@
 {
   "schema_version": "1",
-  "feature": "17-trainer-cronjob-train-command-with-lease-and-helm-chart",
-  "branch": "feature/17-trainer-cronjob-train-command-with-lease-and-helm-chart",
+  "feature": "18-example-spring-boot-app-example-chart-and-a-kind-end-to-e",
+  "branch": "feature/18-example-spring-boot-app-example-chart-and-a-kind-end-to-e",
   "stage": "build",
-  "last_session": "002-address-review-lease-ownership-expiry-repair-of-broken-e",
+  "last_session": "001-example-app-example-chart-kind-end-to-end-test-and-the-e",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

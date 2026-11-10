@@ -1,0 +1,12 @@
+apiVersion: v2
+name: example-app
+description: "An example workload chart: a Spring Boot Deployment that uses mnemo-warmup for its startup cache."
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: mnemo-warmup
+    version: 0.1.0
+    # while developing in this repository; use the published chart's repository in real use
+    repository: file://../../../deploy/helm/mnemo-warmup
+    alias: warmup

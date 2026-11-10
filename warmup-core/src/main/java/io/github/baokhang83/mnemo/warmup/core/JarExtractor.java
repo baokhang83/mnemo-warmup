@@ -99,8 +99,18 @@ public final class JarExtractor {
         return new ExtractedApp(Kind.SPRING_BOOT, findExtractedJar(destination));
     }
 
+    /**
+     * A Spring Boot FAT JAR: its Main-Class is the Spring loader, or it carries {@code Spring-Boot-Version} and no
+     * {@code Class-Path}. The second case matters: a fat JAR keeps its dependencies inside BOOT-INF, so it never has a
+     * Class-Path, whereas the JAR that {@code -Djarmode=tools extract} writes keeps {@code Spring-Boot-Version} but gets a
+     * Class-Path to its lib/ directory and the application's own Main-Class. That extracted JAR is exactly the layout
+     * ADR 0003 requires, so it must be an ordinary executable JAR here (found by the first real Spring Boot example).
+     */
     private static boolean isSpringBoot(Manifest manifest) {
-        return manifest != null && (manifestVersion(manifest) != null || launcher(manifest));
+        return manifest != null
+                && (launcher(manifest)
+                        || (manifestVersion(manifest) != null
+                                && manifest.getMainAttributes().getValue(Attributes.Name.CLASS_PATH) == null));
     }
 
     private static String manifestVersion(Manifest manifest) {

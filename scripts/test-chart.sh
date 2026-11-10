@@ -86,4 +86,17 @@ train_args=$(awk '/name: trainer/,/volumeMounts:/' <<<"$out" | grep -E -- '--(ja
 if [ "$fetch_args" = "$train_args" ] && [ -n "$fetch_args" ]; then ok "fetch and trainer share the same launch arguments"; else fail "fetch and trainer arguments differ"; diff <(echo "$fetch_args") <(echo "$train_args") || true; fi
 rm -rf "$PARENT/charts" "$PARENT/Chart.lock"
 
+echo "== example workload chart (examples/helm/example-app)"
+EXAMPLE=examples/helm/example-app
+helm dependency build "$EXAMPLE" >/dev/null 2>&1 || helm dependency update "$EXAMPLE" >/dev/null
+helm lint "$EXAMPLE" >/dev/null && ok "helm lint (example)" || fail "helm lint (example)"
+out=$(helm template ex "$EXAMPLE" -n default --set warmup.app.jvmArgs='{-Xmx512m}' --set 'javaOptions={-Xlog:gc}')
+validate "example chart" "$out"
+check "$out" "kind: Deployment" "example renders the workload"
+check "$out" "kind: CronJob" "example renders the trainer"
+check "$out" '"-Xmx512m"' "the Deployment's java command uses warmup.app.jvmArgs"
+check "$out" '"-Xlog:gc"' "javaOptions reach the java command"
+check "$out" '- "--jvm-arg=-Xmx512m"' "the same jvm args reach fetch and the trainer"
+rm -rf "$EXAMPLE/charts" "$EXAMPLE/Chart.lock"
+
 if [ "$failures" -eq 0 ]; then echo "ALL OK"; else echo "$failures FAILED"; exit 1; fi

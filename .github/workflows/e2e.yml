@@ -1,0 +1,40 @@
+name: e2e
+
+# The whole chain on a real cluster: trainer CronJob, Lease, fetch init container, run as PID 1, on JDK 21 (AppCDS)
+# and JDK 25 (AOT). It takes several minutes (it builds a Spring Boot image per JDK and starts a kind cluster), so it
+# runs on demand and when the pieces it exercises change on main.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'warmup-core/**'
+      - 'warmup-cli/**'
+      - 'image/**'
+      - 'deploy/helm/**'
+      - 'examples/**'
+      - 'scripts/e2e-kind.sh'
+      - '.github/workflows/e2e.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  kind:
+    name: kind end-to-end (JDK 21 and 25)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - uses: helm/kind-action@v1
+        with:
+          install_only: true
+      - run: scripts/e2e-kind.sh 21 25
+      - name: Collect logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: /tmp/mw-e2e-*

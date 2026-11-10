@@ -39,8 +39,43 @@ import picocli.CommandLine.Spec;
         mixinStandardHelpOptions = true,
         versionProvider = Main.VersionProvider.class,
         description = "Build, validate and benchmark AppCDS / Leyden AOT caches.",
-        subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class, Main.Fetch.class, Main.Run.class, Main.Train.class})
+        subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class, Main.Fetch.class, Main.Run.class, Main.Train.class, Main.Inject.class})
 public class Main implements Runnable {
+
+    @Command(name = "inject", mixinStandardHelpOptions = true,
+            description = "Transform rendered Kubernetes manifests from standard input.")
+    static class Inject implements Callable<Integer> {
+        @Spec CommandSpec spec;
+        @Option(names = "--preview", description = "Report discovered workloads without emitting manifests.")
+        boolean preview;
+        @Option(names = "--namespace", description = "Namespace for Deployments that omit metadata.namespace.")
+        String namespace;
+        @Option(names = "--tools-image", description = "Tools image for the generated init containers. Default: the image whose tag is this CLI's release version.")
+        String toolsImage;
+
+        @Override public Integer call() {
+            try {
+                var reader = new java.io.InputStreamReader(System.in, java.nio.charset.StandardCharsets.UTF_8);
+                StringBuilder input = new StringBuilder();
+                char[] buffer = new char[8192];
+                for (int n; (n = reader.read(buffer)) != -1;) input.append(buffer, 0, n);
+                var result = OfflineInjector.inject(input.toString(), namespace, () -> toolsImage != null ? toolsImage : OfflineInjector.defaultToolsImage());
+                if (preview) {
+                    result.notes().forEach(spec.commandLine().getOut()::println);
+                    if (result.notes().isEmpty()) spec.commandLine().getOut().println("No opted-in workloads.");
+                    ManifestDiff.describe(input.toString(), result.yaml()).forEach(spec.commandLine().getOut()::println);
+                } else {
+                    spec.commandLine().getOut().print(result.yaml());
+                    result.notes().forEach(n -> spec.commandLine().getErr().println("inject: " + n));
+                }
+                spec.commandLine().getOut().flush();
+                return 0;
+            } catch (java.io.IOException | IllegalArgumentException e) {
+                spec.commandLine().getErr().println("inject: " + e.getMessage());
+                return 2;
+            }
+        }
+    }
 
     @Spec
     CommandSpec spec;

@@ -13,6 +13,9 @@
 # Build from the repository root:  docker build -f image/Dockerfile -t mnemo-warmup-tools .
 
 FROM maven:3.9-eclipse-temurin-21 AS build
+# The release version (the image tag). Stamped into the jar so `mnemo-warmup --version` and the injector's default tools image
+# (ghcr.io/baokhang83/mnemo-warmup-tools:<this CLI's version>) agree with the tag the image is published under.
+ARG VERSION=dev
 WORKDIR /src
 COPY pom.xml ./
 COPY warmup-core/pom.xml warmup-core/
@@ -20,7 +23,8 @@ COPY warmup-cli/pom.xml warmup-cli/
 COPY coverage/pom.xml coverage/
 COPY warmup-core/src warmup-core/src
 COPY warmup-cli/src warmup-cli/src
-RUN mvn -B -ntp -q -pl warmup-cli -am -DskipTests -Djacoco.skip=true \
+RUN if [ "$VERSION" != dev ]; then mvn -B -ntp -q versions:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false; fi \
+ && mvn -B -ntp -q -pl warmup-cli -am -DskipTests -Djacoco.skip=true \
         -Dmaven.javadoc.skip=true -Dmaven.source.skip=true package
 
 # busybox gives the init-container pattern `cp` and the wrapper its `sh`; it is about 4 MB.

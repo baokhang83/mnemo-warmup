@@ -1,9 +1,9 @@
 {
   "schema_version": "1",
-  "feature": "54-design-a-discoverable-reversible-injection-contract",
-  "branch": "feature/54-design-a-discoverable-reversible-injection-contract",
+  "feature": "55-implement-offline-workload-injection-and-reviewable-previ",
+  "branch": "feature/55-implement-offline-workload-injection-and-reviewable-previ",
   "stage": "build",
-  "last_session": "001-define-offline-injection-and-reconciliation-contract",
+  "last_session": "010-verify-on-a-real-cluster-derive-the-tools-image-from-the",
   "base_ref": "chore/disable-sigterm-e2e-test",
   "feature_dir": "",
   "plan": "v0-2-5-simplify-workload-adoption-with-offline-injection-clo",

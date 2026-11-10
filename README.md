@@ -32,7 +32,7 @@ Built for services whose pods start often: frequent deployments, autoscaling sca
 
 
 <div align="center">
-  <img width="1114" height="627" alt="image" src="https://github.com/user-attachments/assets/6e775dcb-7c3f-42ec-8e26-cc7403750373" />
+  <img width="557" height="313" alt="How mnemo-warmup works: a trainer CronJob fills the registry, every pod fetches and validates the archive" src="https://github.com/user-attachments/assets/6e775dcb-7c3f-42ec-8e26-cc7403750373" />
 </div>
 
 - A **fingerprint** identifies what an archive is valid for: the JDK build, the classpath JAR contents, and the heap and GC options.

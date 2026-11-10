@@ -76,7 +76,8 @@ Components:
 - **core** (Java 21+): JDK detection, cache type selection, fat-JAR extraction, training
   runner, fingerprint and manifest, bench.
 - **cli**: `build`, `bench`, `fetch`, `run`.
-- **image**: container image bundling the CLI, used as init container and trainer.
+- **image**: JDK-free tools image carrying the CLI, launcher and exec wrapper into the application
+  image (`docs/adr/0004-tools-image.md`); the tool runs inside the app image.
 - **deploy/helm**: chart adding the init container, volume and trainer Job.
 - **Injection into workloads:** lives in `mnemo-jvm-warden` (see below), not in this repo.
 
@@ -131,7 +132,8 @@ Maven coordinates: groupId `io.github.baokhang83.mnemo` (same as warden), artifa
       emptyDir; try AOT, then AppCDS, then give up cleanly
 - [x] `mnemo-warmup run` (entrypoint): validate manifest, add archive flag or fall back
 - [x] Archive store backend (open decision 1), including upload from trainer
-- [ ] Container image, trainer Job template, Helm chart with `cacheType` value
+- [x] Container image (tools image, see `docs/adr/0004-tools-image.md`)
+- [ ] Trainer CronJob template, Helm chart with `cacheType` value
 - [ ] Example Spring Boot app, tested on kind with JDK 21 (AppCDS) and JDK 25 (AOT)
 
 ### Phase 3: automation and ecosystem (v0.3.0)

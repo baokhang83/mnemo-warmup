@@ -16,8 +16,8 @@ init container, and fall back to a normal start whenever the cache doesn't match
 > **Status: pre-alpha.** The whole pod-side chain works from the command line: `build` trains an
 > archive, `push` stores it in an OCI registry, `fetch` (init container) retrieves and verifies it,
 > and `run` (entrypoint) starts the JVM with it only if it still fits. `bench` measures the savings.
-> The container image, the trainer CronJob, the Helm chart and an end-to-end example are not
-> built yet. See the [roadmap](#roadmap) and the [project plan](docs/PLAN.md). Part of the Mnemo
+> A tools image carries the CLI into your application image. The trainer CronJob, the Helm chart
+> and a cluster end-to-end example are not built yet. See the [roadmap](#roadmap) and the [project plan](docs/PLAN.md). Part of the Mnemo
 > suite (`mnemo-jvm-warden`, `mnemo-cache`, `mnemo-warmup`).
 
 ---
@@ -57,7 +57,7 @@ creation since JDK 25, JEP 514). Almost nobody runs them in production, because:
                          (a plain start if nothing fits)
 ```
 
-Solid today: `build`, `push`, `fetch`, `run`. Planned: the image, the trainer CronJob and the Helm chart
+Solid today: `build`, `push`, `fetch`, `run` and the tools image. Planned: the trainer CronJob and the Helm chart
 (a Helm *hook* was rejected because a failing trainer would fail the release; see
 [ADR 0002](docs/adr/0002-training-trigger-and-traffic.md)).
 
@@ -217,6 +217,43 @@ starts it plain. See [ADR 0003](docs/adr/0003-run-exec-model-and-layout.md).
 `run` options: `--cache-dir` (default `$MNEMO_WARMUP_CACHE_DIR`, then `.mnemo-warmup/cache`),
 `--image-digest` (default `$MNEMO_WARMUP_IMAGE_DIGEST`), `--print`, `--spawn`, `--stop-timeout-seconds`.
 
+## Container image
+
+The tool has to run **inside your application image**, because an archive is only valid for that
+image's JDK build, JAR files, paths and modification times. So the published image
+`ghcr.io/baokhang83/mnemo-warmup-tools:<version>` (about 7 MB, amd64 and arm64) contains no JDK; it only
+carries `/opt/mnemo-warmup/mnemo-warmup.jar`, a launcher `bin/mnemo-warmup` and the exec wrapper
+`bin/mnemo-warmup-exec`. Your application image needs Java 21 or newer.
+
+Bake it into your image:
+
+```dockerfile
+COPY --from=ghcr.io/baokhang83/mnemo-warmup-tools:0.2.0 /opt/mnemo-warmup /opt/mnemo-warmup
+ENTRYPOINT ["/opt/mnemo-warmup/bin/mnemo-warmup-exec"]
+CMD ["java", "-jar", "/app/app.jar"]
+```
+
+or copy it at deploy time with an init container (what the Helm chart will do):
+
+```yaml
+initContainers:
+  - name: mnemo-warmup-install
+    image: ghcr.io/baokhang83/mnemo-warmup-tools:0.2.0
+    command: ["cp", "-a", "/opt/mnemo-warmup/.", "/mnemo-tools/"]
+    volumeMounts: [{ name: mnemo-tools, mountPath: /mnemo-tools }]
+  - name: mnemo-warmup-fetch
+    image: my-app:1.0            # the application image itself
+    command: ["java", "-jar", "/mnemo-tools/mnemo-warmup.jar", "fetch", "--jar", "/app/app.jar",
+              "--store", "oci://registry.example.com/team/warmup", "--out", "/mnemo-cache"]
+    volumeMounts: [{ name: mnemo-tools, mountPath: /mnemo-tools }, { name: mnemo-cache, mountPath: /mnemo-cache }]
+```
+
+If the image has no Java, or one older than 21, `fetch` and `run` through the launcher skip themselves
+and exit 0, so the pod still starts. Build it locally with
+`docker build -f image/Dockerfile -t mnemo-warmup-tools .`, and check the whole chain in Docker with
+`scripts/verify-image.sh` (a local registry, JDK 21 with AppCDS and JDK 25 with AOT).
+See [ADR 0004](docs/adr/0004-tools-image.md).
+
 ## The manifest and fingerprint
 
 `build` writes `mnemo-warmup.manifest.json` next to the archive. It records what the archive
@@ -252,8 +289,7 @@ longer matches. The manifest also stores the archive's size and SHA-256.
 - `warmup-core` is on [Maven Central](https://central.sonatype.com/artifact/io.github.baokhang83.mnemo/warmup-core)
   as `io.github.baokhang83.mnemo:warmup-core`.
 
-Not there yet: the container image, the trainer CronJob, the Helm chart, and an end-to-end test on a
-real cluster (see the [roadmap](#roadmap)).
+Not there yet: the trainer CronJob, the Helm chart, and an end-to-end test on a real cluster (see the [roadmap](#roadmap)).
 
 ## Limitations
 
@@ -292,13 +328,13 @@ call it as `mnemo-warmup`.
 warmup-core/   engine: JDK detection, extraction, training, manifest, OCI store, fetch/run logic
 warmup-cli/    command-line interface (picocli): build, bench, push, fetch, run
 coverage/      aggregates JaCoCo coverage for the badge (not published)
-scripts/       mnemo-warmup-exec entrypoint wrapper; Docker checks used for the AppCDS matrix
+image/         Dockerfile and launcher of the tools image
+scripts/       mnemo-warmup-exec wrapper, verify-image.sh, Docker checks for the AppCDS matrix
 docs/PLAN.md   design, decisions and roadmap
 docs/adr/      decisions: archive store, training trigger, run/exec model
 ```
 
-Planned: `image/` (init-container and trainer image), `deploy/helm/` (chart) and
-`examples/` (sample Spring Boot app).
+Planned: `deploy/helm/` (chart) and `examples/` (sample Spring Boot app).
 
 ## Roadmap
 
@@ -314,7 +350,7 @@ Planned: `image/` (init-container and trainer image), `deploy/helm/` (chart) and
 - [x] Decisions: archive store (OCI), training trigger (CronJob + Lease), run/exec model
 - [x] Archive store backend with `push`
 - [x] `fetch` (init container) and `run` (entrypoint)
-- [ ] Container image for the init container and trainer
+- [x] Tools image (JDK-free, runs inside the application image), checked end to end in Docker
 - [ ] Trainer CronJob and Helm chart
 - [ ] Example app tested on kind with JDK 21 and JDK 25
 

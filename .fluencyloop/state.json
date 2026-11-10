@@ -1,9 +1,9 @@
 {
   "schema_version": "1",
-  "feature": "14-run-command-validate-the-fetched-manifest-against-the-liv",
-  "branch": "feature/14-run-command-validate-the-fetched-manifest-against-the-liv",
+  "feature": "16-tools-image-jdk-free-container-image-with-the-cli-launche",
+  "branch": "feature/16-tools-image-jdk-free-container-image-with-the-cli-launche",
   "stage": "build",
-  "last_session": "003-fix-lost-sigterm-race-in-run-spawn",
+  "last_session": "001-tools-image-launcher-guards-image-workflow-and-docker-en",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

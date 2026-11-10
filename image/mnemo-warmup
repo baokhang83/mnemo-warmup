@@ -1,0 +1,24 @@
+#!/bin/sh
+# Launcher: runs the mnemo-warmup CLI with the `java` of the image this is executed in.
+#
+# Needs Java 21+ in that image. With an older Java, `fetch` and `run` skip themselves and exit 0
+# (an init container or entrypoint wrapper must never stop the application over an optimisation);
+# any other command fails with exit 2.
+
+dir=$(cd "$(dirname "$0")" && pwd)
+
+if ! command -v java >/dev/null 2>&1; then
+  echo "mnemo-warmup: no 'java' on PATH; run this inside the application image (Java 21+)" >&2
+  case "$1" in fetch | run) exit 0 ;; esac
+  exit 127
+fi
+
+# "Picked up JAVA_TOOL_OPTIONS" can come first on stderr, so look for the version line itself.
+major=$(java -version 2>&1 | sed -n 's/.* version "\([0-9]*\).*/\1/p' | head -n 1)
+if [ -z "$major" ] || [ "$major" -lt 21 ]; then
+  echo "mnemo-warmup: needs Java 21+ in this image (found ${major:-unknown}); skipping" >&2
+  case "$1" in fetch | run) exit 0 ;; esac
+  exit 2
+fi
+
+exec java -jar "$dir/../mnemo-warmup.jar" "$@"

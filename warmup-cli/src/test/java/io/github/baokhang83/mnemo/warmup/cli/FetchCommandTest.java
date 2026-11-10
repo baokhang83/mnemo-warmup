@@ -93,6 +93,71 @@ class FetchCommandTest {
     }
 
     @Test
+    void optionParseErrorsStillFailOpenAndClearStaleFlags() throws Exception {
+        for (String[] bad : new String[][] {
+            {"--store-timeout-seconds=abc"}, {"--no-such-option"}, {"--store"}
+        }) {
+            Path out = dir.resolve("cache-" + Math.abs(java.util.Arrays.hashCode(bad)));
+            Path flags = staleFlags(out);
+            String[] args = new String[bad.length + 3];
+            args[0] = "fetch";
+            System.arraycopy(bad, 0, args, 1, bad.length);
+            args[bad.length + 1] = "--out";
+            args[bad.length + 2] = out.toString();
+            Result r = run(args);
+            assertEquals(0, r.exit(), String.join(" ", bad) + ": " + r.err());
+            assertTrue(r.err().contains("continuing without an archive"), r.err());
+            assertFalse(Files.exists(flags), String.join(" ", bad) + ": stale flags must be gone");
+        }
+    }
+
+    @Test
+    void strictStillFailsOnOptionParseErrors() {
+        Result r = run("fetch", "--strict", "--no-such-option", "--out", dir.resolve("cache").toString());
+        assertEquals(2, r.exit());
+    }
+
+    @Test
+    void otherCommandsKeepPicocliParseErrorHandling() {
+        Result r = run("push", "--no-such-option");
+        assertEquals(2, r.exit());
+    }
+
+    @Test
+    void consecutiveFetchesWithTheSameWorkDirBothReachTheStoreAndLeaveNoScratch() throws Exception {
+        Path work = dir.resolve("w");
+        String[] args = {
+            "fetch", "--java-home", HOME, "--jar", jar().toString(), "--work-dir", work.toString(),
+            "--store", "oci://127.0.0.1:1/x/y", "--plain-http", "--store-timeout-seconds", "2", "--out", dir.resolve("cache").toString()
+        };
+        for (int i = 0; i < 2; i++) {
+            Result r = run(args);
+            assertEquals(0, r.exit(), r.err());
+            assertTrue(r.err().contains("Cannot reach registry"), "run " + i + ": " + r.err());
+        }
+        try (var files = Files.list(work)) {
+            assertEquals(0, files.count(), "scratch directories must be removed");
+        }
+    }
+
+    /** Needs {@code -Dwarmup.test.springBootJar=/path/to/app.jar} (Spring Boot 3.3+); no registry required. */
+    @Test
+    void aSpringBootFatJarCanBeFetchedTwiceWithTheSameWorkDir() {
+        String jar = System.getProperty("warmup.test.springBootJar");
+        assumeTrue(jar != null && !jar.isBlank(), "set -Dwarmup.test.springBootJar to run");
+        Path work = dir.resolve("w");
+        String[] args = {
+            "fetch", "--java-home", HOME, "--jar", jar, "--work-dir", work.toString(),
+            "--store", "oci://127.0.0.1:1/x/y", "--plain-http", "--store-timeout-seconds", "2", "--out", dir.resolve("cache").toString()
+        };
+        for (int i = 0; i < 2; i++) {
+            Result r = run(args);
+            assertEquals(0, r.exit(), r.err());
+            assertTrue(r.err().contains("Cannot reach registry"), "run " + i + " must reach the store: " + r.err());
+        }
+    }
+
+    @Test
     void aMalformedStoreExitsZero() throws Exception {
         Result r = run("fetch", "--java-home", HOME, "--jar", jar().toString(), "--work-dir", dir.resolve("w").toString(),
                 "--store", "registry.example.com/x", "--out", dir.resolve("cache").toString());

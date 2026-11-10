@@ -305,10 +305,25 @@ public class Main implements Runnable {
                 }
                 JdkInfo jdk = JdkInfo.detect(opts.javaHome, System.getenv());
                 List<CacheStrategy> order = candidates(jdk);
-                var app = new JarExtractor().prepare(opts.jar, jdk, opts.workDir.resolve("app"));
+                // Extraction (needed to hash a Spring Boot fat JAR's libraries) goes to a fresh directory every
+                // time, because JarExtractor refuses a non-empty destination and fetch must be repeatable,
+                // for example after an init container restart on a shared volume. The fingerprint uses entry
+                // names and content, never the extraction path.
+                Path scratch;
+                try {
+                    Files.createDirectories(opts.workDir);
+                    scratch = Files.createTempDirectory(opts.workDir, "fetch-");
+                } catch (java.io.IOException io) {
+                    throw new IllegalStateException("Cannot create scratch space in " + opts.workDir + ": " + io.getMessage(), io);
+                }
                 List<ArchiveManifest> live = new ArrayList<>();
-                for (CacheStrategy strategy : order) {
-                    live.add(ArchiveManifest.describe(app, jdk, strategy, opts.jvmArgs, System.getenv(), imageDigest));
+                try {
+                    var app = new JarExtractor().prepare(opts.jar, jdk, scratch.resolve("app"));
+                    for (CacheStrategy strategy : order) {
+                        live.add(ArchiveManifest.describe(app, jdk, strategy, opts.jvmArgs, System.getenv(), imageDigest));
+                    }
+                } finally {
+                    deleteTree(scratch);
                 }
                 var archiveStore = openStore(store, registryAuth, plainHttp, storeTimeoutSeconds);
                 var result = new ArchiveFetcher().fetch(archiveStore, live, out);
@@ -325,6 +340,48 @@ public class Main implements Runnable {
             } catch (RuntimeException ex) {
                 return fail(e, "warning: " + ex.getMessage(), 1);
             }
+        }
+
+        private static void deleteTree(Path root) {
+            try (var paths = Files.walk(root)) {
+                paths.sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
+            } catch (java.io.IOException | RuntimeException ignored) {
+                // best effort: the directory is scratch space
+            }
+        }
+
+        /**
+         * Picocli rejects bad options before call() runs, so this is the fail-open path for them: it
+         * withdraws any stale flags (best effort, from --out if it can be found) and exits 0 unless
+         * --strict was given.
+         */
+        static int failOpenOnParseError(CommandLine.ParameterException ex, String[] args) {
+            var err = ex.getCommandLine().getErr();
+            boolean strict = java.util.Arrays.asList(args).contains("--strict");
+            err.println("warning: " + ex.getMessage());
+            Path outDir = Path.of(".mnemo-warmup/cache");
+            for (int i = 0; i < args.length; i++) {
+                if (args[i].equals("--out") && i + 1 < args.length) {
+                    outDir = Path.of(args[i + 1]);
+                } else if (args[i].startsWith("--out=")) {
+                    outDir = Path.of(args[i].substring("--out=".length()));
+                }
+            }
+            try {
+                ArchiveFetcher.clear(outDir);
+            } catch (RuntimeException clearFailure) {
+                err.println("warning: " + clearFailure.getMessage());
+            }
+            err.println("fetch: continuing without an archive" + (strict ? " (--strict: failing)" : ""));
+            return strict ? 2 : 0;
+        }
+
+        static int failOpenOnUnexpectedError(Exception ex, CommandLine commandLine) {
+            var err = commandLine.getErr();
+            boolean strict = commandLine.getCommand() instanceof Fetch f && f.strict;
+            err.println("warning: unexpected error: " + ex);
+            err.println("fetch: continuing without an archive" + (strict ? " (--strict: failing)" : ""));
+            return strict ? 1 : 0;
         }
 
         private List<CacheStrategy> candidates(JdkInfo jdk) {
@@ -437,7 +494,17 @@ public class Main implements Runnable {
     }
 
     static CommandLine commandLine() {
-        return new CommandLine(new Main());
+        var cmd = new CommandLine(new Main());
+        // fetch runs as an init container: a bad option or an unexpected error must not stop the pod (§3).
+        var defaultParseHandler = cmd.getParameterExceptionHandler();
+        cmd.setParameterExceptionHandler((ex, args) -> "fetch".equals(ex.getCommandLine().getCommandName())
+                ? Fetch.failOpenOnParseError(ex, args)
+                : defaultParseHandler.handleParseException(ex, args));
+        var defaultExecutionHandler = cmd.getExecutionExceptionHandler();
+        cmd.setExecutionExceptionHandler((ex, commandLine, parseResult) -> "fetch".equals(commandLine.getCommandName())
+                ? Fetch.failOpenOnUnexpectedError(ex, commandLine)
+                : defaultExecutionHandler.handleExecutionException(ex, commandLine, parseResult));
+        return cmd;
     }
 
     public static void main(String[] args) {

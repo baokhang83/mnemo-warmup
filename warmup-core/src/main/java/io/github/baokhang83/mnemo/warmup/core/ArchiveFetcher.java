@@ -34,15 +34,30 @@ public final class ArchiveFetcher {
             Outcome outcome, String fingerprint, CacheStrategy cacheType, Path archive, Path flagsFile, List<String> notes) {}
 
     /**
-     * Removes what a previous fetch left, so a miss can never leave stale flags that point at an old
-     * archive. Call it before anything that can fail.
+     * Withdraws what a previous fetch published, so a miss can never leave flags that point at an old
+     * archive. The flags file is the only thing the JVM launch reads, so it goes first: if it cannot
+     * be deleted it is emptied, and an empty flags file means "run plain". If neither works the
+     * exception says so, and the caller must treat the output directory as unreliable (the consumer's
+     * own manifest check, and the JVM's refusal of a mismatched archive, are then the only guard).
      */
     public static void clear(Path outDir) {
+        Path flags = outDir.resolve(FLAGS_FILE);
         try {
-            Files.deleteIfExists(outDir.resolve(FLAGS_FILE));
+            Files.deleteIfExists(flags);
+        } catch (IOException deleteFailure) {
+            try {
+                Files.writeString(flags, "", StandardCharsets.UTF_8);
+            } catch (IOException truncateFailure) {
+                throw new StoreException(
+                        "Cannot remove or empty the stale " + flags + " (" + deleteFailure.getMessage()
+                                + "); an old archive may still be referenced",
+                        deleteFailure);
+            }
+        }
+        try {
             Files.deleteIfExists(outDir.resolve(ArchiveManifest.FILE_NAME));
         } catch (IOException e) {
-            throw new StoreException("Cannot clear stale files in " + outDir + ": " + e.getMessage(), e);
+            throw new StoreException("Cannot remove the stale manifest in " + outDir + ": " + e.getMessage(), e);
         }
     }
 
@@ -56,6 +71,20 @@ public final class ArchiveFetcher {
             throw new StoreException("Cannot create " + outDir + ": " + e.getMessage(), e);
         }
         clear(outDir);
+        try {
+            return lookUp(store, candidates, outDir);
+        } catch (RuntimeException e) {
+            // Whatever failed, never leave a flags file behind that the app would act on.
+            try {
+                clear(outDir);
+            } catch (RuntimeException suppressed) {
+                e.addSuppressed(suppressed);
+            }
+            throw e;
+        }
+    }
+
+    private Result lookUp(ArchiveStore store, List<ArchiveManifest> candidates, Path outDir) {
         List<String> notes = new ArrayList<>();
         for (ArchiveManifest live : candidates) {
             String fingerprint = live.fingerprint();
@@ -77,8 +106,10 @@ public final class ArchiveFetcher {
                 notes.add(live.cacheType() + ": stored manifest does not match this environment: " + problems);
                 continue;
             }
-            Path flags = write(outDir, FLAGS_FILE, live.cacheType().runtimeFlag(hit.archiveFile().toAbsolutePath().toString()) + "\n");
+            // The flags file is the commit point: it is written last, so every other file is in place
+            // before anything can act on it.
             write(outDir, ArchiveManifest.FILE_NAME, hit.manifest().toJson());
+            Path flags = write(outDir, FLAGS_FILE, live.cacheType().runtimeFlag(hit.archiveFile().toAbsolutePath().toString()) + "\n");
             return new Result(Outcome.HIT, fingerprint, live.cacheType(), hit.archiveFile(), flags, notes);
         }
         return new Result(Outcome.MISS, null, null, null, null, notes);

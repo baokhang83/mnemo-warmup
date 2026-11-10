@@ -3,7 +3,7 @@
   "feature": "13-fetch-command-init-container-looks-up-verifies-and-writes",
   "branch": "feature/13-fetch-command-init-container-looks-up-verifies-and-writes",
   "stage": "build",
-  "last_session": "001-archivefetcher-and-the-fetch-command",
+  "last_session": "002-address-review-repeatable-extraction-parse-errors-flags",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

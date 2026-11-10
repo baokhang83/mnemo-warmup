@@ -3,7 +3,9 @@ package io.github.baokhang83.mnemo.warmup.core;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -192,6 +194,83 @@ class ArchiveFetcherTest {
             try (var files = Files.list(out)) {
                 assertEquals(0, files.count());
             }
+        }
+    }
+
+    /** A store that writes the archive and then makes the output directory read-only, as a full or broken volume would. */
+    private static final class LockingStore implements ArchiveStore {
+        final ArchiveManifest manifest;
+
+        LockingStore(ArchiveManifest manifest) {
+            this.manifest = manifest;
+        }
+
+        @Override
+        public boolean exists(String fingerprint) {
+            return true;
+        }
+
+        @Override
+        public void put(ArchiveManifest m, Path archiveFile) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Optional<StoredArchive> get(String fingerprint, Path targetDir) {
+            try {
+                Path file = Files.writeString(targetDir.resolve("app.bin"), "x");
+                targetDir.toFile().setWritable(false);
+                return Optional.of(new StoredArchive(manifest, file));
+            } catch (IOException e) {
+                throw new StoreException(e.getMessage(), e);
+            }
+        }
+    }
+
+    @Test
+    void ifPublishingFailsAfterTheDownloadNoFlagsFileIsLeftBehind() throws Exception {
+        ArchiveManifest wanted = live(CacheStrategy.APP_CDS);
+        ArchiveManifest stored = wanted.withArchive(Files.writeString(tmp.resolve("x.bin"), "x"));
+        Path out = Files.createDirectories(tmp.resolve("out"));
+        try {
+            var thrown = assertThrows(
+                    StoreException.class, () -> new ArchiveFetcher().fetch(new LockingStore(stored), List.of(wanted), out));
+            assumeTrue(!Files.isWritable(out), "needs a non-root user so a read-only directory rejects writes");
+            assertTrue(thrown.getMessage().contains("Cannot write"), thrown.getMessage());
+            assertFalse(Files.exists(out.resolve(ArchiveFetcher.FLAGS_FILE)), "flags are the last thing written");
+        } finally {
+            out.toFile().setWritable(true);
+        }
+    }
+
+    @Test
+    void staleFlagsThatCannotBeDeletedAreEmptiedSoTheyMeanRunPlain() throws Exception {
+        Path out = Files.createDirectories(tmp.resolve("out"));
+        Path flags = Files.writeString(out.resolve(ArchiveFetcher.FLAGS_FILE), "-XX:SharedArchiveFile=/stale.jsa\n");
+        try {
+            out.toFile().setWritable(false);
+            assumeTrue(!Files.isWritable(out), "needs a non-root user so a read-only directory rejects deletes");
+            ArchiveFetcher.clear(out);
+            // the manifest delete is a no-op here (absent); the flags must no longer name an archive
+            assertEquals("", Files.readString(flags));
+        } finally {
+            out.toFile().setWritable(true);
+        }
+    }
+
+    @Test
+    void ifStaleFlagsCanNeitherBeDeletedNorEmptiedTheFailureIsReported() throws Exception {
+        Path out = Files.createDirectories(tmp.resolve("out"));
+        Path flags = Files.writeString(out.resolve(ArchiveFetcher.FLAGS_FILE), "-XX:SharedArchiveFile=/stale.jsa\n");
+        try {
+            out.toFile().setWritable(false);
+            flags.toFile().setWritable(false);
+            assumeTrue(!Files.isWritable(flags), "needs a non-root user");
+            var ex = assertThrows(StoreException.class, () -> ArchiveFetcher.clear(out));
+            assertTrue(ex.getMessage().contains("old archive may still be referenced"), ex.getMessage());
+        } finally {
+            out.toFile().setWritable(true);
+            flags.toFile().setWritable(true);
         }
     }
 }

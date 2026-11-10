@@ -1,0 +1,8 @@
+replicas: 2
+warmup:
+  app:
+    image: { repository: my-app, tag: "1.0" }
+    jar: /app/app.jar
+    jvmArgs: ["-Xmx512m"]
+  store:
+    url: oci://registry.example.com/team/warmup

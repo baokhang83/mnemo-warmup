@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-app
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels: { app: {{ .Release.Name }}-app }
+  template:
+    metadata:
+      labels: { app: {{ .Release.Name }}-app }
+    spec:
+      volumes:
+        {{- include "mnemo-warmup.volumes" .Values.warmup | nindent 8 }}
+      initContainers:
+        {{- include "mnemo-warmup.installInitContainer" .Values.warmup | nindent 8 }}
+        {{- include "mnemo-warmup.fetchInitContainer" .Values.warmup | nindent 8 }}
+      containers:
+        - name: app
+          image: {{ include "mnemo-warmup.appImage" .Values.warmup | quote }}
+          command: {{ include "mnemo-warmup.command" .Values.warmup }}
+          args: ["java", "-Xmx512m", "-jar", "/app/app.jar"]
+          env:
+            {{- include "mnemo-warmup.env" .Values.warmup | nindent 12 }}
+          volumeMounts:
+            {{- include "mnemo-warmup.volumeMounts" .Values.warmup | nindent 12 }}

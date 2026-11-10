@@ -1,0 +1,10 @@
+apiVersion: v2
+name: parent
+description: "Test fixture, also the shape of examples/: a workload chart that uses mnemo-warmup as an aliased dependency."
+type: application
+version: 0.1.0
+dependencies:
+  - name: mnemo-warmup
+    version: 0.1.0
+    repository: file://../../mnemo-warmup
+    alias: warmup

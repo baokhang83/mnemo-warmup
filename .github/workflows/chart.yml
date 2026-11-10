@@ -1,0 +1,25 @@
+name: chart
+
+# Lints and renders the Helm chart with several value sets and the parent-chart fixture (scripts/test-chart.sh).
+# No cluster is needed; set KUBE_CONTEXT locally to also have a cluster's API server validate the manifests.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'deploy/helm/**'
+      - 'scripts/test-chart.sh'
+      - '.github/workflows/chart.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  chart:
+    name: helm lint and render
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: scripts/test-chart.sh

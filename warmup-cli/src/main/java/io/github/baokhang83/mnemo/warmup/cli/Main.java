@@ -13,7 +13,10 @@ import io.github.baokhang83.mnemo.warmup.core.JarExtractor;
 import io.github.baokhang83.mnemo.warmup.core.JdkInfo;
 import io.github.baokhang83.mnemo.warmup.core.OciArchiveStore;
 import io.github.baokhang83.mnemo.warmup.core.RegistryCredentials;
+import io.github.baokhang83.mnemo.warmup.core.KubernetesLeaseLock;
 import io.github.baokhang83.mnemo.warmup.core.RunPlanner;
+import io.github.baokhang83.mnemo.warmup.core.TrainingLock;
+import io.github.baokhang83.mnemo.warmup.core.TrainingOrchestrator;
 import io.github.baokhang83.mnemo.warmup.core.StoreException;
 import io.github.baokhang83.mnemo.warmup.core.TrainingException;
 import java.net.URI;
@@ -36,7 +39,7 @@ import picocli.CommandLine.Spec;
         mixinStandardHelpOptions = true,
         version = "mnemo-warmup 0.1.0-SNAPSHOT",
         description = "Build, validate and benchmark AppCDS / Leyden AOT caches.",
-        subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class, Main.Fetch.class, Main.Run.class})
+        subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class, Main.Fetch.class, Main.Run.class, Main.Train.class})
 public class Main implements Runnable {
 
     @Spec
@@ -548,6 +551,104 @@ public class Main implements Runnable {
             List<String> original = List.of(args).subList(dashes + 1, args.length);
             boolean print = java.util.Arrays.asList(args).subList(0, dashes).contains("--print");
             return launch(cmd, original, print, Duration.ofSeconds(25));
+        }
+    }
+
+    @Command(name = "train",
+            mixinStandardHelpOptions = true,
+            description = "Trainer (a CronJob in the application image): if the store has no archive for this launch, "
+                    + "take a lock, train one and upload it. Exits 0 for every outcome, including failures: the next scheduled run retries.")
+    static class Train implements Callable<Integer> {
+
+        @Spec
+        CommandSpec spec;
+
+        @Mixin
+        AppOptions opts;
+
+        @Option(names = "--store", required = true, description = "Archive store: oci://host[:port]/repository.")
+        String store;
+
+        @Option(names = "--cache-type", defaultValue = "auto", description = "auto, appcds or aot. Default: ${DEFAULT-VALUE}.")
+        String cacheType;
+
+        @Option(names = "--image-digest", description = "Container image digest; the same value fetch and run use.")
+        String imageDigest;
+
+        @Option(names = "--registry-auth", description = "Docker-config style JSON with the registry login (push scope). "
+                + "Defaults to $MNEMO_WARMUP_REGISTRY_AUTH, then anonymous.")
+        Path registryAuth;
+
+        @Option(names = "--plain-http", description = "Talk to the registry over http instead of https (local registries only).")
+        boolean plainHttp;
+
+        @Option(names = "--store-timeout-seconds", defaultValue = "1800", description = "Per registry request. Default: ${DEFAULT-VALUE}.")
+        long storeTimeoutSeconds;
+
+        @Option(names = "--lock", defaultValue = "lease", description = "lease (a Kubernetes Lease named after the fingerprint) or none. Default: ${DEFAULT-VALUE}.")
+        String lock;
+
+        @Option(names = "--lease-seconds", defaultValue = "1800", description = "How long a crashed trainer's lease blocks others. Default: ${DEFAULT-VALUE}.")
+        long leaseSeconds;
+
+        @Option(names = "--strict", description = "Exit 1 when the outcome is a failure. For CI and debugging.")
+        boolean strict;
+
+        @Override
+        public Integer call() {
+            var out = spec.commandLine().getOut();
+            var err = spec.commandLine().getErr();
+            try {
+                if (opts.jar == null) {
+                    throw new IllegalArgumentException("train needs --jar");
+                }
+                if (leaseSeconds < 3 || storeTimeoutSeconds <= 0 || opts.timeoutSeconds <= 0) {
+                    throw new IllegalArgumentException("--lease-seconds must be at least 3 and the timeouts positive");
+                }
+                if (!lock.equals("lease") && !lock.equals("none")) {
+                    throw new IllegalArgumentException("--lock must be lease or none");
+                }
+                JdkInfo jdk = JdkInfo.detect(opts.javaHome, System.getenv());
+                CacheStrategy strategy = CacheType.parse(cacheType).resolve(jdk);
+                if (JarExtractor.detect(opts.jar) == JarExtractor.Kind.SPRING_BOOT) {
+                    throw new IllegalArgumentException("train needs the extracted layout: extract the Spring Boot JAR at image build time "
+                            + "(java -Djarmode=tools -jar app.jar extract) so the trainer and the app run the same files (ADR 0003)");
+                }
+                var probe = opts.url == null
+                        ? null
+                        : new HttpProbeExitMode.Settings(
+                                opts.url, Duration.ofMillis(opts.pollIntervalMillis), opts.warmupUrls, opts.warmupScript);
+                ExitMode mode = ExitMode.parse(opts.exitMode, probe);
+                // spring-refresh is only accepted for Spring Boot apps; an extracted Spring Boot app is a plain JAR on disk
+                var kind = mode.supports(JarExtractor.Kind.EXECUTABLE_JAR) ? JarExtractor.Kind.EXECUTABLE_JAR : JarExtractor.Kind.SPRING_BOOT;
+                var app = new JarExtractor.ExtractedApp(kind, opts.jar.toAbsolutePath());
+                ArchiveManifest live = ArchiveManifest.describe(app, jdk, strategy, opts.jvmArgs, System.getenv(), imageDigest);
+
+                Path archive = opts.workDir.resolve("app." + strategy.extension());
+                java.util.concurrent.Callable<Path> training = () -> {
+                    java.nio.file.Files.createDirectories(opts.workDir);
+                    java.nio.file.Files.deleteIfExists(archive);
+                    out.printf("Training %s with exit mode %s ...%n", strategy, mode.name());
+                    return new AppTrainer()
+                            .train(app, jdk, strategy, mode, archive, Duration.ofSeconds(opts.timeoutSeconds), opts.jvmArgs)
+                            .archive();
+                };
+
+                TrainingOrchestrator.Outcome outcome;
+                try {
+                    TrainingLock trainingLock = lock.equals("none") ? TrainingLock.none() : KubernetesLeaseLock.inCluster(Duration.ofSeconds(leaseSeconds));
+                    outcome = new TrainingOrchestrator().ensure(
+                            live, openStore(store, registryAuth, plainHttp, storeTimeoutSeconds), trainingLock, training);
+                } catch (StoreException e) {
+                    outcome = new TrainingOrchestrator.Outcome(TrainingOrchestrator.Status.FAILED, live.fingerprint(), e.getMessage());
+                }
+                (outcome.status() == TrainingOrchestrator.Status.FAILED ? err : out)
+                        .printf("train: %s: %s (%s)%n", outcome.status(), outcome.detail(), outcome.fingerprint());
+                return outcome.status() == TrainingOrchestrator.Status.FAILED && strict ? 1 : 0;
+            } catch (IllegalArgumentException | IllegalStateException e) {
+                err.println("error: " + e.getMessage());
+                return 2;
+            }
         }
     }
 

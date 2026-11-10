@@ -5,20 +5,37 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"syscall"
 )
 
-func main() { os.Exit(run(os.Args[1:], systemLocator())) }
-
-func run(args []string, locator javaLocator) int {
-	if len(args) == 1 && args[0] == "which-java" {
-		java := locator.find("")
-		if java == "" {
-			fmt.Fprintln(os.Stderr, "mnemo-launcher: no java found")
-			return 1
-		}
-		fmt.Println(java)
-		return 0
+func main() {
+	root, err := toolsRoot()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mnemo-launcher: cannot locate itself:", err)
+		os.Exit(1)
 	}
-	fmt.Fprintln(os.Stderr, "usage: mnemo-launcher which-java")
-	return 2
+	l := launcher{
+		locator:      systemLocator(),
+		root:         root,
+		stdout:       os.Stdout,
+		stderr:       os.Stderr,
+		environ:      os.Environ(),
+		exec:         syscall.Exec,
+		probeTimeout: defaultProbeTimeout,
+	}
+	os.Exit(l.run(os.Args[1:]))
+}
+
+// toolsRoot is the directory that holds bin/ and mnemo-warmup.jar: the parent of the directory
+// this executable lives in, wherever the tools were installed.
+func toolsRoot() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	return filepath.Dir(filepath.Dir(exe)), nil
 }

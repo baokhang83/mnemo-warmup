@@ -3,7 +3,7 @@
   "feature": "56-add-a-shell-free-native-go-launcher-and-fetch-path-for-d",
   "branch": "feature/56-add-a-shell-free-native-go-launcher-and-fetch-path-for-d",
   "stage": "build",
-  "last_session": "002-machine-readable-run-print-format-nul",
+  "last_session": "003-native-install-fetch-and-exec-subcommands",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "v0-2-5-simplify-workload-adoption-with-offline-injection-clo",

@@ -3,18 +3,23 @@
   <h1>mnemo-warmup</h1>
 </div>
 
-**Shared JVM startup caches for Kubernetes.**
+<div align="center">
 
-mnemo-warmup trains an AppCDS or Project Leyden AOT archive **once, inside your cluster**, and delivers it to every replica of your
+<b>Shared JVM startup caches for Kubernetes.</b>
+
+<p>
+mnemo-warmup trains an AppCDS or Project Leyden AOT archive <b>once, inside your cluster</b>, and delivers it to every replica of your
 Java application. A pod starts from the archive when it fits its launch exactly, and starts the ordinary way when it does not.
 Built for services whose pods start often: frequent deployments, autoscaling scale-ups and node moves.
+</p>
 
-[![build](https://github.com/baokhang83/mnemo-warmup/actions/workflows/build.yml/badge.svg)](https://github.com/baokhang83/mnemo-warmup/actions/workflows/build.yml)
-[![coverage](https://raw.githubusercontent.com/baokhang83/mnemo-warmup/refs/heads/gh-pages/badges/jacoco.svg)](https://baokhang83.github.io/mnemo-warmup/)
-[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-![Status: alpha](https://img.shields.io/badge/status-alpha-yellow)
-![Java 21+](https://img.shields.io/badge/java-21%2B-informational)
+<a href="https://github.com/baokhang83/mnemo-warmup/actions/workflows/build.yml"><img alt="build" src="https://github.com/baokhang83/mnemo-warmup/actions/workflows/build.yml/badge.svg"></a>
+<a href="https://baokhang83.github.io/mnemo-warmup/"><img alt="coverage" src="https://raw.githubusercontent.com/baokhang83/mnemo-warmup/refs/heads/gh-pages/badges/jacoco.svg"></a>
+<a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-blue.svg"></a>
+<img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-yellow">
+<img alt="Java 21+" src="https://img.shields.io/badge/java-21%2B-informational">
 
+</div>
 
 ## What you get
 

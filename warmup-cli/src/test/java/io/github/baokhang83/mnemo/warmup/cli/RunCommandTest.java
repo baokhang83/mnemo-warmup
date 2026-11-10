@@ -41,6 +41,25 @@ class RunCommandTest {
     }
 
     @Test
+    void nulFormatEmitsExactArgvWithoutQuoting() {
+        Result r = run("run", "--print", "--format", "nul", "--cache-dir", dir.toString(), "--", "java", "-Dgreeting=hello world", "-jar", "/app/it's.jar", "", "$HOME");
+        assertEquals(0, r.exit(), r.err());
+        assertEquals("java\0-Dgreeting=hello world\0-jar\0/app/it's.jar\0\0$HOME\0", r.out());
+    }
+
+    @Test
+    void nulFormatSurvivesBadOptionsBeforeTheDoubleDash() {
+        Result r = run("run", "--print", "--format=nul", "--no-such-option", "--", "java", "-jar", "app.jar");
+        assertEquals(0, r.exit(), r.err());
+        assertEquals("java\0-jar\0app.jar\0", r.out());
+    }
+
+    @Test
+    void anUnknownFormatIsRejected() {
+        assertEquals(2, run("run", "--print", "--format", "xml", "--", "java").exit());
+    }
+
+    @Test
     void quotingRoundTripsThroughARealShell() throws Exception {
         assumeTrue(Files.isExecutable(Path.of("/bin/sh")));
         List<String> args = List.of("a b", "it's", "$HOME", "`x`", "\"q\"", "", "*");

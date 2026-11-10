@@ -483,6 +483,10 @@ public class Main implements Runnable {
                 + "(scripts/mnemo-warmup-exec). The JVM is then PID 1 with no wrapper process.")
         boolean print;
 
+        @Option(names = "--format", defaultValue = "shell", description = "--print: shell (one shell-quoted line, for eval) or nul "
+                + "(each argument followed by a NUL byte: exact argv with no quoting rules, for the native launcher). Default: ${DEFAULT-VALUE}.")
+        String format;
+
         @Option(names = "--spawn", description = "Start the command as a child process, forward SIGTERM to it and exit with its status. "
                 + "Keeps this JVM resident (about 40-60 MB); for images without /bin/sh. This is the default without --print.")
         boolean spawn;
@@ -507,12 +511,21 @@ public class Main implements Runnable {
             String digest = imageDigest == null || imageDigest.isBlank() ? null : imageDigest;
             var plan = new RunPlanner().plan(command, cacheDir, System.getenv(), digest);
             plan.notes().forEach(n -> err.println("run: " + n));
-            return launch(spec.commandLine(), plan.command(), print, Duration.ofSeconds(Math.max(1, stopTimeoutSeconds)));
+            if (!"shell".equals(format) && !"nul".equals(format)) {
+                err.println("error: --format must be shell or nul");
+                return 2;
+            }
+            return launch(spec.commandLine(), plan.command(), print, "nul".equals(format), Duration.ofSeconds(Math.max(1, stopTimeoutSeconds)));
         }
 
-        static int launch(CommandLine cmd, List<String> command, boolean print, Duration stopTimeout) {
+        static int launch(CommandLine cmd, List<String> command, boolean print, boolean nul, Duration stopTimeout) {
             if (print) {
-                cmd.getOut().println(shellQuote(command));
+                if (nul) {
+                    cmd.getOut().print(nulSeparated(command));
+                    cmd.getOut().flush();
+                } else {
+                    cmd.getOut().println(shellQuote(command));
+                }
                 return 0;
             }
             // The hook is registered BEFORE the child starts: a SIGTERM that arrives while the child is
@@ -574,6 +587,15 @@ public class Main implements Runnable {
             return false;
         }
 
+        /** Each argument followed by a NUL byte, which no argument can contain: exact argv, nothing to unquote. */
+        static String nulSeparated(List<String> command) {
+            var sb = new StringBuilder();
+            for (String arg : command) {
+                sb.append(arg).append('\0');
+            }
+            return sb.toString();
+        }
+
         /** {@code 'a' 'b c' 'it'\''s'}: safe for {@code eval} in any POSIX shell. */
         static String shellQuote(List<String> command) {
             var sb = new StringBuilder();
@@ -600,8 +622,11 @@ public class Main implements Runnable {
             }
             cmd.getErr().println("warning: " + ex.getMessage() + "; starting the command unchanged");
             List<String> original = List.of(args).subList(dashes + 1, args.length);
-            boolean print = java.util.Arrays.asList(args).subList(0, dashes).contains("--print");
-            return launch(cmd, original, print, Duration.ofSeconds(25));
+            List<String> options = java.util.Arrays.asList(args).subList(0, dashes);
+            boolean print = options.contains("--print");
+            boolean nul = options.contains("--format=nul") || (options.indexOf("--format") >= 0
+                    && options.indexOf("--format") + 1 < options.size() && "nul".equals(options.get(options.indexOf("--format") + 1)));
+            return launch(cmd, original, print, nul, Duration.ofSeconds(25));
         }
     }
 

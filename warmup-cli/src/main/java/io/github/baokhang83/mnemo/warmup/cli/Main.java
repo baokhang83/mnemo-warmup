@@ -461,26 +461,42 @@ public class Main implements Runnable {
                 cmd.getOut().println(shellQuote(command));
                 return 0;
             }
+            // The hook is registered BEFORE the child starts: a SIGTERM that arrives while the child is
+            // still coming up (or while this JVM is still linking the hook) must not be lost, or this JVM
+            // would exit at once and leave the child running with no grace period.
+            var child = new java.util.concurrent.atomic.AtomicReference<Process>();
+            var terminating = new java.util.concurrent.atomic.AtomicBoolean();
+            Thread forwarder = new Thread(() -> {
+                terminating.set(true);
+                Process running = child.get();
+                if (running != null) {
+                    stop(running, stopTimeout);
+                }
+            }, "run-signal-forwarder");
+            Runtime.getRuntime().addShutdownHook(forwarder);
             try {
                 Process process = new ProcessBuilder(command).inheritIO().start();
-                Thread forwarder = new Thread(() -> stop(process, stopTimeout), "run-signal-forwarder");
-                Runtime.getRuntime().addShutdownHook(forwarder);
+                child.set(process);
+                if (terminating.get()) {
+                    // the hook ran before the child existed: stop it ourselves, and wait for it
+                    stop(process, stopTimeout);
+                }
                 try {
                     return process.waitFor();
                 } catch (InterruptedException e) {
                     process.destroy();
                     Thread.currentThread().interrupt();
                     return 130;
-                } finally {
-                    try {
-                        Runtime.getRuntime().removeShutdownHook(forwarder);
-                    } catch (IllegalStateException ignored) {
-                        // JVM is already shutting down
-                    }
                 }
             } catch (java.io.IOException e) {
                 cmd.getErr().println("error: cannot start " + command.get(0) + ": " + e.getMessage());
                 return 127;
+            } finally {
+                try {
+                    Runtime.getRuntime().removeShutdownHook(forwarder);
+                } catch (IllegalStateException ignored) {
+                    // JVM is already shutting down
+                }
             }
         }
 

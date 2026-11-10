@@ -3,7 +3,7 @@
   "feature": "14-run-command-validate-the-fetched-manifest-against-the-liv",
   "branch": "feature/14-run-command-validate-the-fetched-manifest-against-the-liv",
   "stage": "build",
-  "last_session": "002-address-review-and-update-readme",
+  "last_session": "003-fix-lost-sigterm-race-in-run-spawn",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

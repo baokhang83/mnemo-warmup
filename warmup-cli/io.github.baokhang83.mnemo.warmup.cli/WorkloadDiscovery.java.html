@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>WorkloadDiscovery.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-cli</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.cli</a> &gt; <span class="el_source">WorkloadDiscovery.java</span></div><h1>WorkloadDiscovery.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.cli;
+
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import org.yaml.snakeyaml.LoaderOptions;
+import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
+
+/** Validates an opted-in Deployment and discovers its explicit Java launch. */
+<span class="nc" id="L12">final class WorkloadDiscovery {</span>
+    static final String PREFIX = &quot;warmup.mnemo.io/&quot;;
+<span class="fc" id="L14">    record Workload(String name, String namespace, String container, String image, String store,</span>
+                    String exitMode, String probeUrl, String pullSecret, String pushSecret, boolean plainHttp,
+                    List&lt;String&gt; command, List&lt;String&gt; jvmArgs, String jar) {}
+
+    static Workload discover(Map&lt;String, Object&gt; resource) {
+<span class="pc bpc" id="L19" title="1 of 4 branches missed.">        if (!&quot;apps/v1&quot;.equals(resource.get(&quot;apiVersion&quot;)) || !&quot;Deployment&quot;.equals(resource.get(&quot;kind&quot;))) return null;</span>
+<span class="fc" id="L20">        Map&lt;String, Object&gt; metadata = map(resource.get(&quot;metadata&quot;), &quot;metadata&quot;);</span>
+<span class="fc" id="L21">        Map&lt;String, Object&gt; template = map(map(resource.get(&quot;spec&quot;), &quot;spec&quot;).get(&quot;template&quot;), &quot;spec.template&quot;);</span>
+<span class="fc" id="L22">        Map&lt;String, Object&gt; templateMeta = optionalMap(template.get(&quot;metadata&quot;), &quot;spec.template.metadata&quot;);</span>
+<span class="fc" id="L23">        Map&lt;String, Object&gt; annotations = optionalMap(templateMeta.get(&quot;annotations&quot;), &quot;annotations&quot;);</span>
+<span class="fc" id="L24">        Object enabled = annotations.get(PREFIX + &quot;enabled&quot;);</span>
+<span class="pc bpc" id="L25" title="1 of 4 branches missed.">        if (enabled == null || &quot;false&quot;.equals(enabled)) return null;</span>
+<span class="pc bpc" id="L26" title="1 of 2 branches missed.">        if (!&quot;true&quot;.equals(enabled)) throw new IllegalArgumentException(&quot;enabled annotation must be the string true or false&quot;);</span>
+<span class="fc" id="L27">        String name = required(metadata, &quot;name&quot;);</span>
+        // the generated resources carry the Deployment's name as a label value, and label values are limited to 63 characters
+<span class="fc bfc" id="L29" title="All 2 branches covered.">        if (name.length() &gt; 63) throw new IllegalArgumentException(&quot;Deployment name is longer than 63 characters (&quot; + name.length() + &quot;); generated resources cannot be labelled with it&quot;);</span>
+<span class="fc" id="L30">        String namespace = required(metadata, &quot;namespace&quot;);</span>
+<span class="fc" id="L31">        String store = required(annotations, PREFIX + &quot;store&quot;);</span>
+        URI storeUri;
+<span class="pc" id="L33">        try { storeUri = URI.create(store); } catch (IllegalArgumentException e) { throw new IllegalArgumentException(&quot;invalid OCI store URI&quot;, e); }</span>
+<span class="pc bpc" id="L34" title="4 of 8 branches missed.">        if (!&quot;oci&quot;.equals(storeUri.getScheme()) || storeUri.getHost() == null || storeUri.getPath() == null || storeUri.getPath().length() &lt; 2</span>
+<span class="pc bpc" id="L35" title="3 of 6 branches missed.">                || storeUri.getUserInfo() != null || storeUri.getQuery() != null || storeUri.getFragment() != null)</span>
+<span class="nc" id="L36">            throw new IllegalArgumentException(&quot;store must be an oci://host/repository URI&quot;);</span>
+<span class="fc" id="L37">        String mode = required(annotations, PREFIX + &quot;exit-mode&quot;);</span>
+<span class="pc bpc" id="L38" title="1 of 2 branches missed.">        String probe = annotations.get(PREFIX + &quot;probe-url&quot;) instanceof String s ? s : null;</span>
+<span class="pc bpc" id="L39" title="3 of 4 branches missed.">        if (!mode.equals(&quot;spring-refresh&quot;) &amp;&amp; !mode.equals(&quot;http-probe&quot;)) throw new IllegalArgumentException(&quot;unsupported exit-mode: &quot; + mode);</span>
+<span class="pc bpc" id="L40" title="5 of 6 branches missed.">        if (mode.equals(&quot;http-probe&quot;) &amp;&amp; (probe == null || probe.isBlank())) throw new IllegalArgumentException(&quot;http-probe needs probe-url&quot;);</span>
+<span class="pc bpc" id="L41" title="2 of 4 branches missed.">        if (mode.equals(&quot;spring-refresh&quot;) &amp;&amp; probe != null) throw new IllegalArgumentException(&quot;probe-url is only allowed with http-probe&quot;);</span>
+<span class="fc" id="L42">        Map&lt;String, Object&gt; pod = map(template.get(&quot;spec&quot;), &quot;pod spec&quot;);</span>
+<span class="pc bpc" id="L43" title="2 of 4 branches missed.">        if (!(pod.get(&quot;containers&quot;) instanceof List&lt;?&gt; containers) || containers.isEmpty()) throw new IllegalArgumentException(&quot;Deployment has no containers&quot;);</span>
+<span class="fc bfc" id="L44" title="All 2 branches covered.">        String selected = annotations.get(PREFIX + &quot;container&quot;) instanceof String s ? s : null;</span>
+<span class="fc bfc" id="L45" title="All 4 branches covered.">        if (selected == null &amp;&amp; containers.size() != 1) throw new IllegalArgumentException(&quot;select a container when a pod has multiple containers&quot;);</span>
+<span class="fc" id="L46">        Map&lt;String, Object&gt; container = null;</span>
+<span class="fc bfc" id="L47" title="All 2 branches covered.">        for (Object item : containers) {</span>
+<span class="fc" id="L48">            Map&lt;String, Object&gt; candidate = map(item, &quot;container&quot;);</span>
+<span class="fc bfc" id="L49" title="All 4 branches covered.">            if (selected == null || selected.equals(candidate.get(&quot;name&quot;))) {</span>
+<span class="pc bpc" id="L50" title="1 of 2 branches missed.">                if (container != null) throw new IllegalArgumentException(&quot;duplicate container selection&quot;);</span>
+<span class="fc" id="L51">                container = candidate;</span>
+            }
+<span class="fc" id="L53">        }</span>
+<span class="fc bfc" id="L54" title="All 2 branches covered.">        if (container == null) throw new IllegalArgumentException(&quot;selected container does not exist: &quot; + selected);</span>
+<span class="fc" id="L55">        String containerName = required(container, &quot;name&quot;);</span>
+<span class="fc" id="L56">        String image = required(container, &quot;image&quot;);</span>
+        List&lt;String&gt; command;
+<span class="fc" id="L58">        Object override = annotations.get(PREFIX + &quot;command&quot;);</span>
+<span class="fc bfc" id="L59" title="All 2 branches covered.">        if (override != null) {</span>
+<span class="pc bpc" id="L60" title="1 of 4 branches missed.">            if (!(override instanceof String text) || !isJsonStringArray(text)) throw new IllegalArgumentException(&quot;command override must be a JSON string array&quot;);</span>
+            Object parsed;
+<span class="fc" id="L62">            try { parsed = new Yaml(new SafeConstructor(new LoaderOptions())).load(text); }</span>
+<span class="pc" id="L63">            catch (RuntimeException e) { throw new IllegalArgumentException(&quot;invalid command override&quot;, e); }</span>
+<span class="fc" id="L64">            command = strings(parsed, &quot;command override&quot;);</span>
+<span class="fc" id="L65">        } else {</span>
+<span class="fc" id="L66">            command = new ArrayList&lt;&gt;(strings(container.get(&quot;command&quot;), &quot;explicit command&quot;));</span>
+<span class="pc bpc" id="L67" title="1 of 2 branches missed.">            if (container.get(&quot;args&quot;) != null) command.addAll(strings(container.get(&quot;args&quot;), &quot;args&quot;));</span>
+        }
+<span class="pc bpc" id="L69" title="4 of 6 branches missed.">        if (command.isEmpty() || !(command.get(0).equals(&quot;java&quot;) || command.get(0).endsWith(&quot;/java&quot;)))</span>
+<span class="nc" id="L70">            throw new IllegalArgumentException(&quot;launch must start with java; specify a command override if needed&quot;);</span>
+<span class="fc" id="L71">        int jarIndex = command.indexOf(&quot;-jar&quot;);</span>
+<span class="pc bpc" id="L72" title="3 of 6 branches missed.">        if (jarIndex &lt; 1 || jarIndex + 1 &gt;= command.size() || command.get(jarIndex + 1).isBlank()) throw new IllegalArgumentException(&quot;launch must contain -jar and a JAR path&quot;);</span>
+<span class="fc" id="L73">        List&lt;String&gt; jvm = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L74" title="All 2 branches covered.">        for (String arg : command.subList(1, jarIndex)) {</span>
+<span class="pc bpc" id="L75" title="5 of 10 branches missed.">            if (!arg.startsWith(&quot;-&quot;) || arg.startsWith(&quot;@&quot;) || arg.equals(&quot;-cp&quot;) || arg.equals(&quot;--class-path&quot;) || arg.equals(&quot;-classpath&quot;))</span>
+<span class="nc" id="L76">                throw new IllegalArgumentException(&quot;unsupported JVM argument: &quot; + arg);</span>
+<span class="fc" id="L77">            jvm.add(arg);</span>
+<span class="fc" id="L78">        }</span>
+<span class="fc" id="L79">        String pullSecret = optionalString(annotations, PREFIX + &quot;pull-secret&quot;);</span>
+<span class="fc" id="L80">        String pushSecret = optionalString(annotations, PREFIX + &quot;push-secret&quot;);</span>
+<span class="fc" id="L81">        String plainHttp = optionalString(annotations, PREFIX + &quot;plain-http&quot;);</span>
+<span class="pc bpc" id="L82" title="5 of 6 branches missed.">        if (plainHttp != null &amp;&amp; !plainHttp.equals(&quot;true&quot;) &amp;&amp; !plainHttp.equals(&quot;false&quot;)) throw new IllegalArgumentException(&quot;plain-http must be true or false&quot;);</span>
+<span class="fc" id="L83">        return new Workload(name, namespace, containerName, image, store, mode, probe, pullSecret, pushSecret, &quot;true&quot;.equals(plainHttp),</span>
+<span class="fc" id="L84">                List.copyOf(command), List.copyOf(jvm), command.get(jarIndex + 1));</span>
+    }
+
+    private static String optionalString(Map&lt;String, Object&gt; values, String key) {
+<span class="fc bfc" id="L88" title="All 2 branches covered.">        if (!values.containsKey(key)) return null;</span>
+<span class="fc" id="L89">        return required(values, key);</span>
+    }
+
+    private static boolean isJsonStringArray(String input) {
+<span class="fc" id="L93">        String s = input.trim();</span>
+<span class="pc bpc" id="L94" title="3 of 6 branches missed.">        if (s.length() &lt; 2 || s.charAt(0) != '[' || s.charAt(s.length() - 1) != ']') return false;</span>
+<span class="fc" id="L95">        int i = 1, end = s.length() - 1;</span>
+<span class="pc bpc" id="L96" title="2 of 4 branches missed.">        while (i &lt; end &amp;&amp; Character.isWhitespace(s.charAt(i))) i++;</span>
+<span class="pc bpc" id="L97" title="1 of 2 branches missed.">        if (i == end) return true;</span>
+<span class="pc bpc" id="L98" title="1 of 2 branches missed.">        while (i &lt; end) {</span>
+<span class="fc bfc" id="L99" title="All 2 branches covered.">            if (s.charAt(i++) != '&quot;') return false;</span>
+<span class="fc" id="L100">            boolean closed = false;</span>
+<span class="pc bpc" id="L101" title="1 of 2 branches missed.">            while (i &lt; end) {</span>
+<span class="fc" id="L102">                char c = s.charAt(i++);</span>
+<span class="fc bfc" id="L103" title="All 2 branches covered.">                if (c == '&quot;') { closed = true; break; }</span>
+<span class="pc bpc" id="L104" title="1 of 2 branches missed.">                if (c &lt; 0x20) return false;</span>
+<span class="pc bpc" id="L105" title="1 of 2 branches missed.">                if (c == '\\') {</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">                    if (i &gt;= end) return false;</span>
+<span class="nc" id="L107">                    char escape = s.charAt(i++);</span>
+<span class="nc bnc" id="L108" title="All 2 branches missed.">                    if (escape == 'u') {</span>
+<span class="nc bnc" id="L109" title="All 4 branches missed.">                        if (i + 4 &gt; end || !s.substring(i, i + 4).matches(&quot;[0-9a-fA-F]{4}&quot;)) return false;</span>
+<span class="nc" id="L110">                        i += 4;</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">                    } else if (&quot;\&quot;\\/bfnrt&quot;.indexOf(escape) &lt; 0) return false;</span>
+                }
+<span class="fc" id="L113">            }</span>
+<span class="pc bpc" id="L114" title="1 of 2 branches missed.">            if (!closed) return false;</span>
+<span class="pc bpc" id="L115" title="1 of 4 branches missed.">            while (i &lt; end &amp;&amp; Character.isWhitespace(s.charAt(i))) i++;</span>
+<span class="fc bfc" id="L116" title="All 2 branches covered.">            if (i == end) return true;</span>
+<span class="pc bpc" id="L117" title="1 of 2 branches missed.">            if (s.charAt(i++) != ',') return false;</span>
+<span class="pc bpc" id="L118" title="2 of 4 branches missed.">            while (i &lt; end &amp;&amp; Character.isWhitespace(s.charAt(i))) i++;</span>
+<span class="fc" id="L119">        }</span>
+<span class="nc" id="L120">        return false;</span>
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;) static Map&lt;String, Object&gt; map(Object value, String name) {
+<span class="pc bpc" id="L124" title="1 of 2 branches missed.">        if (!(value instanceof Map&lt;?, ?&gt;)) throw new IllegalArgumentException(name + &quot; must be an object&quot;);</span>
+<span class="fc" id="L125">        return (Map&lt;String, Object&gt;) value;</span>
+    }
+<span class="pc bpc" id="L127" title="1 of 2 branches missed.">    static Map&lt;String, Object&gt; optionalMap(Object value, String name) { return value == null ? Map.of() : map(value, name); }</span>
+    static String required(Map&lt;String, Object&gt; values, String key) {
+<span class="pc bpc" id="L129" title="1 of 4 branches missed.">        if (!(values.get(key) instanceof String s) || s.isBlank()) throw new IllegalArgumentException(&quot;missing &quot; + key);</span>
+<span class="fc" id="L130">        return s;</span>
+    }
+    static List&lt;String&gt; strings(Object value, String name) {
+<span class="fc bfc" id="L133" title="All 2 branches covered.">        if (!(value instanceof List&lt;?&gt; list)) throw new IllegalArgumentException(name + &quot; must be a string array&quot;);</span>
+<span class="fc" id="L134">        List&lt;String&gt; result = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L135" title="All 2 branches covered.">        for (Object item : list) {</span>
+<span class="pc bpc" id="L136" title="1 of 2 branches missed.">            if (!(item instanceof String s)) throw new IllegalArgumentException(name + &quot; must contain only strings&quot;);</span>
+<span class="fc" id="L137">            result.add(s);</span>
+<span class="fc" id="L138">        }</span>
+<span class="fc" id="L139">        return result;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

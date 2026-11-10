@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ManifestDiff.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-cli</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.cli</a> &gt; <span class="el_source">ManifestDiff.java</span></div><h1>ManifestDiff.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.cli;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeSet;
+
+/** Structural preview that reports paths without displaying workload or Secret values. */
+final class ManifestDiff {
+    private ManifestDiff() {}
+    static List&lt;String&gt; describe(String before, String after) {
+<span class="fc" id="L12">        List&lt;Map&lt;String, Object&gt;&gt; oldDocs = ManifestStream.parse(before), newDocs = ManifestStream.parse(after);</span>
+<span class="fc" id="L13">        List&lt;String&gt; changes = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L14">        int count = Math.max(oldDocs.size(), newDocs.size());</span>
+<span class="fc bfc" id="L15" title="All 2 branches covered.">        for (int i = 0; i &lt; count; i++) {</span>
+<span class="fc bfc" id="L16" title="All 2 branches covered.">            if (i &gt;= oldDocs.size()) { changes.add(&quot;+ resource &quot; + identity(newDocs.get(i))); continue; }</span>
+<span class="pc bpc" id="L17" title="1 of 2 branches missed.">            if (i &gt;= newDocs.size()) { changes.add(&quot;- resource &quot; + identity(oldDocs.get(i))); continue; }</span>
+<span class="fc" id="L18">            diff(oldDocs.get(i), newDocs.get(i), &quot;resource[&quot; + i + &quot;]&quot;, changes);</span>
+        }
+<span class="fc" id="L20">        return changes;</span>
+    }
+    private static void diff(Object before, Object after, String path, List&lt;String&gt; out) {
+<span class="pc bpc" id="L23" title="1 of 4 branches missed.">        if (before instanceof Map&lt;?, ?&gt; a &amp;&amp; after instanceof Map&lt;?, ?&gt; b) {</span>
+<span class="fc" id="L24">            TreeSet&lt;String&gt; keys = new TreeSet&lt;&gt;();</span>
+<span class="fc" id="L25">            a.keySet().forEach(k -&gt; keys.add(String.valueOf(k))); b.keySet().forEach(k -&gt; keys.add(String.valueOf(k)));</span>
+<span class="fc bfc" id="L26" title="All 2 branches covered.">            for (String key : keys) {</span>
+<span class="fc bfc" id="L27" title="All 2 branches covered.">                if (!a.containsKey(key)) out.add(&quot;+ &quot; + path + &quot;.&quot; + key);</span>
+<span class="pc bpc" id="L28" title="1 of 2 branches missed.">                else if (!b.containsKey(key)) out.add(&quot;- &quot; + path + &quot;.&quot; + key);</span>
+<span class="fc" id="L29">                else diff(a.get(key), b.get(key), path + &quot;.&quot; + key, out);</span>
+<span class="fc" id="L30">            }</span>
+<span class="pc bpc" id="L31" title="1 of 4 branches missed.">        } else if (before instanceof List&lt;?&gt; a &amp;&amp; after instanceof List&lt;?&gt; b) {</span>
+<span class="fc" id="L32">            int n = Math.max(a.size(), b.size());</span>
+<span class="fc bfc" id="L33" title="All 2 branches covered.">            for (int i = 0; i &lt; n; i++) {</span>
+<span class="pc bpc" id="L34" title="1 of 2 branches missed.">                if (i &gt;= a.size()) out.add(&quot;+ &quot; + path + &quot;[&quot; + i + &quot;]&quot;);</span>
+<span class="fc bfc" id="L35" title="All 2 branches covered.">                else if (i &gt;= b.size()) out.add(&quot;- &quot; + path + &quot;[&quot; + i + &quot;]&quot;);</span>
+<span class="fc" id="L36">                else diff(a.get(i), b.get(i), path + &quot;[&quot; + i + &quot;]&quot;, out);</span>
+            }
+<span class="fc bfc" id="L38" title="All 2 branches covered.">        } else if (!java.util.Objects.equals(before, after)) out.add(&quot;~ &quot; + path + &quot; (values hidden)&quot;);</span>
+<span class="fc" id="L39">    }</span>
+    private static String identity(Map&lt;String, Object&gt; doc) {
+<span class="fc" id="L41">        Object meta = doc.get(&quot;metadata&quot;);</span>
+<span class="pc bpc" id="L42" title="1 of 2 branches missed.">        Object name = meta instanceof Map&lt;?, ?&gt; m ? m.get(&quot;name&quot;) : null;</span>
+<span class="fc" id="L43">        return doc.get(&quot;kind&quot;) + &quot;/&quot; + name;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

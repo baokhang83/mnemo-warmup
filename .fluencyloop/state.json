@@ -1,9 +1,9 @@
 {
   "schema_version": "1",
-  "feature": "13-fetch-command-init-container-looks-up-verifies-and-writes",
-  "branch": "feature/13-fetch-command-init-container-looks-up-verifies-and-writes",
+  "feature": "14-run-command-validate-the-fetched-manifest-against-the-liv",
+  "branch": "feature/14-run-command-validate-the-fetched-manifest-against-the-liv",
   "stage": "build",
-  "last_session": "002-address-review-repeatable-extraction-parse-errors-flags",
+  "last_session": "001-runplanner-run-command-and-exec-wrapper",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

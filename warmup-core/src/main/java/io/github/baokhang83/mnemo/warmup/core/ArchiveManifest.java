@@ -154,6 +154,26 @@ public record ArchiveManifest(
         return problems;
     }
 
+    /**
+     * The JVM also checks each classpath JAR's modification time when it maps an archive, which
+     * {@link #mismatches} deliberately ignores (the fingerprint must survive re-created layers with
+     * identical bytes). Compared to whole seconds, as the JVM does. Empty means the times agree.
+     */
+    public List<String> modificationTimeMismatches(ArchiveManifest live) {
+        List<String> problems = new ArrayList<>();
+        for (int i = 0; i < Math.min(classpath.size(), live.classpath.size()); i++) {
+            ClasspathEntry a = classpath.get(i);
+            ClasspathEntry b = live.classpath.get(i);
+            if (a.name().equals(b.name())
+                    && a.lastModified() != null
+                    && b.lastModified() != null
+                    && a.lastModified().getEpochSecond() != b.lastModified().getEpochSecond()) {
+                problems.add("'" + a.name() + "' was modified at " + b.lastModified() + ", the archive was trained at " + a.lastModified());
+            }
+        }
+        return problems;
+    }
+
     private void compareClasspath(ArchiveManifest live, List<String> problems) {
         if (classpath.size() != live.classpath.size()) {
             problems.add("classpath has " + classpath.size() + " entries vs " + live.classpath.size());

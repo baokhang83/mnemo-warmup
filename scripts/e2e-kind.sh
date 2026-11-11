@@ -11,12 +11,16 @@
 #      AOT on JDK 25), and java is PID 1,
 #   6. changes a JVM option only in the Deployment's command and asserts the pod still starts, uncached, with a logged reason.
 #
+# TOOLS_DELIVERY=init-container (default) or image-volume (docs/adr/0012: no init containers, the tools are an image volume and
+# the fetch runs in the application container) selects the chart's tools.delivery; the same scenarios run in both modes.
 # Usage: scripts/e2e-kind.sh [jdk ...]       Needs docker, kind, kubectl, helm and network access (Maven Central, image pulls).
 # KEEP=1 keeps the cluster and registry for debugging. Logs of a failed run are written to $ARTIFACTS.
 set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 2
 JDKS=("$@"); [ ${#JDKS[@]} -gt 0 ] || JDKS=(21 25)
+TOOLS_DELIVERY=${TOOLS_DELIVERY:-init-container}
+case "$TOOLS_DELIVERY" in init-container|image-volume) ;; *) echo "TOOLS_DELIVERY must be init-container or image-volume"; exit 2 ;; esac
 RUN="$$-$(date +%s)"
 CLUSTER="mw-e2e-$RUN"
 CTX="kind-$CLUSTER"
@@ -101,6 +105,7 @@ warmup:
   app:
     image: { repository: mnemo-example, tag: "$n-$RUN", pullPolicy: Never }
   tools:
+    delivery: $TOOLS_DELIVERY
     image: { repository: mnemo-warmup-tools, tag: "$TOOLS_TAG", pullPolicy: Never }
   store: { url: "oci://$REG_IP:5000/mnemo/example-$n", plainHttp: true }
   trainer:
@@ -137,13 +142,29 @@ YAML
   # line is missing, so a check can never pass just because it could not look.
   source_line() { k -n "$ns" exec "$1" -c app -- grep -m1 "DemoApplication source:" /tmp/classload.log 2>/dev/null; }
 
+  # fetch's output for a pod: its own init container, or (image-volume) the lines it printed in the application container
+  fetch_logs() {
+    if [ "$TOOLS_DELIVERY" = image-volume ]; then
+      k -n "$ns" logs "$1" -c app 2>&1 | grep -E '^(fetch:|Archive:|Flags:|No usable archive|mnemo-launcher:)' || true
+    else
+      k -n "$ns" logs "$1" -c mnemo-warmup-fetch 2>&1
+    fi
+  }
+
   # ---- A. first start: no archive yet ----
   helm --kube-context "$CTX" install ex "$CHART" -n "$ns" -f "$ARTIFACTS.values-$n.yaml" --wait --timeout 6m >/dev/null 2>&1 \
     || die "$ns" "helm install did not become ready (the app must start without an archive)"
   ok "the app starts and becomes ready without an archive"
   pod=$(app_pods | head -1)
-  fetch_log=$(k -n "$ns" logs "$pod" -c mnemo-warmup-fetch 2>&1)
+  fetch_log=$(fetch_logs "$pod")
   if has "$fetch_log" "No usable archive"; then ok "fetch reports no usable archive and exits 0"; else fail "fetch log: $fetch_log"; fi
+  init_names=$(k -n "$ns" get pod "${pod#pod/}" -o jsonpath='{.spec.initContainers[*].name}')
+  if [ "$TOOLS_DELIVERY" = image-volume ]; then
+    if [ -z "$init_names" ]; then ok "the pod has no init containers (tools.delivery=image-volume)"; else fail "init containers in image-volume mode: $init_names"; fi
+    if [ -n "$(k -n "$ns" get pod "${pod#pod/}" -o jsonpath='{.spec.volumes[?(@.name=="mnemo-tools")].image.reference}')" ]; then ok "the tools are an image volume"; else fail "the tools volume is not an image volume"; fi
+  else
+    if [ "$init_names" = "mnemo-warmup-install mnemo-warmup-fetch" ]; then ok "the pod has the install and fetch init containers"; else fail "init containers: '$init_names'"; fi
+  fi
   if line=$(source_line "$pod") && has "$line" "DemoApplication source: file:"; then ok "app classes load from the JAR (no archive)"; else fail "expected the class to load from the JAR, got: '${line:-<no class-load line>}'"; fi
 
   # ---- B. the trainer: trains once ----
@@ -166,7 +187,7 @@ YAML
   settle
   pod=$(app_pods | head -1)
   [ -n "$pod" ] || die "$ns" "no live application pod after the restart"
-  fetch_log=$(k -n "$ns" logs "$pod" -c mnemo-warmup-fetch 2>&1)
+  fetch_log=$(fetch_logs "$pod")
   if has "$fetch_log" "($expect_type)"; then ok "fetch found the $expect_type archive"; else fail "fetch log: $fetch_log"; fi
   app_log=$(k -n "$ns" logs "$pod" -c app 2>&1)
   if has "$app_log" "run: using $expect_type archive"; then ok "run validated the archive for this launch"; else fail "app log: $(grep 'run:' <<<"$app_log")"; fi

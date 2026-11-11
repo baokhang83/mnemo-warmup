@@ -30,6 +30,7 @@ spec:
           # The exec wrapper decides whether the fetched archive fits this exact launch, then execs java (PID 1).
           command: {{ include "mnemo-warmup.command" .Values.warmup }}
           args:
+            {{- include "mnemo-warmup.argsPrefix" .Values.warmup | nindent 12 }}   # nothing unless warmup.tools.delivery is image-volume
             - java
             {{- range .Values.warmup.app.jvmArgs }}
             - {{ . | quote }}

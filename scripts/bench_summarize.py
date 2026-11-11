@@ -51,6 +51,30 @@ def ms(pattern, text):
     return float(m.group(1)) if m else None
 
 
+def jenkins_start_ms(text):
+    """Jenkins: first timestamped log line (Winstone starting) to 'Jenkins is fully up and running', in ms. It is measured from
+    the first log line, so it leaves out the JVM's own boot before that line; it is the same measure in every arm."""
+    stamp = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3})[+-]\d{4}", re.M)
+    first = stamp.search(text)
+    up = re.search(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3})[+-]\d{4}.*Jenkins is fully up and running", text, re.M)
+    if not (first and up):
+        return None
+    fmt = "%Y-%m-%d %H:%M:%S.%f"
+    delta = datetime.strptime(up.group(1), fmt) - datetime.strptime(first.group(1), fmt)
+    return delta.total_seconds() * 1000
+
+
+def sonarqube_start_ms(text):
+    """SonarQube: first timestamped log line to 'SonarQube is operational'. Its log timestamps have a resolution of one second."""
+    stamp = r"(\d{4}\.\d\d\.\d\d \d\d:\d\d:\d\d)"
+    first = re.search(r"^" + stamp + " ", text, re.M)
+    up = re.search(r"^" + stamp + r" .*SonarQube is operational", text, re.M)
+    if not (first and up):
+        return None
+    fmt = "%Y.%m.%d %H:%M:%S"
+    return (datetime.strptime(up.group(1), fmt) - datetime.strptime(first.group(1), fmt)).total_seconds() * 1000
+
+
 def load(raw_dir):
     rows = []
     for j in sorted(raw_dir.glob("*.json")):
@@ -89,7 +113,7 @@ def load(raw_dir):
             "run_jdk_probe": ms(r"run: timing:.*?jdk-probe=(\d+) ms", app),
             "run_classpath_hash": ms(r"run: timing:.*?classpath-hash=(\d+) ms", app),
             "run_tool_uptime": ms(r"run: timing:.*?tool-jvm-uptime=(\d+) ms", app),
-            "jvm_started_in": (ms(r"Started \w+ in ([\d.]+) seconds", app) or 0) * 1000 or None,
+            "jvm_started_in": (ms(r"Started \w+ in ([\d.]+) seconds", app) or 0) * 1000 or jenkins_start_ms(app) or sonarqube_start_ms(app),
         }
         rows.append(row)
     return rows
@@ -151,7 +175,7 @@ def main(out):
         arch = kn.get("node_info", {}).get("architecture")
         print(f"**Application:** {run.get('app')} ({run.get('app_jars')} JARs, {int(run.get('app_kib', 0) or 0) / 1024:.0f} MiB; "
               f"archive {int(run.get('archive_bytes', 0) or 0) / 1e6:.0f} MB); {run.get('jdk')}; "
-              f"limits cpu={run.get('app_cpu_limit')} memory={run.get('app_memory_limit')}.\n")
+              f"limits cpu={run.get('app_cpu_limit')} memory={run.get('app_memory_limit')}; tools delivery={run.get('tools_delivery', 'init-container')}.\n")
         print(f"**Machine:** {host.get('cpu_model')}, {host.get('logical_cpus')} logical CPUs, {int(host.get('memory_bytes') or 0) / 2**30:.0f} GiB, {host.get('os')}. "
               f"Docker gives the VM {env.get('docker', {}).get('cpus_available_to_docker')} CPUs and "
               f"{int(env.get('docker', {}).get('memory_available_to_docker_bytes') or 0) / 2**30:.1f} GiB; kind node {node.get('image')}, "
@@ -201,7 +225,7 @@ def main(out):
         ("run: JDK probe", "run_jdk_probe"),
         ("run: hash the classpath", "run_classpath_hash"),
         ("run: tool JVM uptime at the end", "run_tool_uptime"),
-        ("application: JVM-reported start (`Started ... in`)", "jvm_started_in"),
+        ("application: self-reported start (Spring `Started ... in`; Jenkins and SonarQube: first log line to `fully up and running` / `SonarQube is operational`)", "jvm_started_in"),
     ]
     print("| step | none | nocache | cached |")
     print("|---|---|---|---|")

@@ -1,0 +1,4 @@
+fetch: timing: jdk-detect=16 ms, extract-and-hash-classpath=83 ms, store-lookup-download-verify=216 ms, tool-jvm-uptime=393 ms
+Archive: /mnemo-cache/app.jsa (APP_CDS), fingerprint sha256:ccd2ffab786d6d199bbb744df0b7ab96a1bd77ec243a1f05dd0ef50ec084baff
+Flags: /mnemo-cache/mnemo-warmup.flags
+mnemo-launcher: timing: fetch-process=750 ms

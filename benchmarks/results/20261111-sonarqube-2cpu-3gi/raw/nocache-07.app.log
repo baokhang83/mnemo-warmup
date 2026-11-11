@@ -1,0 +1,226 @@
+run: no archive was fetched into /mnemo-cache; starting without one
+run: timing: , tool-jvm-uptime=0 ms (native planner)
+mnemo-launcher: timing: plan-process=0 ms (native)
+2026.11.11 11:09:28 INFO  app[][o.s.a.AppFileSystem] Cleaning or creating temp directory /opt/sonarqube/temp
+2026.11.11 11:09:28 INFO  app[][o.s.a.es.EsSettings] Elasticsearch listening on [HTTP: 127.0.0.1:9001, TCP: 127.0.0.1:{}]
+2026.11.11 11:09:28 INFO  app[][o.s.a.ProcessLauncherImpl] Launch process[ELASTICSEARCH] from [/opt/sonarqube/elasticsearch]: /opt/java/openjdk/bin/java -Xms4m -Xmx64m -XX:+UseSerialGC -cp /opt/sonarqube/elasticsearch/lib/tools/server-launcher/* org.elasticsearch.server.launcher.ServerLauncher
+2026.11.11 11:09:28 INFO  app[][o.s.a.SchedulerImpl] Waiting for Elasticsearch to be up and running
+Nov 11, 2026 11:09:29 AM sun.util.locale.provider.LocaleProviderAdapter <clinit>
+INFO: Invalid locale provider adapter "COMPAT" ignored.
+Nov 11, 2026 11:09:30 AM sun.util.locale.provider.LocaleProviderAdapter <clinit>
+WARNING: COMPAT locale provider has been removed
+2026.11.11 11:09:30 INFO  es[][o.e.b.Elasticsearch] version[9.4.7], pid[109], build[tar/9093bd876e86f531329aad3704ec9ab607c909c8/2026-09-09T22:41:14.293156395Z], OS[Linux/6.12.76-linuxkit/aarch64], JVM[Eclipse Adoptium/OpenJDK 64-Bit Server VM/25.0.5/25.0.5+8-LTS]
+2026.11.11 11:09:30 INFO  es[][o.e.b.Elasticsearch] JVM home [/opt/java/openjdk], using bundled JDK [false]
+2026.11.11 11:09:30 INFO  es[][o.e.b.Elasticsearch] JVM arguments [-Des.networkaddress.cache.ttl=60, -Des.networkaddress.cache.negative.ttl=10, -XX:+AlwaysPreTouch, -Xss1m, -Djava.awt.headless=true, -Dfile.encoding=UTF-8, -Djna.nosys=true, -XX:-OmitStackTraceInFastThrow, -Dio.netty.noUnsafe=true, -Dio.netty.noKeySetOptimization=true, -Dio.netty.recycler.maxCapacityPerThread=0, --add-opens=org.apache.lucene.core/org.apache.lucene.codecs.lucene99=org.elasticsearch.server, --add-opens=org.apache.lucene.core/org.apache.lucene.codecs.hnsw=org.elasticsearch.server, --add-opens=org.apache.lucene.core/org.apache.lucene.internal.vectorization=org.elasticsearch.server, -Dlog4j.shutdownHookEnabled=false, -Dlog4j2.disable.jmx=true, -Dlog4j2.formatMsgNoLookups=true, -Djava.locale.providers=CLDR, -Dorg.apache.lucene.vectorization.upperJavaFeatureVersion=25, -Des.path.home=/opt/sonarqube/elasticsearch, -Des.distribution.type=tar, -Des.java.type=ES_JAVA_HOME, --enable-native-access=org.elasticsearch.nativeaccess,org.apache.lucene.core, --enable-native-access=ALL-UNNAMED, --illegal-native-access=deny, -XX:ReplayDataFile=logs/replay_pid%p.log, -XX:+EnableDynamicAgentLoading, -Djdk.attach.allowAttachSelf=true, --patch-module=java.base=/opt/sonarqube/elasticsearch/lib/entitlement-bridge/elasticsearch-entitlement-bridge-9.4.7.jar, --add-exports=java.base/org.elasticsearch.entitlement.bridge=org.elasticsearch.entitlement,java.logging,java.net.http,java.naming,jdk.net,jdk.zipfs,jdk.management.agent, -XX:+UseG1GC, -Djava.io.tmpdir=/opt/sonarqube/temp, -XX:ErrorFile=/opt/sonarqube/logs/es_hs_err_pid%p.log, -Xlog:disable, -Des.networkaddress.cache.ttl=60, -Des.networkaddress.cache.negative.ttl=10, -XX:+AlwaysPreTouch, -Xss1m, -Djava.awt.headless=true, -Dfile.encoding=UTF-8, -Djna.nosys=true, -Djna.tmpdir=/opt/sonarqube/temp, -XX:-OmitStackTraceInFastThrow, -Dio.netty.noUnsafe=true, -Dio.netty.noKeySetOptimization=true, -Dio.netty.recycler.maxCapacityPerThread=0, -Dio.netty.allocator.numDirectArenas=0, -Dlog4j.shutdownHookEnabled=false, -Dlog4j2.disable.jmx=true, -Dlog4j2.formatMsgNoLookups=true, -Djava.locale.providers=COMPAT, -Des.enforce.bootstrap.checks=true, -Xmx512m, -Xms512m, -XX:MaxDirectMemorySize=256m, -XX:+HeapDumpOnOutOfMemoryError, -XX:G1HeapRegionSize=4m, -XX:InitiatingHeapOccupancyPercent=30, -XX:G1ReservePercent=15, --module-path=/opt/sonarqube/elasticsearch/lib, --add-modules=jdk.net, --add-modules=jdk.management.agent, --add-modules=ALL-MODULE-PATH, -Djdk.module.main=org.elasticsearch.server]
+2026.11.11 11:09:30 INFO  es[][o.e.b.Elasticsearch] Default Locale [en_US]
+2026.11.11 11:09:30 INFO  es[][o.e.n.j.JdkVectorLibrary] vec_caps=1
+2026.11.11 11:09:30 INFO  es[][o.e.n.NativeAccess] Using native vector library; to disable start with -Dorg.elasticsearch.nativeaccess.enableVectorLibrary=false
+2026.11.11 11:09:30 INFO  es[][o.e.n.NativeAccess] Using [jdk] native provider and native methods for [Linux]
+2026.11.11 11:09:30 WARN  es[][o.a.l.i.v.VectorizationProvider] Java vector incubator module is not readable. For optimal vector performance, pass '--add-modules jdk.incubator.vector' to enable Vector API.
+2026.11.11 11:09:30 INFO  es[][o.e.b.Elasticsearch] Bootstrapping Entitlements
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [x-pack-core]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [x-pack-migrate]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [rest-root]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [reindex]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [x-pack-redact]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [x-pack-security]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [x-pack-geoip-enterprise-downloader]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [lang-painless]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [rank-vectors]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [x-pack-esql-core]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [parent-join]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [old-lucene-versions]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [counted-keyword]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [x-pack-inference]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [analysis-common]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [dot-prefix-validation]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [health-shards-availability]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [transport-netty4]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [aggregations]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [apm]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [ingest-common]
+2026.11.11 11:09:31 INFO  es[][o.e.p.PluginsService] loaded module [user-agent]
+2026.11.11 11:09:31 INFO  es[][o.e.e.NodeEnvironment] using [1] data paths, mounts [[/opt/sonarqube/data (/dev/vda1)]], net usable_space [827.3gb], net total_space [910.6gb], types [ext4]
+2026.11.11 11:09:31 INFO  es[][o.e.e.NodeEnvironment] heap size [512mb], compressed ordinary object pointers [true]
+2026.11.11 11:09:31 INFO  es[][o.e.n.Node] node name [sonarqube], node ID [yV87G5IBT7ebgmCDLOKvYQ], cluster name [sonarqube], roles [transform, data_content, data_warm, master, remote_cluster_client, data, data_cold, ingest, data_frozen, ml, data_hot]
+2026.11.11 11:09:32 INFO  es[][o.e.f.FeatureService] Registered local node features [ES_V_8, ES_V_9, aggregate_metric_double.default_metric.deprecated, certificate_identity_field, cluster.reroute.ignores_metric_param, cluster.stats.source_modes, inference.auth_poller.persistent_task, inference.ccm.cache, inference.ccm.enablement_service, inference.embedding_task_type, inference.endpoint.cache, inference.internal_delete_endpoints_action, inference.metadata_field, ingest.field_access_pattern, lucene_10_1_upgrade, lucene_10_upgrade, resolve_index_returns_mode, security.queryable_built_in_roles, security_stats_endpoint, simulate.ignored.fields, snapshots.get.state_parameter]
+2026.11.11 11:09:32 INFO  es[][o.e.i.r.RecoverySettings] using rate limit [40mb] with [default=40mb, read=0b, write=0b, max=0b]
+2026.11.11 11:09:32 INFO  es[][o.e.c.m.DataStreamGlobalRetentionSettings] Updated global default retention to [null]
+2026.11.11 11:09:32 INFO  es[][o.e.c.m.DataStreamGlobalRetentionSettings] Updated global max retention to [null]
+2026.11.11 11:09:32 INFO  es[][o.e.c.m.DataStreamGlobalRetentionSettings] Updated failures default retention to [30d]
+2026.11.11 11:09:32 INFO  es[][o.e.c.m.DataStreamFailureStoreSettings] Updated data stream name patterns for enabling failure store to [[]]
+2026.11.11 11:09:32 INFO  es[][o.e.x.s.Security] Security is disabled
+2026.11.11 11:09:32 INFO  es[][o.e.x.i.s.e.a.AuthorizationTaskExecutor] Authorization task executor EIS URL: [https://inference.us-east-1.aws.svc.elastic.cloud]
+2026.11.11 11:09:32 INFO  es[][o.e.x.i.s.e.a.AuthorizationTaskExecutor] Starting authorization task executor
+2026.11.11 11:09:32 INFO  es[][o.e.t.a.APM] Sending apm metrics is disabled
+2026.11.11 11:09:32 INFO  es[][o.e.t.a.APM] Sending apm tracing is disabled
+2026.11.11 11:09:32 INFO  es[][o.e.t.n.NettyAllocator] creating NettyAllocator with the following configs: [name=unpooled, suggested_max_allocation_size=1mb, factors={es.unsafe.use_unpooled_allocator=null, g1gc_enabled=true, g1gc_region_size=4mb, heap_size=512mb}]
+2026.11.11 11:09:32 INFO  es[][o.e.d.DiscoveryModule] using discovery type [single-node] and seed hosts providers [settings]
+2026.11.11 11:09:32 INFO  es[][o.e.n.Node] initialized
+2026.11.11 11:09:32 INFO  es[][o.e.n.Node] starting ...
+2026.11.11 11:09:32 INFO  es[][o.e.t.TransportService] publish_address {127.0.0.1:36711}, bound_addresses {127.0.0.1:36711}
+2026.11.11 11:09:32 INFO  es[][o.e.b.BootstrapChecks] explicitly enforcing bootstrap checks
+2026.11.11 11:09:32 INFO  es[][o.e.c.c.ClusterBootstrapService] this node has not joined a bootstrapped cluster yet; [cluster.initial_master_nodes] is set to [sonarqube]
+2026.11.11 11:09:32 INFO  es[][o.e.c.c.Coordinator] setting initial configuration to VotingConfiguration[yV87G5IBT7ebgmCDLOKvYQ]
+2026.11.11 11:09:33 WARN  es[][i.o.usage] OpenTelemetry API usage issue detected. To see more details, enable FINEST logging for io.opentelemetry.usage. Stacktraces are includes to identify the offending call site.
+2026.11.11 11:09:33 INFO  es[][o.e.c.s.MasterService] elected-as-master ([1] nodes joined in term 1)[_FINISH_ELECTION_, {sonarqube}{yV87G5IBT7ebgmCDLOKvYQ}{BctMcnvDSQ-MoPIFfgmq_w}{sonarqube}{127.0.0.1}{127.0.0.1:36711}{cdfhilmrstw}{9.4.7}{8000099-9094000} completing election], term: 1, version: 1, delta: master node changed {previous [], current [{sonarqube}{yV87G5IBT7ebgmCDLOKvYQ}{BctMcnvDSQ-MoPIFfgmq_w}{sonarqube}{127.0.0.1}{127.0.0.1:36711}{cdfhilmrstw}{9.4.7}{8000099-9094000}]}
+2026.11.11 11:09:33 INFO  es[][o.e.c.c.CoordinationState] cluster UUID set to [7VqdYy8eQZSJQ26YZjW19g]
+2026.11.11 11:09:33 INFO  es[][o.e.c.s.ClusterApplierService] master node changed {previous [], current [{sonarqube}{yV87G5IBT7ebgmCDLOKvYQ}{BctMcnvDSQ-MoPIFfgmq_w}{sonarqube}{127.0.0.1}{127.0.0.1:36711}{cdfhilmrstw}{9.4.7}{8000099-9094000}]}, term: 1, version: 1, reason: Publication{term=1, version=1}
+2026.11.11 11:09:33 INFO  es[][o.e.c.c.NodeJoinExecutor] node-join: [{sonarqube}{yV87G5IBT7ebgmCDLOKvYQ}{BctMcnvDSQ-MoPIFfgmq_w}{sonarqube}{127.0.0.1}{127.0.0.1:36711}{cdfhilmrstw}{9.4.7}{8000099-9094000}] with reason [completing election]
+2026.11.11 11:09:33 INFO  es[][o.e.h.AbstractHttpServerTransport] publish_address {127.0.0.1:9001}, bound_addresses {127.0.0.1:9001}
+2026.11.11 11:09:33 INFO  es[][o.e.n.Node] started {sonarqube}{yV87G5IBT7ebgmCDLOKvYQ}{BctMcnvDSQ-MoPIFfgmq_w}{sonarqube}{127.0.0.1}{127.0.0.1:36711}{cdfhilmrstw}{9.4.7}{8000099-9094000}{xpack.installed=true, rack_id=sonarqube}
+2026.11.11 11:09:33 INFO  es[][o.e.c.f.AbstractFileWatchingService] starting file watcher ...
+2026.11.11 11:09:33 INFO  es[][o.e.c.f.AbstractFileWatchingService] file settings service up and running [tid=50]
+2026.11.11 11:09:33 INFO  es[][o.e.r.s.FileSettingsService] setting file [/opt/sonarqube/data/es9/config/operator/settings.json] not found, initializing [file_settings] as empty
+2026.11.11 11:09:33 WARN  es[][o.e.x.i.s.e.ElasticsearchInternalService] Get deployment stats failed, cannot update the endpoint's number of allocations
+java.lang.IllegalStateException: failed to find action [cluster:internal/xpack/ml/trained_models/deployments/stats/get] to execute
+	at org.elasticsearch.server@9.4.7/org.elasticsearch.client.internal.node.NodeClient.transportAction(NodeClient.java:136)
+	at org.elasticsearch.server@9.4.7/org.elasticsearch.client.internal.node.NodeClient.executeLocally(NodeClient.java:109)
+	at org.elasticsearch.server@9.4.7/org.elasticsearch.client.internal.node.NodeClient.doExecute(NodeClient.java:85)
+	at org.elasticsearch.server@9.4.7/org.elasticsearch.client.internal.support.AbstractClient.execute(AbstractClient.java:160)
+	at org.elasticsearch.server@9.4.7/org.elasticsearch.client.internal.FilterClient.doExecute(FilterClient.java:57)
+	at org.elasticsearch.server@9.4.7/org.elasticsearch.client.internal.OriginSettingClient.doExecute(OriginSettingClient.java:44)
+	at org.elasticsearch.server@9.4.7/org.elasticsearch.client.internal.support.AbstractClient.execute(AbstractClient.java:160)
+	at org.elasticsearch.inference@9.4.7/org.elasticsearch.xpack.inference.services.elasticsearch.ElasticsearchInternalService.updateModelsWithDynamicFields(ElasticsearchInternalService.java:944)
+	at org.elasticsearch.inference@9.4.7/org.elasticsearch.xpack.inference.action.TransportGetInferenceModelAction.parseModels(TransportGetInferenceModelAction.java:164)
+	at org.elasticsearch.inference@9.4.7/org.elasticsearch.xpack.inference.action.TransportGetInferenceModelAction.lambda$getAllModels$2(TransportGetInferenceModelAction.java:119)
+	at org.elasticsearch.server@9.4.7/org.elasticsearch.common.util.concurrent.ThreadContext$ContextPreservingRunnable.run(ThreadContext.java:1047)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1090)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:614)
+	at java.base/java.lang.Thread.run(Thread.java:1474)
+2026.11.11 11:09:33 INFO  es[][o.e.g.GatewayService] recovered [0] indices into cluster_state
+2026.11.11 11:09:33 INFO  es[][o.e.x.c.t.IndexTemplateRegistry] adding ingest pipeline reindex-data-stream-pipeline
+2026.11.11 11:09:33 INFO  es[][o.e.l.ClusterStateLicenseService] license [ba08a796-8d5b-4774-9c94-7582bc6858a5] mode [basic] - valid
+2026.11.11 11:09:33 INFO  app[][o.s.a.SchedulerImpl] Process[es] is up
+2026.11.11 11:09:33 INFO  app[][o.s.a.ProcessLauncherImpl] Launch process[WEB_SERVER] from [/opt/sonarqube]: /opt/java/openjdk/bin/java -Djava.awt.headless=true -Dfile.encoding=UTF-8 -Djava.io.tmpdir=/opt/sonarqube/temp -XX:-OmitStackTraceInFastThrow --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-opens=java.rmi/sun.rmi.transport=ALL-UNNAMED --add-exports=java.base/jdk.internal.ref=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.management/sun.management=ALL-UNNAMED --add-opens=jdk.management/com.sun.management.internal=ALL-UNNAMED -Xmx1G -Xms128m -XX:+HeapDumpOnOutOfMemoryError -Dhttp.nonProxyHosts=localhost|127.*|[::1] -cp ./lib/sonar-application-26.11.0.134175.jar:/opt/sonarqube/lib/jdbc/postgresql/postgresql-42.7.13.jar org.sonar.server.app.WebServer /opt/sonarqube/temp/sq-process18145643080084699976properties
+2026.11.11 11:09:33 INFO  es[][o.e.h.n.s.HealthNodeTaskExecutor] Node [yV87G5IBT7ebgmCDLOKvYQ/sonarqube] is selected as the current health node.
+2026.11.11 11:09:33 INFO  web[][o.s.p.ProcessEntryPoint] Starting Web Server
+2026.11.11 11:09:33 INFO  web[][o.s.s.a.TomcatHttpConnectorFactory] Starting Tomcat on port 9000
+2026.11.11 11:09:33 WARN  web[][o.a.c.c.StandardHost] appBase on host [localhost] is a parent folder of CATALINA_BASE, which is a bad idea
+2026.11.11 11:09:33 INFO  web[][o.s.s.p.LogServerVersion] SonarQube Server / 26.11.0.134175 / 791cb38be23b3f4be23c534b6a324d1368b6ef91
+2026.11.11 11:09:33 INFO  web[][o.s.d.DefaultDatabase] Create JDBC data source for jdbc:postgresql://postgres:5432/sonar
+2026.11.11 11:09:33 INFO  web[][c.z.h.HikariDataSource] HikariPool-1 - Starting...
+2026.11.11 11:09:33 INFO  web[][c.z.h.p.HikariPool] HikariPool-1 - Added connection org.postgresql.jdbc.PgConnection@6009bea
+2026.11.11 11:09:33 INFO  web[][c.z.h.HikariDataSource] HikariPool-1 - Start completed.
+2026.11.11 11:09:34 INFO  web[][o.s.s.p.ServerFileSystemImpl] SonarQube home: /opt/sonarqube
+2026.11.11 11:09:34 INFO  web[][o.s.s.u.SystemPasscodeImpl] System authentication by passcode is disabled
+2026.11.11 11:09:34 INFO  web[][o.s.s.p.ServerPluginManager] Deploy C# Code Quality and Security / 10.35.0.4138 / 75f15181797ce2c565a6ebb3dc78d8bfd3d3c638
+2026.11.11 11:09:34 INFO  web[][o.s.s.p.ServerPluginManager] Deploy Flex Code Quality and Security / 2.18.0.6281 / 84cf021e37206d01e7f04ffe7172c40d0ee8ad85
+2026.11.11 11:09:34 INFO  web[][o.s.s.p.ServerPluginManager] Deploy Go Code Quality and Security / 1.48.0.9254 / b48aae640d26418e739e65e33ed2d0e1ba862f99
+2026.11.11 11:09:34 INFO  web[][o.s.s.p.ServerPluginManager] Deploy HTML Code Quality and Security / 3.33.0.9779 / 948c20362d54e39707185d1962606526a806db5a
+2026.11.11 11:09:34 INFO  web[][o.s.s.p.ServerPluginManager] Deploy IaC Code Quality and Security / 2.26.0.24580 / null
+2026.11.11 11:09:34 INFO  web[][o.s.s.p.ServerPluginManager] Deploy JaCoCo / 1.7.0.5925 / 313f5fba7d1a6dcae7be58022a332eb260282bfe
+2026.11.11 11:09:34 INFO  web[][o.s.s.p.ServerPluginManager] Deploy Java Code Quality and Security / 8.46.0.59609 / c6934e1cd4e70de6593c4163b4828757367352c8
+2026.11.11 11:09:34 INFO  web[][o.s.s.p.ServerPluginManager] Deploy JavaScript/TypeScript/CSS Code Quality and Security / 14.3.0.46350 / 822582ba4369505b8701de3c4a0029e7f769e93a
+2026.11.11 11:09:34 INFO  web[][o.s.s.p.ServerPluginManager] Deploy Kotlin Code Quality and Security / 3.13.0.11095 / 90a64bb58a9c87ba39e7656fe4d360eeb7d18117
+2026.11.11 11:09:34 INFO  web[][o.s.s.p.ServerPluginManager] Deploy PHP Code Quality and Security / 4.2.0.27261 / null
+2026.11.11 11:09:34 INFO  web[][o.s.s.p.ServerPluginManager] Deploy Python Code Quality and Security / 5.32.0.37250 / 68fad87bda6064b96dcc3971e287f04a1148432b
+2026.11.11 11:09:34 INFO  web[][o.s.s.p.ServerPluginManager] Deploy Text Code Quality and Security / 2.53.0.13730 / null
+2026.11.11 11:09:34 INFO  web[][o.s.s.p.ServerPluginManager] Deploy VB.NET Code Quality and Security / 10.35.0.4138 / 75f15181797ce2c565a6ebb3dc78d8bfd3d3c638
+2026.11.11 11:09:34 INFO  web[][o.s.s.p.ServerPluginManager] Deploy XML Code Quality and Security / 2.19.0.8138 / 86bebf89b5b8a93074cfdeff8437fabe40974701
+2026.11.11 11:09:34 INFO  web[][o.s.s.p.d.m.c.PostgresCharsetHandler] Verify that database charset supports UTF8
+2026.11.11 11:09:34 INFO  web[][o.s.s.e.EsClientProvider] Connected to local Elasticsearch: [http://localhost:9001]
+2026.11.11 11:09:35 INFO  web[][o.s.s.p.w.MasterServletFilter] Initializing servlet filter org.sonar.server.platform.web.WebServiceFilter@796c68bf [pattern=UrlPattern{inclusions=[/api/system/migrate_db.*, ...], exclusions=[/api/components/update_key, ...]}]
+2026.11.11 11:09:35 INFO  web[][o.s.s.p.w.MasterServletFilter] Initializing servlet filter org.sonar.server.platform.web.NoCacheFilter@781c2497 [pattern=UrlPattern{inclusions=[/api/v2/*], exclusions=[]}]
+2026.11.11 11:09:35 INFO  web[][o.s.s.p.DetectPluginChange] Detect plugin changes
+2026.11.11 11:09:35 INFO  web[][o.s.s.p.DetectPluginChange] No plugin change detected
+2026.11.11 11:09:35 INFO  web[][o.s.s.s.PropertiesDBCleaner] Clean up properties from db
+2026.11.11 11:09:35 INFO  web[][o.s.s.e.IndexCreator] Create index [metadatas]
+2026.11.11 11:09:35 INFO  web[][o.h.v.i.util.Version] HV000001: Hibernate Validator 9.1.4.Final
+2026.11.11 11:09:35 INFO  es[][o.e.c.m.MetadataCreateIndexService] creating index [metadatas] in project [default], cause [api], templates [], shards [1]/[0]
+2026.11.11 11:09:36 INFO  es[][o.e.c.r.a.AllocationService] current.health="GREEN" message="Cluster health status changed from [YELLOW] to [GREEN] (reason: [shards started [[metadatas][0]]])." previous.health="YELLOW" reason="shards started [[metadatas][0]]"
+2026.11.11 11:09:36 INFO  web[][o.s.s.e.IndexCreator] Create mapping metadatas
+2026.11.11 11:09:36 INFO  es[][o.e.c.m.MetadataMappingService] [metadatas/JAHzRxQLTk6SSxNwReR5bg] create_mapping
+2026.11.11 11:09:36 INFO  web[][o.s.s.e.IndexCreator] Create index [components]
+2026.11.11 11:09:36 INFO  es[][o.e.c.m.MetadataCreateIndexService] creating index [components] in project [default], cause [api], templates [], shards [5]/[0]
+2026.11.11 11:09:36 INFO  es[][o.e.c.r.a.AllocationService] current.health="GREEN" message="Cluster health status changed from [YELLOW] to [GREEN] (reason: [shards started [[components][4]]])." previous.health="YELLOW" reason="shards started [[components][4]]"
+2026.11.11 11:09:36 INFO  web[][o.s.s.e.IndexCreator] Create mapping components
+2026.11.11 11:09:36 INFO  es[][o.e.c.m.MetadataMappingService] [components/ITQxEln4TjC2XhM_L81TRQ] create_mapping
+2026.11.11 11:09:36 INFO  web[][o.s.s.e.IndexCreator] Create index [projectmeasures]
+2026.11.11 11:09:36 INFO  es[][o.e.c.m.MetadataCreateIndexService] creating index [projectmeasures] in project [default], cause [api], templates [], shards [5]/[0]
+2026.11.11 11:09:36 INFO  es[][o.e.c.r.a.AllocationService] current.health="GREEN" message="Cluster health status changed from [YELLOW] to [GREEN] (reason: [shards started [[projectmeasures][4]]])." previous.health="YELLOW" reason="shards started [[projectmeasures][4]]"
+2026.11.11 11:09:36 INFO  web[][o.s.s.e.IndexCreator] Create mapping projectmeasures
+2026.11.11 11:09:36 INFO  es[][o.e.c.m.MetadataMappingService] [projectmeasures/d01ok55GTE-6y7glqox36g] create_mapping
+2026.11.11 11:09:36 INFO  web[][o.s.s.e.IndexCreator] Create index [rules]
+2026.11.11 11:09:36 INFO  es[][o.e.c.m.MetadataCreateIndexService] creating index [rules] in project [default], cause [api], templates [], shards [2]/[0]
+2026.11.11 11:09:36 INFO  es[][o.e.c.r.a.AllocationService] current.health="GREEN" message="Cluster health status changed from [YELLOW] to [GREEN] (reason: [shards started [[rules][1]]])." previous.health="YELLOW" reason="shards started [[rules][1]]"
+2026.11.11 11:09:36 INFO  web[][o.s.s.e.IndexCreator] Create mapping rules
+2026.11.11 11:09:36 INFO  es[][o.e.c.m.MetadataMappingService] [rules/Y3AQ-DuGQFOi2PoY30ByeQ] create_mapping
+2026.11.11 11:09:36 INFO  web[][o.s.s.e.IndexCreator] Create index [issues]
+2026.11.11 11:09:36 INFO  es[][o.e.c.m.MetadataCreateIndexService] creating index [issues] in project [default], cause [api], templates [], shards [5]/[0]
+2026.11.11 11:09:36 INFO  es[][o.e.c.r.a.AllocationService] current.health="GREEN" message="Cluster health status changed from [YELLOW] to [GREEN] (reason: [shards started [[issues][4]]])." previous.health="YELLOW" reason="shards started [[issues][4]]"
+2026.11.11 11:09:36 INFO  web[][o.s.s.e.IndexCreator] Create mapping issues
+2026.11.11 11:09:36 INFO  es[][o.e.c.m.MetadataMappingService] [issues/IS9vCfENQg2iGHf951DIgQ] create_mapping
+2026.11.11 11:09:36 INFO  web[][o.s.s.e.IndexCreator] Create index [views]
+2026.11.11 11:09:36 INFO  es[][o.e.c.m.MetadataCreateIndexService] creating index [views] in project [default], cause [api], templates [], shards [5]/[0]
+2026.11.11 11:09:36 INFO  es[][o.e.c.r.a.AllocationService] current.health="GREEN" message="Cluster health status changed from [YELLOW] to [GREEN] (reason: [shards started [[views][4]]])." previous.health="YELLOW" reason="shards started [[views][4]]"
+2026.11.11 11:09:36 INFO  web[][o.s.s.e.IndexCreator] Create mapping views
+2026.11.11 11:09:36 INFO  es[][o.e.c.m.MetadataMappingService] [views/LEocQfyfRAOtDcb0vljwMA] create_mapping
+2026.11.11 11:09:36 INFO  web[][o.s.s.s.LogServerId] Server ID: 46AF5D23-AaHKRO_I-5X0HH0uFyWD
+2026.11.11 11:09:36 INFO  web[][o.o.c.c.InitializationService] Initializing OpenSAML using the Java Services API
+2026.11.11 11:09:37 INFO  web[][o.o.x.a.AlgorithmRegistry] Algorithm failed runtime support check, will not be usable: http://www.w3.org/2001/04/xmlenc#ripemd160
+2026.11.11 11:09:37 INFO  web[][o.o.x.a.AlgorithmRegistry] Algorithm failed runtime support check, will not be usable: http://www.w3.org/2001/04/xmldsig-more#hmac-ripemd160
+2026.11.11 11:09:37 INFO  web[][o.o.x.a.AlgorithmRegistry] Algorithm failed runtime support check, will not be usable: http://www.w3.org/2001/04/xmldsig-more#rsa-ripemd160
+2026.11.11 11:09:37 WARN  web[][o.s.s.a.LogOAuthWarning] For security reasons, OAuth authentication should use HTTPS. You should set the property 'Administration > Configuration > Server base URL' to an HTTPS URL.
+2026.11.11 11:09:37 INFO  web[][o.s.s.p.UpdateCenterClient] Update center: https://downloads.sonarsource.com/sonarqube/update/update-center.properties
+2026.11.11 11:09:37 WARN  web[][o.s.a.s.w.WebService$Action] The response example is not set on action api/hotspots/migration_status
+2026.11.11 11:09:37 INFO  web[][o.s.s.n.NotificationDaemon] Notification service started (delay 60 sec.)
+2026.11.11 11:09:37 INFO  web[][o.s.t.TelemetryDaemon] Sharing of SonarQube statistics is enabled.
+2026.11.11 11:09:37 INFO  web[][o.s.s.s.RegisterPermissionTemplates] Register permission templates
+2026.11.11 11:09:37 INFO  web[][o.s.s.s.RenameDeprecatedPropertyKeys] Rename deprecated property keys
+2026.11.11 11:09:37 INFO  web[][o.s.s.s.RegisterPlugins] Register plugins
+2026.11.11 11:09:37 INFO  web[][o.s.s.p.w.MasterServletFilter] Initializing servlet filter org.sonar.server.platform.web.SonarQubeIdeConnectionFilter@e23c390 [pattern=UrlPattern{inclusions=[/api/*], exclusions=[/api/v2/*]}]
+2026.11.11 11:09:37 INFO  web[][o.s.s.p.w.MasterServletFilter] Initializing servlet filter org.sonar.server.platform.web.WebServiceFilter@6a421281 [pattern=UrlPattern{inclusions=[/api/issues/delete_comment.*, ...], exclusions=[/api/authentication/login.*, ...]}]
+2026.11.11 11:09:37 INFO  web[][o.s.s.p.w.MasterServletFilter] Initializing servlet filter org.sonar.server.platform.web.NoCacheFilter@1cd73509 [pattern=UrlPattern{inclusions=[/api/v2/*], exclusions=[]}]
+2026.11.11 11:09:37 INFO  web[][o.s.s.p.w.MasterServletFilter] Initializing servlet filter org.sonar.server.platform.web.WebServiceReroutingFilter@49c20f3d [pattern=UrlPattern{inclusions=[/api/components/update_key, ...], exclusions=[]}]
+2026.11.11 11:09:37 INFO  web[][o.s.s.p.w.MasterServletFilter] Initializing servlet filter org.sonar.server.authentication.DefaultAdminCredentialsVerifierFilter@59ed6ad6 [pattern=UrlPattern{inclusions=[/*], exclusions=[*.css, ...]}]
+2026.11.11 11:09:37 INFO  web[][o.s.s.p.w.MasterServletFilter] Initializing servlet filter org.sonar.server.authentication.InitFilter@2341bd70 [pattern=UrlPattern{inclusions=[/sessions/init/*], exclusions=[]}]
+2026.11.11 11:09:37 INFO  web[][o.s.s.p.w.MasterServletFilter] Initializing servlet filter org.sonar.server.authentication.SamlValidationRedirectionFilter@61bab6c [pattern=UrlPattern{inclusions=[/oauth2/callback/saml], exclusions=[]}]
+2026.11.11 11:09:37 INFO  web[][o.s.s.p.w.MasterServletFilter] Initializing servlet filter org.sonar.server.authentication.OAuth2CallbackFilter@5f79e775 [pattern=UrlPattern{inclusions=[/oauth2/callback/*], exclusions=[]}]
+2026.11.11 11:09:37 INFO  web[][o.s.s.p.w.MasterServletFilter] Initializing servlet filter org.sonar.server.authentication.ResetPasswordFilter@6d708d96 [pattern=UrlPattern{inclusions=[/*], exclusions=[*.css, ...]}]
+2026.11.11 11:09:37 INFO  web[][o.s.s.p.w.MasterServletFilter] Initializing servlet filter org.sonar.server.authentication.ws.LoginAction@5514c967 [pattern=UrlPattern{inclusions=[/api/authentication/login], exclusions=[]}]
+2026.11.11 11:09:37 INFO  web[][o.s.s.p.w.MasterServletFilter] Initializing servlet filter org.sonar.server.authentication.ws.LogoutAction@6788ce86 [pattern=UrlPattern{inclusions=[/api/authentication/logout], exclusions=[]}]
+2026.11.11 11:09:37 INFO  web[][o.s.s.p.w.MasterServletFilter] Initializing servlet filter org.sonar.server.authentication.ws.ValidateAction@4db8e66d [pattern=UrlPattern{inclusions=[/api/authentication/validate], exclusions=[]}]
+2026.11.11 11:09:37 INFO  web[][o.s.s.p.w.MasterServletFilter] Initializing servlet filter org.sonar.server.saml.ws.ValidationInitAction@124531ab [pattern=UrlPattern{inclusions=[/saml/validation_init], exclusions=[]}]
+2026.11.11 11:09:37 INFO  web[][o.s.s.p.w.MasterServletFilter] Initializing servlet filter org.sonar.server.saml.ws.ValidationAction@1f56ac47 [pattern=UrlPattern{inclusions=[/saml/validation], exclusions=[]}]
+2026.11.11 11:09:37 INFO  web[][o.s.s.p.w.MasterServletFilter] Initializing servlet filter org.sonar.server.user.ws.ChangePasswordAction@43740775 [pattern=UrlPattern{inclusions=[/api/users/change_password], exclusions=[]}]
+2026.11.11 11:09:37 INFO  web[][o.s.s.p.w.MasterServletFilter] Initializing servlet filter org.sonar.server.almsettings.ws.GithubManifestCallbackFilter@186f84bc [pattern=UrlPattern{inclusions=[/github/manifest/callback], exclusions=[]}]
+2026.11.11 11:09:37 INFO  web[][o.s.s.p.w.MasterServletFilter] Initializing servlet filter org.sonar.server.plugins.PluginsRiskConsentFilter@8bd8a8b [pattern=UrlPattern{inclusions=[/*], exclusions=[*.css, ...]}]
+2026.11.11 11:09:38 INFO  web[][o.s.s.e.IndexerStartupTask] Indexing of type [rules/rule/activeRule]...
+2026.11.11 11:09:38 WARN  es[][o.e.s.i.v.ESVectorizationProvider] Java vector incubator module is not readable. For optimal vector performance, pass '--add-modules jdk.incubator.vector' to enable Vector API.
+2026.11.11 11:09:39 INFO  web[][o.s.s.e.IndexerStartupTask] Indexing of type [rules/rule/activeRule] done | time=1157ms
+2026.11.11 11:09:39 INFO  web[][o.s.s.e.IndexerStartupTask] Indexing of type [rules/rule]...
+2026.11.11 11:09:42 INFO  web[][o.s.s.e.IndexerStartupTask] Indexing of type [rules/rule] done | time=3214ms
+2026.11.11 11:09:42 INFO  web[][o.s.s.e.IndexerStartupTask] Indexing of type [projectmeasures/auth/projectmeasure]...
+2026.11.11 11:09:42 INFO  web[][o.s.s.e.IndexerStartupTask] Indexing of type [projectmeasures/auth/projectmeasure] done | time=15ms
+2026.11.11 11:09:42 INFO  web[][o.s.s.e.IndexerStartupTask] Indexing of type [components/auth/component]...
+2026.11.11 11:09:42 INFO  web[][o.s.s.e.IndexerStartupTask] Indexing of type [components/auth/component] done | time=16ms
+2026.11.11 11:09:42 INFO  web[][o.s.s.e.IndexerStartupTask] Indexing of type [views/view]...
+2026.11.11 11:09:42 INFO  web[][o.s.s.e.IndexerStartupTask] Indexing of type [views/view] done | time=65ms
+2026.11.11 11:09:42 INFO  web[][o.s.s.e.IndexerStartupTask] Trigger asynchronous indexing of type [issues/auth/issue]...
+2026.11.11 11:09:42 INFO  web[][o.s.s.i.i.AsyncIssueIndexingImpl] 0 pending indexing task found to be deleted...
+2026.11.11 11:09:42 INFO  web[][o.s.s.i.i.AsyncIssueIndexingImpl] 0 completed indexing task found to be deleted...
+2026.11.11 11:09:42 INFO  web[][o.s.s.i.i.AsyncIssueIndexingImpl] Indexing task deletion complete.
+2026.11.11 11:09:42 INFO  web[][o.s.s.i.i.AsyncIssueIndexingImpl] Deleting tasks characteristics...
+2026.11.11 11:09:42 INFO  web[][o.s.s.i.i.AsyncIssueIndexingImpl] Tasks characteristics deletion complete.
+2026.11.11 11:09:42 INFO  web[][o.s.s.i.i.AsyncIssueIndexingImpl] 0 branch found in need of issue sync.
+2026.11.11 11:09:42 INFO  web[][o.s.s.e.IndexerStartupTask] Trigger asynchronous indexing of type [issues/auth/issue] done | time=14ms
+2026.11.11 11:09:42 INFO  web[][o.s.s.e.IndexerStartupTask] Indexing of types [components/auth],[projectmeasures/auth],[issues/auth]...
+2026.11.11 11:09:42 INFO  web[][o.s.s.e.IndexerStartupTask] Indexing of types [components/auth],[projectmeasures/auth],[issues/auth] done | time=20ms
+2026.11.11 11:09:42 INFO  web[][o.s.s.p.p.PlatformLevelStartup] Running Community Edition
+2026.11.11 11:09:42 WARN  web[][o.s.c.t.p.HistoryPurgeTaskLimiter] Unable to acquire lock HistoryPurgeCheck, skipping enqueue of HISTORY_PURGE task
+2026.11.11 11:09:42 WARN  app[][startup] ####################################################################################################################
+2026.11.11 11:09:42 WARN  app[][startup] Default Administrator credentials are still being used. Make sure to change the password or deactivate the account.
+2026.11.11 11:09:42 WARN  app[][startup] ####################################################################################################################
+2026.11.11 11:09:42 INFO  web[][o.s.s.p.Platform] Web Server is operational
+2026.11.11 11:09:42 INFO  app[][o.s.a.SchedulerImpl] Process[web] is up
+2026.11.11 11:09:42 INFO  app[][o.s.a.ProcessLauncherImpl] Launch process[COMPUTE_ENGINE] from [/opt/sonarqube]: /opt/java/openjdk/bin/java -Djava.awt.headless=true -Dfile.encoding=UTF-8 -Djava.io.tmpdir=/opt/sonarqube/temp -XX:-OmitStackTraceInFastThrow --add-opens=java.base/java.util=ALL-UNNAMED --add-exports=java.base/jdk.internal.ref=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.management/sun.management=ALL-UNNAMED --add-opens=jdk.management/com.sun.management.internal=ALL-UNNAMED -Xmx1536m -Xms128m -XX:+HeapDumpOnOutOfMemoryError -Dhttp.nonProxyHosts=localhost|127.*|[::1] -cp ./lib/sonar-application-26.11.0.134175.jar:/opt/sonarqube/lib/jdbc/postgresql/postgresql-42.7.13.jar org.sonar.ce.app.CeServer /opt/sonarqube/temp/sq-process8122024332953125473properties
+2026.11.11 11:09:42 INFO  ce[][o.s.p.ProcessEntryPoint] Starting Compute Engine
+2026.11.11 11:09:42 INFO  ce[][o.s.ce.app.CeServer] Compute Engine starting up...
+2026.11.11 11:09:43 INFO  ce[][o.s.d.DefaultDatabase] Create JDBC data source for jdbc:postgresql://postgres:5432/sonar
+2026.11.11 11:09:43 INFO  ce[][c.z.h.HikariDataSource] HikariPool-1 - Starting...
+2026.11.11 11:09:43 INFO  ce[][c.z.h.p.HikariPool] HikariPool-1 - Added connection org.postgresql.jdbc.PgConnection@15f0e48c
+2026.11.11 11:09:43 INFO  ce[][c.z.h.HikariDataSource] HikariPool-1 - Start completed.
+2026.11.11 11:09:43 INFO  ce[][o.s.s.p.ServerFileSystemImpl] SonarQube home: /opt/sonarqube
+2026.11.11 11:09:43 INFO  ce[][o.s.c.c.CePluginRepository] Load plugins
+2026.11.11 11:09:44 INFO  ce[][o.s.s.e.EsClientProvider] Connected to local Elasticsearch: [http://localhost:9001]

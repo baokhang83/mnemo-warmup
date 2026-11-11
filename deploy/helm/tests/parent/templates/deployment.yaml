@@ -19,7 +19,12 @@ spec:
         - name: app
           image: {{ include "mnemo-warmup.appImage" .Values.warmup | quote }}
           command: {{ include "mnemo-warmup.command" .Values.warmup }}
-          args: ["java", "-Xmx512m", "-jar", "/app/app.jar"]
+          args:
+            {{- include "mnemo-warmup.argsPrefix" .Values.warmup | nindent 12 }}
+            - java
+            - -Xmx512m
+            - -jar
+            - /app/app.jar
           env:
             {{- include "mnemo-warmup.env" .Values.warmup | nindent 12 }}
           volumeMounts:

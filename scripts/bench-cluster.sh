@@ -11,7 +11,7 @@
 # back to 0. One discarded warm-up round per arm comes first. Raw pod JSON and logs are kept; scripts/bench_summarize.py turns
 # them into the tables. See benchmarks/README.md for the method, its limits and the results.
 #
-# Usage: scripts/bench-cluster.sh [--app spring-heavy|example] [--restarts N] [--out DIR] [--app-cpu CPUS] [--app-memory MEM]
+# Usage: scripts/bench-cluster.sh [--app spring-heavy|example|jenkins|sonarqube] [--restarts N] [--out DIR] [--app-cpu CPUS] [--app-memory MEM] [--tools-delivery init-container|image-volume]
 #   --app-cpu / --app-memory set requests = limits on the APPLICATION container (for example 1 and 1Gi, which makes the pod
 #   Guaranteed). The default is no pod limits (BestEffort). The generated fetch init container never gets limits from the injector.
 #   Needs docker, kind, kubectl, helm 3, java 21+, python3 and network access. KEEP=1 keeps the cluster and registry.
@@ -25,6 +25,7 @@ APP=spring-heavy
 RESTARTS=12
 APP_CPU=""
 APP_MEMORY=""
+TOOLS_DELIVERY=init-container
 RUN="$$-$(date +%s)"
 OUT=""
 while [ $# -gt 0 ]; do
@@ -34,6 +35,7 @@ while [ $# -gt 0 ]; do
     --out) OUT=$2; shift 2 ;;
     --app-cpu) APP_CPU=$2; shift 2 ;;
     --app-memory) APP_MEMORY=$2; shift 2 ;;
+    --tools-delivery) TOOLS_DELIVERY=$2; shift 2 ;;
     *) echo "unknown option: $1"; exit 2 ;;
   esac
 done
@@ -44,8 +46,22 @@ OUT=$(cd "$OUT" && pwd)
 case "$APP" in
   spring-heavy) APP_DIR=benchmarks/spring-heavy;  APP_IMAGE="bench-spring-heavy:$RUN"; READY_PATH=/actuator/health/readiness; BUILD_ARGS=(--build-arg JDK=21) ;;
   example)      APP_DIR=examples/spring-boot; APP_IMAGE="mnemo-example:bench-$RUN"; READY_PATH=/health;                    BUILD_ARGS=(--build-arg JDK=21) ;;
+  # Jenkins LTS WAR (third party, not Spring Boot): trained with http-probe on /login, which answers 200 only once it is up.
+  jenkins)      APP_DIR=benchmarks/jenkins;      APP_IMAGE="bench-jenkins:$RUN";      READY_PATH=/login; BUILD_ARGS=(--build-arg JDK=21)
+                APP_JAR=/app/jenkins.war; APP_JAVA_OPTS='["-Djenkins.install.runSetupWizard=false"]'
+                WARMUP_SETS=(--set warmup.exitMode=http-probe --set warmup.probeUrl=http://localhost:8080/login) ;;
+  # SonarQube Community Build (official image, pinned): a launcher JVM that starts web, compute-engine and search JVMs, with a
+  # PostgreSQL started here. Its status endpoint answers 200 while still STARTING, so readiness is a command that wants "UP".
+  sonarqube)    APP_DIR=benchmarks/sonarqube;    APP_IMAGE="bench-sonarqube:$RUN";    READY_PATH=/api/system/status; BUILD_ARGS=()
+                APP_ROOT=/opt/sonarqube; APP_JAR=/opt/sonarqube/lib/sonarqube.jar; APP_JAVA_OPTS='[]'; POSTGRES_IMAGE=postgres:17-alpine
+                WARMUP_SETS=(--set warmup.exitMode=http-probe --set warmup.probeUrl=http://localhost:9000/api/system/status --set port=9000)
+                APP_VALUES_YAML=$'readinessCommand:\n  - sh\n  - -c\n  - curl -sf http://localhost:9000/api/system/status | grep -q \'"status":"UP"\'\n'
+                APP_ENV_YAML=$'  - { name: SONAR_JDBC_URL, value: "jdbc:postgresql://postgres:5432/sonar" }\n  - { name: SONAR_JDBC_USERNAME, value: sonar }\n  - { name: SONAR_JDBC_PASSWORD, value: sonar }\n  - { name: SONAR_LOG_CONSOLE, value: "true" }' ;;
   *) echo "unknown app: $APP"; exit 2 ;;
 esac
+case "$TOOLS_DELIVERY" in init-container) ;; image-volume) WARMUP_SETS+=(--set warmup.toolsDelivery=image-volume) ;; *) echo "unknown --tools-delivery: $TOOLS_DELIVERY"; exit 2 ;; esac
+APP_ROOT=${APP_ROOT:-/app}; APP_VALUES_YAML=${APP_VALUES_YAML:-}; APP_ENV_YAML=${APP_ENV_YAML:-}; POSTGRES_IMAGE=${POSTGRES_IMAGE:-}
+APP_JAR=${APP_JAR:-/app/app.jar}; APP_JAVA_OPTS=${APP_JAVA_OPTS:-[]}; WARMUP_SETS=("${WARMUP_SETS[@]+"${WARMUP_SETS[@]}"}")
 
 CLUSTER="mw-bench-$RUN"; CTX="kind-$CLUSTER"; REG="mw-bench-registry-$RUN"
 TOOLS_IMAGE="mnemo-warmup-tools:bench-$RUN"
@@ -67,7 +83,8 @@ for tool in docker kind kubectl helm java python3; do command -v "$tool" >/dev/n
 case "$(helm version --short 2>/dev/null)" in v3.*) ;; *) echo "Helm 3 is required"; exit 2 ;; esac
 
 JAR=${MNEMO_WARMUP_JAR:-warmup-cli/target/mnemo-warmup.jar}
-if [ ! -f "$JAR" ]; then
+# Rebuild when the jar is missing or any source is newer than it: the injector and the trainer in the benchmark must be this checkout's.
+if [ ! -f "$JAR" ] || [ -n "$(find warmup-core/src warmup-cli/src pom.xml warmup-core/pom.xml warmup-cli/pom.xml -type f -newer "$JAR" 2>/dev/null | head -1)" ]; then
   echo "== building the CLI jar"
   mvn -B -q -DskipTests -Dmaven.javadoc.skip=true -Djacoco.skip=true -pl warmup-cli -am package >/dev/null 2>&1 || { echo "CLI build failed"; exit 1; }
 fi
@@ -77,7 +94,7 @@ export PATH="$BIN:$PATH"
 
 echo "== building images (tools image from this checkout, application: $APP)"
 docker build -q -f image/Dockerfile -t "$TOOLS_IMAGE" --build-arg VERSION=bench . >/dev/null || { echo "tools image build failed"; exit 1; }
-docker build -q "${BUILD_ARGS[@]}" -t "$APP_IMAGE" "$APP_DIR" >/dev/null || { echo "application image build failed"; exit 1; }
+docker build -q ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"} -t "$APP_IMAGE" "$APP_DIR" >/dev/null || { echo "application image build failed"; exit 1; }
 
 echo "== starting kind cluster and the archive registry"
 kind create cluster --name "$CLUSTER" ${KIND_NODE_IMAGE:+--image "$KIND_NODE_IMAGE"} --wait 180s >/dev/null 2>&1 || { echo "kind create failed"; exit 1; }
@@ -85,14 +102,51 @@ docker run -d --name "$REG" --network kind registry:2 >/dev/null || { echo "regi
 REG_IP=$(docker inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' "$REG")
 for img in "${IMAGES[@]}"; do kind load docker-image "$img" --name "$CLUSTER" >/dev/null 2>&1 || { echo "kind load failed for $img"; exit 1; }; done
 k create namespace "$NS" >/dev/null
+if [ -n "$POSTGRES_IMAGE" ]; then
+  echo "== starting PostgreSQL ($POSTGRES_IMAGE) for the application"
+  # The node pulls the image itself: a freshly pulled multi-platform image does not always survive "kind load".
+  k -n "$NS" apply -f - >/dev/null <<YAML
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: postgres }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: postgres } }
+  template:
+    metadata: { labels: { app: postgres } }
+    spec:
+      containers:
+        - name: postgres
+          image: $POSTGRES_IMAGE
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: POSTGRES_USER, value: sonar }
+            - { name: POSTGRES_PASSWORD, value: sonar }
+            - { name: POSTGRES_DB, value: sonar }
+          ports: [{ containerPort: 5432 }]
+          readinessProbe: { exec: { command: ["pg_isready", "-U", "sonar"] }, periodSeconds: 2 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: postgres }
+spec:
+  selector: { app: postgres }
+  ports: [{ port: 5432 }]
+YAML
+  k -n "$NS" rollout status deploy/postgres --timeout=600s >/dev/null || { echo "PostgreSQL did not become ready (the node must be able to pull $POSTGRES_IMAGE)"; exit 1; }
+fi
 
 # ---- three releases of the same chart, one per arm ----
 VALUES="$BIN/values.yaml"
 cat >"$VALUES" <<YAML
 image: { repository: ${APP_IMAGE%%:*}, tag: "${APP_IMAGE#*:}", pullPolicy: Never }
 readinessPath: $READY_PATH
+jar: $APP_JAR
+javaOptions: $APP_JAVA_OPTS
 extraEnv:
   - { name: MNEMO_WARMUP_TIMING, value: "1" }
+${APP_ENV_YAML}
+${APP_VALUES_YAML}
 YAML
 if [ -n "$APP_CPU$APP_MEMORY" ]; then
   {
@@ -106,7 +160,7 @@ deploy() { # <release> <extra helm args...>
   local rel=$1; shift
   helm --kube-context "$CTX" upgrade --install "$rel" examples/annotated-app -n "$NS" -f "$VALUES" \
     --post-renderer "$ROOT/scripts/mnemo-warmup-inject" \
-    --post-renderer-args="--namespace=$NS" --post-renderer-args="--tools-image=$TOOLS_IMAGE" "$@" >/dev/null 2>&1
+    --post-renderer-args="--namespace=$NS" --post-renderer-args="--tools-image=$TOOLS_IMAGE" ${WARMUP_SETS[@]+"${WARMUP_SETS[@]}"} "$@" >/dev/null 2>&1
 }
 quiesce() { # <release>: scale to 0 and keep the trainer from running on its own
   k -n "$NS" scale deploy/"$1" --replicas=0 >/dev/null
@@ -128,7 +182,8 @@ echo "== training the archive for the cached arm"
 cron=$(k -n "$NS" get cronjob -l warmup.mnemo.io/owner=cached -o name | head -1 | sed 's|.*/||')
 k -n "$NS" create job train --from="cronjob/$cron" >/dev/null || { echo "cannot start the training job"; exit 1; }
 k -n "$NS" wait --for=condition=complete job/train --timeout=900s >/dev/null 2>&1 || { echo "the training job did not complete"; k -n "$NS" logs job/train -c trainer | tail -20; exit 1; }
-k -n "$NS" logs job/train -c trainer 2>&1 | grep -q "train: TRAINED" || { echo "training did not report TRAINED"; exit 1; }
+k -n "$NS" logs job/train -c trainer >"$OUT/raw/train.log" 2>&1
+grep -q "train: TRAINED" "$OUT/raw/train.log" || { echo "training did not report TRAINED; the end of the trainer log:"; tail -25 "$OUT/raw/train.log" | cut -c1-220; exit 1; }
 ARCHIVE_BYTES=$(docker exec "$REG" sh -c 'find /var/lib/registry -path "*blobs*" -name data -size +100k -exec wc -c {} \;' | sort -n | tail -1 | awk '{print $1}')
 
 # ---- measurement ----
@@ -147,6 +202,8 @@ measure() { # <arm> <index or warmup>
   k -n "$NS" get pod "$pod" -o json >"$base.json"
   k -n "$NS" logs "$pod" -c mnemo-warmup-fetch >"$base.fetch.log" 2>&1 || : >"$base.fetch.log"
   k -n "$NS" logs "$pod" -c app >"$base.app.log" 2>&1
+  # with tools-delivery=image-volume there is no fetch container: the fetch ran in the application container and logged there
+  [ -s "$base.fetch.log" ] || cp "$base.app.log" "$base.fetch.log"
   k -n "$NS" scale deploy/"$arm" --replicas=0 >/dev/null
   for i in $(seq 1 120); do
     [ -z "$(k -n "$NS" get pods -l app="$arm" -o name 2>/dev/null)" ] && break
@@ -187,10 +244,11 @@ python3 scripts/bench_env.py "$CTX" "$NODE" "$OUT/environment.json" \
   "app=$APP" "app_dir=$APP_DIR" "restarts=$RESTARTS" "archive_bytes=${ARCHIVE_BYTES:-unknown}" \
   "app_cpu_limit=${APP_CPU:-none}" "app_memory_limit=${APP_MEMORY:-none}" \
   "jdk=$(docker run --rm --entrypoint java "$APP_IMAGE" -version 2>&1 | head -1)" \
-  "app_jars=$(docker run --rm --entrypoint sh "$APP_IMAGE" -c 'ls /app/lib 2>/dev/null | wc -l' | tr -d ' ')" \
-  "app_kib=$(docker run --rm --entrypoint sh "$APP_IMAGE" -c 'du -sk /app | cut -f1' | tr -d ' ')" \
+  "app_jars=$(docker run --rm --entrypoint sh "$APP_IMAGE" -c "find $APP_ROOT \\( -name '*.jar' -o -name '*.war' \\) | wc -l" | tr -d ' ')" \
+  "app_kib=$(docker run --rm --entrypoint sh "$APP_IMAGE" -c "du -sk $APP_ROOT | cut -f1" | tr -d ' ')" \
   "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  "command=scripts/bench-cluster.sh --app $APP --restarts $RESTARTS${APP_CPU:+ --app-cpu $APP_CPU}${APP_MEMORY:+ --app-memory $APP_MEMORY}"
+  "tools_delivery=$TOOLS_DELIVERY" \
+  "command=scripts/bench-cluster.sh --app $APP --restarts $RESTARTS${APP_CPU:+ --app-cpu $APP_CPU}${APP_MEMORY:+ --app-memory $APP_MEMORY}${TOOLS_DELIVERY:+ --tools-delivery $TOOLS_DELIVERY}"
 
 python3 scripts/bench_summarize.py "$OUT" | tee "$OUT/summary.md"
 echo "results in $OUT"

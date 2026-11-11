@@ -18,6 +18,12 @@ spec:
         warmup.mnemo.io/enabled: "true"
         warmup.mnemo.io/store: {{ required "warmup.store is required when warmup.enabled" .Values.warmup.store | quote }}
         warmup.mnemo.io/exit-mode: {{ .Values.warmup.exitMode | quote }}
+        {{- if .Values.warmup.toolsDelivery }}
+        warmup.mnemo.io/tools-delivery: {{ .Values.warmup.toolsDelivery | quote }}
+        {{- end }}
+        {{- if .Values.warmup.probeUrl }}
+        warmup.mnemo.io/probe-url: {{ .Values.warmup.probeUrl | quote }}
+        {{- end }}
         {{- if .Values.warmup.plainHttp }}
         warmup.mnemo.io/plain-http: "true"
         {{- end }}
@@ -46,10 +52,15 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           ports:
-            - containerPort: 8080
+            - containerPort: {{ .Values.port }}
           readinessProbe:
+            {{- if .Values.readinessCommand }}
+            exec:
+              command: {{ .Values.readinessCommand | toJson }}
+            {{- else }}
             httpGet:
               path: {{ .Values.readinessPath }}
-              port: 8080
+              port: {{ .Values.port }}
+            {{- end }}
             periodSeconds: 1
             failureThreshold: 120

@@ -18,7 +18,12 @@ import (
 func TestMain(m *testing.M) {
 	if os.Getenv("FAKE_JAVA") == "1" {
 		if f := os.Getenv("FAKE_JAVA_ARGS_OUT"); f != "" {
-			os.WriteFile(f, []byte(strings.Join(os.Args[1:], "\n")), 0o644)
+			// one record per call, so a test can tell the order of a fetch and a plan in the same process
+			record := strings.Join(os.Args[1:], "\n")
+			if prev, err := os.ReadFile(f); err == nil && len(prev) > 0 {
+				record = string(prev) + "\n=== next call ===\n" + record
+			}
+			os.WriteFile(f, []byte(record), 0o644)
 		}
 		if argv := os.Getenv("FAKE_JAVA_ARGV"); argv != "" {
 			for _, a := range strings.Split(argv, "|") {
@@ -141,7 +146,7 @@ func TestFetch(t *testing.T) {
 func TestExecApp(t *testing.T) {
 	orig := []string{"java", "-Xmx1g", "-jar", "/app/a.jar"}
 	t.Run("uses the command the jar prints", func(t *testing.T) {
-		h := newHarness(t, true, "FAKE_JAVA_ARGV", "java|-XX:SharedArchiveFile=/c/a.jsa|-Xmx1g|-jar|/app/a.jar")
+		h := newHarness(t, true, "MNEMO_WARMUP_NATIVE_PLAN", "0", "FAKE_JAVA_ARGV", "java|-XX:SharedArchiveFile=/c/a.jsa|-Xmx1g|-jar|/app/a.jar")
 		h.l.execApp(orig)
 		want := []string{h.java, "java", "-XX:SharedArchiveFile=/c/a.jsa", "-Xmx1g", "-jar", "/app/a.jar"}
 		if !reflect.DeepEqual(*h.execed, want) {
@@ -153,8 +158,8 @@ func TestExecApp(t *testing.T) {
 		}
 	})
 	for name, env := range map[string][]string{
-		"helper prints nothing": {},
-		"helper fails":          {"FAKE_JAVA_EXIT", "1", "FAKE_JAVA_ARGV", "java|x"},
+		"helper prints nothing": {"MNEMO_WARMUP_NATIVE_PLAN", "0"},
+		"helper fails":          {"MNEMO_WARMUP_NATIVE_PLAN", "0", "FAKE_JAVA_EXIT", "1", "FAKE_JAVA_ARGV", "java|x"},
 	} {
 		t.Run("starts the original when "+name, func(t *testing.T) {
 			h := newHarness(t, true, env...)
@@ -188,6 +193,60 @@ func TestExecApp(t *testing.T) {
 		h.l.exec = func(string, []string, []string) error { return errors.New("exec format error") }
 		if got := h.l.execApp([]string{"/nope/app"}); got != 127 {
 			t.Fatalf("exit %d, want 127", got)
+		}
+	})
+}
+
+func TestExecFetchesFirstWhenGivenFetchOptions(t *testing.T) {
+	orig := []string{"java", "-Xmx1g", "-jar", "/app/a.jar"}
+	opts := []string{"--out", "/c", "--jar", "/app/a.jar", "--store", "oci://r/x"}
+	t.Run("fetch runs, then the application replaces the launcher", func(t *testing.T) {
+		h := newHarness(t, true, "MNEMO_WARMUP_NATIVE_FETCH", "0", "MNEMO_WARMUP_NATIVE_PLAN", "0")
+		code := h.l.run(append(append([]string{"exec"}, opts...), append([]string{"--"}, orig...)...))
+		if code != 0 {
+			t.Fatalf("exit %d: %s", code, h.stderr)
+		}
+		b, _ := os.ReadFile(h.args)
+		fetchAt, planAt := strings.Index(string(b), "mnemo-warmup.jar\nfetch\n--out\n/c"), strings.Index(string(b), "mnemo-warmup.jar\nrun\n--print")
+		if fetchAt < 0 || planAt < 0 || fetchAt > planAt {
+			t.Fatalf("expected the fetch and then the planner; fake java was called with %q", b)
+		}
+		if got := (*h.execed)[1:]; !reflect.DeepEqual(got, orig) {
+			t.Fatalf("exec %q, want %q", got, orig)
+		}
+	})
+	t.Run("a fetch problem never stops the application", func(t *testing.T) {
+		h := newHarness(t, true, "MNEMO_WARMUP_NATIVE_FETCH", "0", "MNEMO_WARMUP_NATIVE_PLAN", "0", "FAKE_JAVA_EXIT", "7")
+		h.l.run(append(append([]string{"exec"}, opts...), append([]string{"--"}, orig...)...))
+		if got := (*h.execed)[1:]; !reflect.DeepEqual(got, orig) {
+			t.Fatalf("exec %q, want the original command %q", got, orig)
+		}
+	})
+	t.Run("--strict can make the fetch fail the container", func(t *testing.T) {
+		h := newHarness(t, true, "MNEMO_WARMUP_NATIVE_FETCH", "0", "MNEMO_WARMUP_NATIVE_PLAN", "0", "FAKE_JAVA_EXIT", "7")
+		code := h.l.run(append(append([]string{"exec", "--strict"}, opts...), append([]string{"--"}, orig...)...))
+		if code != 7 || len(*h.execed) != 0 {
+			t.Fatalf("exit %d exec %q, want 7 and no exec", code, *h.execed)
+		}
+	})
+	t.Run("without fetch options it behaves as before", func(t *testing.T) {
+		h := newHarness(t, true, "MNEMO_WARMUP_NATIVE_PLAN", "0")
+		h.l.run(append([]string{"exec", "--"}, orig...))
+		if _, err := os.Stat(h.args); err != nil {
+			t.Fatal("the planner should have run")
+		}
+		b, _ := os.ReadFile(h.args)
+		if strings.Contains(string(b), "fetch") {
+			t.Fatalf("no fetch expected: %q", b)
+		}
+	})
+	t.Run("a command with no -- is still accepted, and nothing after exec is a usage error", func(t *testing.T) {
+		h := newHarness(t, false)
+		if got := h.l.run([]string{"exec"}); got != 2 {
+			t.Fatalf("exit %d, want 2", got)
+		}
+		if got := h.l.run([]string{"exec", "--out", "/c", "--"}); got != 2 {
+			t.Fatalf("exit %d, want 2 for fetch options and no command", got)
 		}
 	})
 }

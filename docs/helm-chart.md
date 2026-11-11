@@ -118,6 +118,24 @@ spec:
 The wrapper replaces the container's entrypoint, so whatever `command` and `args` the container had (or the image's `ENTRYPOINT`) must become the
 `java ...` arguments above. Options that do not affect an archive (`-D` properties, logging) can be added after the `jvmArgs` loop.
 
+#### Optional: no init containers (`tools.delivery: image-volume`)
+
+Set `warmup.tools.delivery: image-volume` to mount the tools image as an image volume and fetch in the application container's own entrypoint
+([ADR 0012](adr/0012-tools-as-an-image-volume.md)). The two init container templates then render nothing, `volumes`, `volumeMounts` and `command` change
+by themselves, and **one line is added to `args`**, before your own command:
+
+```yaml
+          args:
+            {{- include "mnemo-warmup.argsPrefix" .Values.warmup | nindent 12 }}   # renders nothing in the default mode
+            - java
+            ...
+```
+
+That line is harmless in the default mode, so a Deployment written with it works in both. The mode needs a cluster and runtime with image volume support
+(Kubernetes 1.33+, containerd 2.1+ or CRI-O 1.31+); a pod on a cluster without it does not start. It cannot be used with `store.pullSecret`, because the
+application container would then be able to read the Secret: the chart refuses to render the combination. See the
+[annotation reference](configuration.md#tools-delivery-init-containers-or-an-image-volume) for the full list of what changes.
+
 ### 6. Deploy, train, then check
 
 ```bash
@@ -135,6 +153,7 @@ Only when the outcome says `TRAINED` (or `ALREADY_STORED`), restart the pods and
 ```bash
 kubectl -n $NS rollout restart deploy/my-app
 kubectl -n $NS logs <new-pod> -c mnemo-warmup-fetch     # Archive: ... (APP_CDS)    or    (LEYDEN_AOT) on JDK 25
+                                                         # (with tools.delivery=image-volume there is no such container: grep the app log for "Archive:")
 kubectl -n $NS logs <new-pod> -c app | grep "run:"      # run: using APP_CDS archive ...
 ```
 
@@ -143,8 +162,8 @@ kubectl -n $NS logs <new-pod> -c app | grep "run:"      # run: using APP_CDS arc
 Suspending the trainer (`warmup.trainer.suspend: true`) only stops **new training**: pods keep fetching and using the archives that already exist. To stop
 using the cache:
 
-1. Take the `include` lines out of your Deployment and restore its original `command` and `args`; redeploy. New pods start without the init containers, the
-   wrapper or the cache.
+1. Take the `include` lines out of your Deployment (including `argsPrefix`, if you added it) and restore its original `command` and `args`; redeploy. New pods
+   start without the init containers, the wrapper or the cache.
 2. Set `warmup.trainer.enabled: false` (or remove the dependency) to delete the trainer CronJob, its ServiceAccount and its Role.
 3. Optionally delete the archives from the registry (tags `fp-<hex>` in the archive repository) and any Leases left behind
    (`kubectl -n $NS get lease | grep mnemo-warmup`; they expire on their own).

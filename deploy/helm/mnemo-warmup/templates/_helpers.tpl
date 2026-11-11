@@ -6,6 +6,10 @@ chart that uses mnemo-warmup as a (possibly aliased) dependency calls, for examp
     {{- include "mnemo-warmup.installInitContainer" .Values.warmup | nindent 8 }}
     {{- include "mnemo-warmup.fetchInitContainer" .Values.warmup | nindent 8 }}
 
+(With tools.delivery=image-volume the two init container templates render nothing, the tools are an image volume and the
+fetch runs in the application container; put {{ include "mnemo-warmup.argsPrefix" ... }} before the application's own command in
+`args` as well, see docs/adr/0012. The prefix renders nothing in the default mode, so the same Deployment works with both.)
+
 (Named templates of a subchart are visible to its parent.) Templates that need the release (names, RBAC) are
 only used inside this chart.
 */}}
@@ -73,11 +77,38 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
 {{- end }}
 {{- end -}}
 
+{{/*
+Tools delivery (docs/adr/0012). Validated whenever the volumes are rendered, which every use of this chart does.
+imageVolume renders "true" or nothing, so it can be used as a condition. toolsRoot is where the tools directory is mounted:
+an image volume holds the whole tools image, and the tools sit under /opt/mnemo-warmup in it.
+*/}}
+{{- define "mnemo-warmup.imageVolume" -}}
+{{- if not (has .tools.delivery (list "init-container" "image-volume")) -}}
+{{- fail (printf "tools.delivery must be init-container or image-volume, got %q" .tools.delivery) -}}
+{{- end -}}
+{{- if eq .tools.delivery "image-volume" -}}
+{{- if .store.pullSecret -}}
+{{- fail "tools.delivery=image-volume cannot be used with store.pullSecret: the fetch runs in the application container, which could then read the Secret. Use tools.delivery=init-container" -}}
+{{- end -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{- define "mnemo-warmup.toolsRoot" -}}
+{{- if include "mnemo-warmup.imageVolume" . -}}/mnemo-tools/opt/mnemo-warmup{{- else -}}/mnemo-tools{{- end -}}
+{{- end -}}
+
 {{/* ---- the pieces a workload needs ---- */}}
 
 {{- define "mnemo-warmup.volumes" -}}
 - name: mnemo-tools
+  {{- if include "mnemo-warmup.imageVolume" . }}
+  image:
+    reference: {{ include "mnemo-warmup.toolsImage" . | quote }}
+    pullPolicy: {{ .tools.image.pullPolicy }}
+  {{- else }}
   emptyDir: {}
+  {{- end }}
 - name: mnemo-cache
   emptyDir: {}
 - name: mnemo-work
@@ -94,6 +125,7 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
 
 {{/* Copies the tools out of the (JDK-free) tools image into the shared volume. */}}
 {{- define "mnemo-warmup.installInitContainer" -}}
+{{- if not (include "mnemo-warmup.imageVolume" .) -}}
 - name: mnemo-warmup-install
   image: {{ include "mnemo-warmup.toolsImage" . | quote }}
   imagePullPolicy: {{ .tools.image.pullPolicy }}
@@ -103,10 +135,12 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
   volumeMounts:
     - name: mnemo-tools
       mountPath: /mnemo-tools
+{{- end }}
 {{- end -}}
 
 {{/* Runs IN THE APPLICATION IMAGE, so it sees the JDK and JAR files the app will run with. Exits 0 on every problem. */}}
 {{- define "mnemo-warmup.fetchInitContainer" -}}
+{{- if not (include "mnemo-warmup.imageVolume" .) -}}
 - name: mnemo-warmup-fetch
   image: {{ include "mnemo-warmup.appImage" . | quote }}
   imagePullPolicy: {{ .app.image.pullPolicy }}
@@ -137,16 +171,25 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
       mountPath: /var/run/mnemo-warmup/registry
       readOnly: true
     {{- end }}
+{{- end }}
 {{- end -}}
 
-{{/* For the application container: mount the tools and the fetched cache. */}}
+{{/* For the application container: mount the tools and the fetched cache. With an image volume this container also does the fetch,
+so it writes the cache and has the scratch volume. */}}
 {{- define "mnemo-warmup.volumeMounts" -}}
 - name: mnemo-tools
   mountPath: /mnemo-tools
   readOnly: true
+{{- if include "mnemo-warmup.imageVolume" . }}
+- name: mnemo-cache
+  mountPath: /mnemo-cache
+- name: mnemo-work
+  mountPath: /tmp/mnemo-warmup
+{{- else }}
 - name: mnemo-cache
   mountPath: /mnemo-cache
   readOnly: true
+{{- end }}
 {{- end -}}
 
 {{/* For the application container: where run finds the cache, and the digest it must match. */}}
@@ -159,7 +202,24 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
 {{- end }}
 {{- end -}}
 
-{{/* For the application container: the exec wrapper. Put the application's real command in `args` (java -jar ...). */}}
+{{/* For the application container: the exec wrapper (the launcher, with an image volume). Put the application's real command in
+`args` (java -jar ...), after argsPrefix. */}}
 {{- define "mnemo-warmup.command" -}}
+{{- if include "mnemo-warmup.imageVolume" . -}}
+["{{ include "mnemo-warmup.toolsRoot" . }}/bin/mnemo-launcher"]
+{{- else -}}
 ["/mnemo-tools/bin/mnemo-warmup-exec"]
+{{- end -}}
+{{- end -}}
+
+{{/* For the application container's `args`, before the application's own command: with an image volume, the launcher fetches the
+archive and then starts the command that follows. Renders nothing in the default mode. */}}
+{{- define "mnemo-warmup.argsPrefix" -}}
+{{- if include "mnemo-warmup.imageVolume" . }}
+- exec
+- --out
+- /mnemo-cache
+{{- include "mnemo-warmup.launchArgs" . | nindent 0 }}
+- --
+{{- end }}
 {{- end -}}

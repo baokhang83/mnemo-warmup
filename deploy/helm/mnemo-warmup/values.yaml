@@ -17,6 +17,14 @@ cacheType: auto               # auto (AOT on JDK 25+, AppCDS otherwise), appcds 
 
 # The tools image only carries the CLI into the application image (it contains no JDK).
 tools:
+  # How the tools reach the pod (docs/adr/0012):
+  #   init-container  an init container copies them into an emptyDir, and a second one fetches the archive (default).
+  #   image-volume    the tools image is mounted as an image volume and the fetch runs in the application container's own
+  #                   entrypoint, so the pod has NO init containers on the start path. Needs a cluster and container runtime
+  #                   that support image volumes (Kubernetes 1.33+ beta; containerd 2.1+ or CRI-O 1.31+): a pod on a cluster
+  #                   without them does not start. The application container then also reads the registry, so store.pullSecret
+  #                   cannot be used with it (the Secret would be readable by the application): the chart refuses that.
+  delivery: init-container
   image:
     repository: ghcr.io/baokhang83/mnemo-warmup-tools
     tag: "0.2.0"              # matches appVersion; published by the image workflow on release tags

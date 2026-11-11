@@ -102,6 +102,38 @@ fetch_args=$(awk '/name: mnemo-warmup-fetch/,/volumeMounts:/' <<<"$out" | grep -
 train_args=$(awk '/name: trainer/,/volumeMounts:/' <<<"$out" | grep -E -- '--(jar|store|cache-type|jvm-arg|image-digest)|/app/app.jar|oci://|"auto"|Xmx' | sed 's/^ *//' | sort -u)
 if [ "$fetch_args" = "$train_args" ] && [ -n "$fetch_args" ]; then ok "fetch and trainer share the same launch arguments"; else fail "fetch and trainer arguments differ"; diff <(echo "$fetch_args") <(echo "$train_args") || true; fi
 
+echo "== tools.delivery=image-volume (docs/adr/0012)"
+IV=/mnemo-tools/opt/mnemo-warmup
+out=$(helm template rel "$CHART" -n default "${BASE[@]}" --set tools.delivery=image-volume)
+validate "image-volume trainer" "$out"
+check "$out" "reference: \"ghcr.io/baokhang83/mnemo-warmup-tools:" "the tools are an image volume in the trainer pod"
+absent "$out" "mnemo-warmup-install" "no install init container in the trainer pod"
+absent "$out" "initContainers:" "no init containers at all"
+check "$out" "command: [\"$IV/bin/mnemo-warmup\"]" "the trainer runs the tools from the image volume"
+out=$(helm template rel "$PARENT" -n default --set tools.delivery=image-volume --set warmup.tools.delivery=image-volume)
+validate "image-volume parent chart" "$out"
+absent "$out" "mnemo-warmup-install" "parent: no install init container"
+absent "$out" "mnemo-warmup-fetch" "parent: no fetch init container"
+# the fixture writes the initContainers key itself; with nothing to include it is an empty key, and no list item may follow it
+next_line=$(awk '/initContainers:/{getline n; print n; exit}' <<<"$out")
+if [[ "$next_line" != *"- name:"* ]]; then ok "parent: no init containers on the start path"; else fail "parent: an init container follows initContainers: ($next_line)"; fi
+check "$out" "reference: \"ghcr.io/baokhang83/mnemo-warmup-tools:" "parent: the tools volume is an image volume"
+check "$out" "command: [\"$IV/bin/mnemo-launcher\"]" "parent: the app starts through the launcher"
+check "$out" "- exec" "parent: the launcher is told to exec"
+check "$out" "- --store" "parent: the fetch options are in the app's args"
+check "$out" "                - --
+" "parent: the options end with --"
+check "$out" "mountPath: /tmp/mnemo-warmup" "parent: the app container has the scratch volume"
+app_cache=$(awk '/name: app/,0' <<<"$out" | awk '/mountPath: \/mnemo-cache/{getline n; print n; exit}')
+if [[ "$app_cache" != *"readOnly: true"* ]]; then ok "parent: the app container may write the cache (it fetches into it)"; else fail "parent: the cache must not be read-only in the app container"; fi
+# the same parent Deployment in the default mode has no trace of it
+out=$(helm template rel "$PARENT" -n default)
+absent "$out" "- exec" "parent, default mode: no exec prefix"
+absent "$out" "reference:" "parent, default mode: no image volume"
+check "$out" "name: mnemo-warmup-install" "parent, default mode: still has its init containers"
+if helm template rel "$CHART" "${BASE[@]}" --set tools.delivery=image-volume --set store.pullSecret=pull >/dev/null 2>&1; then fail "image-volume must refuse store.pullSecret"; else ok "image-volume refuses store.pullSecret"; fi
+if helm template rel "$CHART" "${BASE[@]}" --set tools.delivery=sidecar >/dev/null 2>&1; then fail "an unknown tools.delivery must be refused"; else ok "an unknown tools.delivery is refused"; fi
+
 echo "== example workload chart (examples/helm/example-app)"
 EXAMPLE="$WORK/examples/helm/example-app"
 helm dependency build "$EXAMPLE" >/dev/null 2>&1 || helm dependency update "$EXAMPLE" >/dev/null

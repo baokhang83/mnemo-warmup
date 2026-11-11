@@ -1,0 +1,3 @@
+Archive: /mnemo-cache/app.aot (LEYDEN_AOT), fingerprint sha256:be208dec92efc932e04a9cdd9be524c32cd1516df65e31b7ab90e2f652b3fbd9
+Flags: /mnemo-cache/mnemo-warmup.flags
+fetch: timing: jdk-detect=0 ms, extract-and-hash-classpath=123 ms, store-lookup-download-verify=31 ms, tool-jvm-uptime=0 ms (native fetch)

@@ -53,14 +53,24 @@ func (l launcher) run(args []string) int {
 	case "fetch":
 		return l.fetch(args[1:])
 	case "exec":
-		cmd := args[1:]
-		if len(cmd) > 0 && cmd[0] == "--" {
-			cmd = cmd[1:]
+		// exec [fetch options] -- <command> [args...]. With fetch options the archive is looked up first, in this process, then the
+		// application replaces it (docs/adr/0012: the tools come from an image volume and there is no fetch init container). Without
+		// them, and without a "--", everything after "exec" is the command, as it always was.
+		rest := args[1:]
+		var fetchOpts []string
+		if sep := slices.Index(rest, "--"); sep >= 0 {
+			fetchOpts, rest = rest[:sep], rest[sep+1:]
 		}
-		if len(cmd) == 0 {
+		if len(rest) == 0 {
 			return l.usage()
 		}
-		return l.execApp(cmd)
+		if len(fetchOpts) > 0 {
+			// fetch fails open: every problem is a note and the application starts uncached. Only --strict can make it fail.
+			if code := l.fetch(fetchOpts); code != 0 {
+				return code
+			}
+		}
+		return l.execApp(rest)
 	case "jar":
 		return l.jarTool(args[1:])
 	case "which-java":
@@ -75,7 +85,7 @@ func (l launcher) run(args []string) int {
 }
 
 func (l launcher) usage() int {
-	fmt.Fprintln(l.stderr, "usage: mnemo-launcher install <dir> | fetch [options] | exec -- <command> [args...] | jar <args...> | which-java")
+	fmt.Fprintln(l.stderr, "usage: mnemo-launcher install <dir> | fetch [options] | exec [fetch options] -- <command> [args...] | jar <args...> | which-java")
 	return 2
 }
 
@@ -93,6 +103,10 @@ func (l launcher) install(dir string) int {
 // cannot be fetched must not stop the pod, so every failure exits 0 unless --strict was given.
 func (l launcher) fetch(args []string) int {
 	strict := slices.Contains(args, "--strict")
+	// The native fetch (docs/adr/0011) answers without a JVM when it can; MNEMO_WARMUP_NATIVE_FETCH=0 turns it off.
+	if code, done := l.nativeFetch(args, strict); done {
+		return code
+	}
 	java := l.locator.find("")
 	if java == "" {
 		return l.fetchFailed(strict, 127, "no java found; run this inside the application image (Java 21+)")
@@ -151,6 +165,22 @@ func (l launcher) finalArgv(cmd []string) []string {
 	if filepath.Base(cmd[0]) != "java" {
 		l.note("%s is not a java command; starting it unchanged", cmd[0])
 		return cmd
+	}
+	// The native planner answers the common case without starting a JVM (docs/adr/0010). It decides only "use the archive" (every
+	// check passed) or "nothing was fetched"; anything else is the Java planner's to judge and explain.
+	// MNEMO_WARMUP_NATIVE_PLAN=0 turns it off.
+	if !slices.Contains(l.environ, "MNEMO_WARMUP_NATIVE_PLAN=0") {
+		started := time.Now()
+		plan := nativePlan(cmd, l.environ)
+		if plan.decided {
+			for _, n := range plan.notes {
+				fmt.Fprintf(l.stderr, "run: %s\n", n)
+			}
+			if l.timingOn() {
+				l.note("timing: plan-process=%d ms (native)", time.Since(started).Milliseconds())
+			}
+			return plan.argv
+		}
 	}
 	java := l.locator.find(cmd[0])
 	if java == "" {

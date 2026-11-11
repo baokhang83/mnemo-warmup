@@ -67,7 +67,7 @@ Things to know when comparing with another environment:
 
 ## Limits of the study
 
-- One application family (Spring Boot). A non-Spring application (`http-probe`) and other frameworks are not covered.
+- Three applications: a Spring Boot application, Jenkins LTS and SonarQube. Other frameworks and sizes are not covered (planned for the 0.3.0 beta).
 - One JDK (21, AppCDS). The Leyden AOT cache on JDK 25 is not measured here.
 - A local registry; no network cost, no authentication round trips (ECR's token exchange adds some).
 - Image pulls excluded by design (see above).
@@ -76,24 +76,47 @@ Things to know when comparing with another environment:
 
 ## Results
 
-Two complete runs are committed, each with its full `summary.md` (the end-to-end breakdown), `results.csv`, `environment.json`, `registry.txt` and the raw pod objects and logs:
+Runs are committed with their full `summary.md` (the end-to-end breakdown), `results.csv`, `environment.json`, `registry.txt` and the raw pod objects and logs. Every run: 12 measured rounds per arm, Apple M5 laptop, kind on Docker Desktop. Medians; pod timestamps have 1 s resolution.
 
-- [`20261111-spring-heavy-no-limits-clean`](results/20261111-spring-heavy-no-limits-clean/summary.md): no pod limits (the JVM sees all 10 CPUs).
-- [`20261111-spring-heavy-1cpu-1gi`](results/20261111-spring-heavy-1cpu-1gi/summary.md): application container at 1 CPU and 1 GiB, requests = limits.
+| Run | Application | Limits | Tools delivery |
+|---|---|---|---|
+| [`20261111-spring-heavy-no-limits-clean`](results/20261111-spring-heavy-no-limits-clean/summary.md) | spring-heavy, JDK 21 | none | init containers (Java helpers) |
+| [`20261111-spring-heavy-1cpu-1gi`](results/20261111-spring-heavy-1cpu-1gi/summary.md) | spring-heavy, JDK 21 | 1 CPU, 1 GiB | init containers (Java helpers) |
+| [`20261111-spring-heavy-1cpu-1gi-native`](results/20261111-spring-heavy-1cpu-1gi-native/summary.md) | spring-heavy, JDK 21 | 1 CPU, 1 GiB | init containers (native `fetch` and `run`) |
+| [`20261111-spring-heavy-1cpu-1gi-imagevolume`](results/20261111-spring-heavy-1cpu-1gi-imagevolume/summary.md) | spring-heavy, JDK 21 | 1 CPU, 1 GiB | `image` volume |
+| [`20261111-jenkins-1cpu-1gi`](results/20261111-jenkins-1cpu-1gi/summary.md) | Jenkins 2.492.3, JDK 21 | 1 CPU, 1 GiB | init containers (Java helpers); header says "0 JARs", a harness bug fixed since |
+| [`20261111-jenkins-1cpu-1gi-native`](results/20261111-jenkins-1cpu-1gi-native/summary.md) | Jenkins 2.492.3, JDK 21 | 1 CPU, 1 GiB | init containers (native helpers) |
+| [`20261111-jenkins-1cpu-1gi-imagevolume`](results/20261111-jenkins-1cpu-1gi-imagevolume/summary.md) | Jenkins 2.492.3, JDK 21 | 1 CPU, 1 GiB | `image` volume |
+| [`20261111-sonarqube-2cpu-3gi`](results/20261111-sonarqube-2cpu-3gi/summary.md) | SonarQube 26.11, JDK 25 | 2 CPU, 3 GiB | init containers (native helpers) |
 
-Both: spring-heavy, 12 measured rounds per arm, Apple M5 laptop, kind on Docker Desktop, JDK 21. Medians; pod timestamps have 1 s resolution.
+### The baseline, and what changed
 
-| | no limits | 1 CPU / 1 GiB |
+The first two runs measured the original Java helpers. The archive shortened the application's own start by 0.6 to 1.3 s, but pod start-to-Ready did not improve, because the helpers cost about 1 s:
+
+| spring-heavy | no limits | 1 CPU / 1 GiB |
 |---|---|---|
-| Pod start-to-Ready, `none` | 3 s | 5 s |
-| Pod start-to-Ready, `nocache` | 4 s | 6 s |
-| Pod start-to-Ready, `cached` | 4 s | 5 s |
-| `cached` minus `none`, paired per round | +1.5 s (range +1 to +2) | 0 s (range 0 to +1) |
+| Pod start-to-Ready, `none` / `nocache` / `cached` | 3 s / 4 s / 4 s | 5 s / 6 s / 5 s |
 | Application start (`Started ... in`), without / with the archive | 1318 ms / 696 ms | 3136 ms / 1872 ms |
-| Time the helpers (`fetch` + `run`) take before the app starts, `cached` | about 990 ms | about 1050 ms |
+| Time the helpers take before the app starts, `cached` | about 990 ms | about 1050 ms |
 
-**What this says.** The archive does what it is for: the application starts 0.6 to 1.3 s sooner. On this application and this setup that gain is matched or exceeded by the cost of the helpers, which mostly start two small JVMs before the application can start (`fetch` about 770 to 790 ms of wall time, `run` about 200 to 280 ms; the registry download itself is about 270 to 280 ms). So **pod start-to-Ready did not get shorter**: it was equal with a 1 CPU limit and about 1.5 s longer without limits. The `nocache` arm shows the price of the machinery alone: 1 s or more.
+Native `fetch` and `run` (Go, [ADR 0010](../docs/adr/0010-native-run-planner.md) and [0011](../docs/adr/0011-native-fetch.md)) brought the helpers from about 1050 ms to about 140 ms. What remains is Kubernetes sequencing the init containers (about 1.75 s from the pod to the application container starting, of which our code is about 0.1 s). Delivering the tools as an `image` volume removes the init containers ([ADR 0012](../docs/adr/0012-tools-as-an-image-volume.md)).
 
-**What this does not say.** It is one application family on one laptop with a local registry and no image pull. The result may be different for an application whose start-up takes much longer than 1.3 to 3.1 s, where the same fixed helper cost is a smaller share, and for pods that start together on a busy node. It also says nothing about a remote registry, which would make `cached` slower. Reducing the helper cost (for example one helper JVM instead of two) is the obvious lever; these numbers are the baseline for it.
+### Three applications at 1 CPU / 1 GiB (SonarQube at 2 CPU / 3 GiB)
 
-An earlier no-limits run and a first 1 CPU run were discarded because other benchmark runs were active on the same machine while they ran. The two published runs ran alone.
+Pod start-to-Ready, medians (range), by delivery mode:
+
+| Application | `none` | init containers: `nocache` / `cached` | `image` volume: `nocache` / `cached` | Application start without / with the archive |
+|---|---|---|---|---|
+| spring-heavy | 4.5 s (init run), 5 s (`image` volume run) | 6 s / 5 s | 5 s / **3 s (3-4)** | 3186 ms / 1888 ms |
+| Jenkins | 4 s (3-5) | 5 s / 5 s | 5 s / 4 s (3-5) | 2334 ms / 2025 ms |
+| SonarQube | 15 s (14-16) | 16 s / 17 s | not run | not meaningful (see below) |
+
+`none` differed by up to 0.5 s between runs of the same application, which is the noise floor at this timestamp resolution.
+
+- **spring-heavy.** With the `image` volume the pod with a trained archive is ready 2 s (40%) sooner than the pod without mnemo-warmup. With init containers it is not.
+- **Jenkins.** The archive saves about 0.3 s of a 2.3 s start (85% of its classes already load from the archive; the rest of the start is initialization). Pod readiness is at parity with the `image` volume and 1 s slower with init containers.
+- **SonarQube.** The archive was used in 12 of 12 pods and `cached` minus `nocache` was 0 s: it covers only the small coordinator JVM, and the three JVMs that do the work are started by it ([issue #77](https://github.com/baokhang83/mnemo-warmup/issues/77)). With init containers `cached` is 1 s (range 1 to 3) slower than no mnemo-warmup. One earlier training run did not report `TRAINED` and the cause was not found; the harness now keeps `raw/train.log`.
+
+**What this does not say.** Laptop, local registry, no image pull, one pod at a time. It says nothing about a remote registry (which would make `cached` slower), or about many pods starting together. The 0.3.0 beta plans a scale-out burst against a remote registry, an application-size study and a JDK 21 against JDK 25 comparison.
+
+Two earlier runs were discarded because other benchmark runs were active on the same machine; all published runs ran alone.

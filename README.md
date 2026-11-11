@@ -22,6 +22,7 @@ unchanged JVM application. A pod starts from the cache when it fits its launch e
 <p>
 <a href="#try-the-example">Try the example</a> &middot;
 <a href="#quick-start-in-three-steps">Quick start</a> &middot;
+<a href="#measurements">Measurements</a> &middot;
 <a href="docs/reference.md">Reference</a>
 </p>
 
@@ -29,7 +30,7 @@ unchanged JVM application. A pod starts from the cache when it fits its launch e
 
 ## Key benefits
 
-- **Shorter JVM start-up, no rewrite.** Keep your JDK, your frameworks and your JAR. Pods start from a ready-made class cache instead of loading every class from scratch. Whether that shortens *pod readiness* in your cluster is something to [measure](docs/operations.md#measure-the-benefit).
+- **Shorter JVM start-up, no rewrite.** Keep your JDK, your frameworks and your JAR. Pods start from a ready-made class cache instead of loading every class from scratch. Pod readiness improves where class loading dominates the start (Spring Boot: [-40%](#measurements)); [measure](docs/operations.md#measure-the-benefit) yours.
 - **Three annotations, no source changes.** An injector adds the init containers, the launcher and the trainer to a plain Deployment, and you can preview every change first.
 - **A cache problem never stops a pod.** A missing, outdated, damaged or unreachable cache means an ordinary start, and the log says why.
 - **Set it up once.** When the image or JVM options change, the trainer builds a new cache by itself.
@@ -44,7 +45,7 @@ unchanged JVM application. A pod starts from the cache when it fits its launch e
 
 - A **fingerprint** identifies what a cache is valid for: the JDK build, the classpath JAR contents and the JVM options.
 - The **trainer** is a CronJob that runs your application image once per new fingerprint, stores the cache in the registry, and takes a Kubernetes Lease so only one trainer works at a time.
-- Each **pod** gets two init containers and starts through a small static launcher. When the image or JVM options change, a new fingerprint is trained.
+- Each **pod** gets its tools (two init containers, or a read-only `image` volume on clusters that support it) and starts through a small static launcher. When the image or JVM options change, a new fingerprint is trained.
 
 > **Status: alpha.** Command-line options, annotations, chart values and the manifest format may still change. Validate both the benefit and the deployment behaviour with your own workload before you rely on it. [What has and has not been verified](docs/operations.md#known-limitations).
 
@@ -160,19 +161,25 @@ Details and what is not supported: [configuration](docs/configuration.md#require
 - **Caches use registry storage, and nothing deletes them.** Set a [retention policy](docs/archive-retention.md) on the archive repository.
 - **Cache problems fall back; deployment problems do not.** A missing, damaged or unreachable archive means an ordinary start. A missing Secret, an unpullable image or a wrong command can still keep a pod from starting: [what can still stop a pod](docs/operations.md#what-can-still-stop-a-pod).
 
-## Measure the benefit
+## Measurements
 
-Compare **pod creation to Ready** with and without the cache over several restarts, including init container time, and read the JVM's own start-up figure. Do not assume a gain: the archive shortens the JVM's start-up, but the init container and the helper JVMs that fetch and check it add time before the application starts.
+Three real applications, each with and without a trained archive, 12 interleaved restarts per arm, application container limited to 1 CPU and 1 GiB (kind on a laptop, local registry, image already on the node; medians). Percentages compare the pod with the archive to the same pod without mnemo-warmup.
 
-Measured on a Spring Boot application with 69 JARs (kind on a laptop, local registry, image already on the node, 12 interleaved restarts per arm, medians):
+| Application | What dominates its start | JVM-reported start | Pod start-to-Ready, tools as an `image` volume | Pod start-to-Ready, tools as init containers |
+|---|---|---|---|---|
+| Spring Boot, 69 JARs | class loading and bean scanning | 3.19 s to 1.89 s (**-41%**) | 5 s to 3 s (**-40%**) | 5 s to 5 s (0%) |
+| Jenkins LTS | plugin initialization and lifecycle hooks | 2.33 s to 2.03 s (**-13%**) | 4 s to 4 s (0%) | 4 s to 5 s (+25%) |
+| SonarQube | a coordinator that starts three more JVMs | 0% | not measured | 15 s to 17 s (+13%) |
 
-| | no pod limits | 1 CPU / 1 GiB |
-|---|---|---|
-| JVM-reported start, without / with the archive | 1.32 s / 0.70 s | 3.14 s / 1.87 s |
-| Pod start-to-Ready, no mnemo-warmup | 3 s | 5 s |
-| Pod start-to-Ready, with a trained archive | 4 s | 5 s |
+How to read it:
 
-Here the archive was **not** a net win for pod start-to-Ready: about 1 s of helper start-up cancelled the 0.6 to 1.3 s it saved. Your application, node and registry will differ, so measure yours. The method, the raw data, the full phase breakdown and the limits of the study are in [benchmarks](benchmarks/README.md), and one command repeats it. [How to measure your own](docs/operations.md#measure-the-benefit); `mnemo-warmup bench --jar app.jar` compares start-up modes locally.
+- **Framework-heavy applications benefit most.** Spring Boot spends its start loading and wiring classes, which is what the cache removes. With the tools delivered as a Kubernetes [`image` volume](docs/configuration.md#tools-delivery-init-containers-or-an-image-volume) (no init containers, opt-in) the pod is ready 2 s sooner. With init containers the same archive is a wash, because the two init containers cost about what the cache saves.
+- **Parity where start-up is mostly initialization.** Jenkins spends its start running plugin code, so the archive buys 0.3 s of a 2.3 s start. That is no gain in pod readiness.
+- **No gain where the cache cannot reach the work.** SonarQube's container starts a small coordinator, and the coordinator starts the JVMs that do the work. mnemo-warmup wraps the command the container starts, so only the coordinator uses the archive ([issue #77](https://github.com/baokhang83/mnemo-warmup/issues/77)).
+
+Pod timestamps have a resolution of one second, and a laptop is not a production node: read the shape, not the decimals. The method, the raw data, the per-phase breakdown and the limits of the study are in [benchmarks](benchmarks/README.md), and one command repeats it. To measure your own application, see [how to measure](docs/operations.md#measure-the-benefit); `mnemo-warmup bench --jar app.jar` compares start-up modes locally.
+
+Planned for the 0.3.0 beta: JDK 21 AppCDS against JDK 25 AOT, an application-size break-even study, a scale-out burst against a remote registry, and a comparison with build-time caches and GraalVM Native Image. See the [roadmap](docs/PLAN.md#roadmap) and the [milestone](https://github.com/baokhang83/mnemo-warmup/milestone/3).
 
 ## Disable or remove it
 

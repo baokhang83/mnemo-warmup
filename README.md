@@ -38,23 +38,9 @@ unchanged JVM application. A pod starts from the cache when it fits its launch e
 
 ## How it works
 
-```text
-  Deployment + 3 annotations
-            |  helm template | mnemo-warmup inject
-            v
-  +-------------------+  trains once per fingerprint  +--------------------------+
-  | trainer CronJob   | ----------------------------> | OCI registry             |
-  | (runs your app)   |                               | one archive per          |
-  +-------------------+                               | fingerprint (fp-<hex>)   |
-                                                      +------------+-------------+
-                                                                   |
-        new pod:  init container "fetch"  <-----------------------+
-                       |   verifies the digest
-                       v
-        launcher: does the archive fit this exact launch?
-              yes -> java with the cache flag (still PID 1)
-              no  -> java as before, and the log says why
-```
+<div align="center">
+  <img src="docs/images/how-it-works.png" width="800" alt="How mnemo-warmup works: a Deployment with three annotations is rendered and injected; a trainer CronJob trains once per fingerprint and stores the archive in an OCI registry; a new pod's fetch init container verifies the digest, and the launcher starts Java with the cache flag if the archive fits the exact launch, or starts Java as before and logs why if it does not" />
+</div>
 
 - A **fingerprint** identifies what a cache is valid for: the JDK build, the classpath JAR contents and the JVM options.
 - The **trainer** is a CronJob that runs your application image once per new fingerprint, stores the cache in the registry, and takes a Kubernetes Lease so only one trainer works at a time.

@@ -163,23 +163,19 @@ Details and what is not supported: [configuration](docs/configuration.md#require
 
 ## Measurements
 
-Three real applications, each with and without a trained archive, 12 interleaved restarts per arm, application container limited to 1 CPU and 1 GiB (kind on a laptop, local registry, image already on the node; medians). Percentages compare the pod with the archive to the same pod without mnemo-warmup.
+**Will it make my pods start faster?** It depends on what your app does while it starts. We measured three real applications (1 CPU, 1 GiB, 12 restarts each).
 
-| Application | What dominates its start | JVM-reported start | Pod start-to-Ready, tools as an `image` volume | Pod start-to-Ready, tools as init containers |
-|---|---|---|---|---|
-| Spring Boot, 69 JARs | class loading and bean scanning | 3.19 s to 1.89 s (**-41%**) | 5 s to 3 s (**-40%**) | 5 s to 5 s (0%) |
-| Jenkins LTS | plugin initialization and lifecycle hooks | 2.33 s to 2.03 s (**-13%**) | 4 s to 4 s (0%) | 4 s to 5 s (+25%) |
-| SonarQube | a coordinator that starts three more JVMs | 0% | not measured | 15 s to 17 s (+13%) |
+| Your app is like | Pod ready | Verdict |
+|---|---|---|
+| 🟢 **Spring Boot**: loads and wires thousands of classes | ![40% faster](https://img.shields.io/badge/pod%20ready-5%20s%20%E2%86%92%203%20s%20(40%25%20faster)-brightgreen) | **Worth it.** The JVM itself starts 41% faster. |
+| 🟡 **Jenkins**: runs plugin and init code | ![no change](https://img.shields.io/badge/pod%20ready-4%20s%20%E2%86%92%204%20s%20(no%20change)-yellow) | **Neutral.** The JVM starts 13% faster, the pod is ready at the same time. |
+| 🔴 **SonarQube**: a launcher that starts three other JVMs | ![slower](https://img.shields.io/badge/pod%20ready-15%20s%20%E2%86%92%2017%20s%20(slower)-red) | **Not a fit yet.** The cache only reaches the launcher ([#77](https://github.com/baokhang83/mnemo-warmup/issues/77)). |
 
-How to read it:
+**The rule of thumb:** the more of your start-up is class loading (typical for Spring Boot and similar frameworks), the more you gain. If it is mostly your own initialization code, or a launcher that starts other JVMs, expect little or nothing.
 
-- **Framework-heavy applications benefit most.** Spring Boot spends its start loading and wiring classes, which is what the cache removes. With the tools delivered as a Kubernetes [`image` volume](docs/configuration.md#tools-delivery-init-containers-or-an-image-volume) (no init containers, opt-in) the pod is ready 2 s sooner. With init containers the same archive is a wash, because the two init containers cost about what the cache saves.
-- **Parity where start-up is mostly initialization.** Jenkins spends its start running plugin code, so the archive buys 0.3 s of a 2.3 s start. That is no gain in pod readiness.
-- **No gain where the cache cannot reach the work.** SonarQube's container starts a small coordinator, and the coordinator starts the JVMs that do the work. mnemo-warmup wraps the command the container starts, so only the coordinator uses the archive ([issue #77](https://github.com/baokhang83/mnemo-warmup/issues/77)).
+> **Use the `image` volume where your cluster supports it.** The green and yellow rows deliver the tools as a Kubernetes [`image` volume](docs/configuration.md#tools-delivery-init-containers-or-an-image-volume), which needs no init containers. With init containers the Spring Boot pod is ready in 5 s either way (the init containers cost what the cache saves), and Jenkins is 1 s slower. The red row used init containers.
 
-Pod timestamps have a resolution of one second, and a laptop is not a production node: read the shape, not the decimals. The method, the raw data, the per-phase breakdown and the limits of the study are in [benchmarks](benchmarks/README.md), and one command repeats it. To measure your own application, see [how to measure](docs/operations.md#measure-the-benefit); `mnemo-warmup bench --jar app.jar` compares start-up modes locally.
-
-Planned for the 0.3.0 beta: JDK 21 AppCDS against JDK 25 AOT, an application-size break-even study, a scale-out burst against a remote registry, and a comparison with build-time caches and GraalVM Native Image. See the [roadmap](docs/PLAN.md#roadmap) and the [milestone](https://github.com/baokhang83/mnemo-warmup/milestone/3).
+Numbers are medians from a laptop kind cluster with a local registry, and pod times have a one-second resolution, so read the direction, not the decimals. Measure your own app with `mnemo-warmup bench --jar app.jar` or [the cluster method](docs/operations.md#measure-the-benefit). Method, raw data and limits: [benchmarks](benchmarks/README.md). More studies (JDK 21 vs 25, app size, scale-out, alternatives) are planned for the [0.3.0 beta](https://github.com/baokhang83/mnemo-warmup/milestone/3).
 
 ## Disable or remove it
 
@@ -196,6 +192,7 @@ The explicit Helm-subchart setup (you wire the helpers into your own templates; 
 - [Operating it](docs/operations.md) and [archive retention](docs/archive-retention.md)
 - [Offline injector](docs/offline-injector.md): preview, Helm and GitOps use, what was verified.
 - [Reference](docs/reference.md): every command and option.
+- For LLM tools: [llms.txt](https://baokhang83.github.io/mnemo-warmup/llms.txt) and [llms-full.txt](https://baokhang83.github.io/mnemo-warmup/llms-full.txt) (published with every build).
 - [Example](examples/README.md), [Helm chart setup](docs/helm-chart.md), [design decisions](docs/adr/) and the [project plan](docs/PLAN.md).
 - Related: [`mnemo-jvm-warden`](https://github.com/baokhang83/mnemo-jvm-warden) resizes running pods in place; the planned integration is that warden injects the init containers (not built yet). `warmup-core` is on Maven Central (`io.github.baokhang83.mnemo:warmup-core`).
 

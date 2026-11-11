@@ -39,7 +39,7 @@ unchanged JVM application. A pod starts from the cache when it fits its launch e
 ## How it works
 
 <div align="center">
-  <img src="docs/images/how-it-works.png" width="800" alt="How mnemo-warmup works: a Deployment with three annotations is rendered and injected; a trainer CronJob trains once per fingerprint and stores the archive in an OCI registry; a new pod's fetch init container verifies the digest, and the launcher starts Java with the cache flag if the archive fits the exact launch, or starts Java as before and logs why if it does not" />
+  <img src="docs/images/how-it-works.png" width="533" alt="How mnemo-warmup works: a Deployment with three annotations is rendered and injected; a trainer CronJob trains once per fingerprint and stores the archive in an OCI registry; a new pod's fetch init container verifies the digest, and the launcher starts Java with the cache flag if the archive fits the exact launch, or starts Java as before and logs why if it does not" />
 </div>
 
 - A **fingerprint** identifies what a cache is valid for: the JDK build, the classpath JAR contents and the JVM options.

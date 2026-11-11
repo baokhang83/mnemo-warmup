@@ -54,6 +54,12 @@ _No stance recorded yet._
 
 **Why:** An init container that exits non-zero keeps the pod from starting at all, so an optimisation failure would become an outage. Stale flags would silently apply the wrong archive.
 
+### §4 No cloud SDKs in the core
+
+**Rule:** `warmup-core` has no runtime dependencies. Cloud integrations (AWS today, GKE and AKS later) are small hand-written clients over `java.net.http`, tested against the providers' published vectors, behind the `RegistryAuth` boundary.
+
+**Why:** This tool runs on every pod start and ships as one shaded jar. A cloud SDK adds tens of MB, a large transitive supply-chain surface and extra class loading to a tool whose purpose is faster startup.
+
 <!-- Real principles land here, numbered §1, §2, … (features cite these numbers in their
 `constitution:` fields). Each: a short title, the non-negotiable in a sentence or two, and the
 why (the failure it prevents). Keep them checkable, not platitudes. -->

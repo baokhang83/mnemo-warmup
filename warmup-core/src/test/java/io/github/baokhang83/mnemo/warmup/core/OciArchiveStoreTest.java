@@ -146,6 +146,31 @@ class OciArchiveStoreTest {
     }
 
     @Test
+    void aRegistryAuthIsAskedForCredentialsAndToldWhenTheRegistryRefusesThem() throws Exception {
+        try (var registry = new FakeRegistry()) {
+            registry.requireAuth = true;
+            var asked = new java.util.concurrent.atomic.AtomicInteger();
+            var invalidated = new java.util.concurrent.atomic.AtomicInteger();
+            RegistryAuth wrong = new RegistryAuth() {
+                @Override
+                public java.util.Optional<RegistryCredentials> credentials() {
+                    asked.incrementAndGet();
+                    return java.util.Optional.of(new RegistryCredentials("robot", "nope"));
+                }
+
+                @Override
+                public void invalidate() {
+                    invalidated.incrementAndGet();
+                }
+            };
+            var store = OciArchiveStore.withAuth(registry.reference("test/archives"), true, wrong, Duration.ofSeconds(10));
+            assertThrows(StoreException.class, () -> store.exists("sha256:" + HEX));
+            assertEquals(1, asked.get());
+            assertEquals(1, invalidated.get());
+        }
+    }
+
+    @Test
     void aCorruptedBlobIsRejectedAndLeavesNoFile() throws Exception {
         try (var registry = new FakeRegistry()) {
             Path file = archive("original-content");

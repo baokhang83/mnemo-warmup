@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "fingerprint": "sha256:b9fe4c07e0d7ccadf7278ada08b9917d1e25a037e80e4e694c77829004024f19",
+  "cacheType": "APP_CDS",
+  "jdk": {
+    "vendor": "Test Vendor",
+    "version": "21.0.13",
+    "runtimeVersion": "21.0.13+11-LTS",
+    "featureVersion": 21
+  },
+  "imageDigest": "sha256:abc",
+  "jvmFlags": [
+    "-Xmx512m"
+  ],
+  "classpath": [
+    {
+      "name": "app.jar",
+      "sizeBytes": 339,
+      "sha256": "a11f69a0dabae06670069575c101264377f83a75fc552e5815089f7c4bd7d5b2",
+      "lastModified": "2026-01-02T03:04:05Z"
+    },
+    {
+      "name": "lib/dep.jar",
+      "sizeBytes": 302,
+      "sha256": "0761aa2ee94a3a510ce7708648e8cbaea9bd23b0b5e933cfa584a97cb2ab5bc0",
+      "lastModified": "2026-01-02T03:04:05Z"
+    }
+  ],
+  "launchDir": "@ROOT@/app",
+  "archive": {
+    "file": "app.jsa",
+    "sizeBytes": 36,
+    "sha256": "ef302e9ecbc072e0bf824f106f71914c28ceb5e93777319a0953ec24043fbb6b"
+  }
+}

@@ -1,0 +1,4 @@
+fetch: APP_CDS: no archive stored for sha256:ccd2ffab786d6d199bbb744df0b7ab96a1bd77ec243a1f05dd0ef50ec084baff
+No usable archive; the application will start without one.
+fetch: timing: jdk-detect=16 ms, extract-and-hash-classpath=94 ms, store-lookup-download-verify=74 ms, tool-jvm-uptime=256 ms
+mnemo-launcher: timing: fetch-process=615 ms

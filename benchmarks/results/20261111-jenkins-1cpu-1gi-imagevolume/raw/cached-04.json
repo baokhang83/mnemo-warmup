@@ -1,0 +1,342 @@
+{
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "metadata": {
+        "annotations": {
+            "warmup.mnemo.io/enabled": "true",
+            "warmup.mnemo.io/exit-mode": "http-probe",
+            "warmup.mnemo.io/injected-v1": "Y29udGFpbmVyOiBhcHAKY29tbWFuZFByZXNlbnQ6IHRydWUKY29tbWFuZDoKLSBqYXZhCmFyZ3NQcmVzZW50OiB0cnVlCmFyZ3M6Ci0gLURqZW5raW5zLmluc3RhbGwucnVuU2V0dXBXaXphcmQ9ZmFsc2UKLSAtamFyCi0gL2FwcC9qZW5raW5zLndhcgpkZWxpdmVyeTogaW1hZ2Utdm9sdW1lCmxhdW5jaGVyOiAvbW5lbW8tdG9vbHMvb3B0L21uZW1vLXdhcm11cC9iaW4vbW5lbW8tbGF1bmNoZXIKaW5qZWN0ZWRBcmdzOgotIGV4ZWMKLSAtLW91dAotIC9tbmVtby1jYWNoZQotIC0tamFyCi0gL2FwcC9qZW5raW5zLndhcgotIC0td29yay1kaXIKLSAvdG1wL21uZW1vLXdhcm11cAotIC0tc3RvcmUKLSBvY2k6Ly8xNzIuMTguMC40OjUwMDAvYmVuY2gvY2FjaGVkCi0gLS1jYWNoZS10eXBlCi0gYXV0bwotIC0tanZtLWFyZz0tRGplbmtpbnMuaW5zdGFsbC5ydW5TZXR1cFdpemFyZD1mYWxzZQotIC0tcGxhaW4taHR0cAotIC0tCi0gamF2YQotIC1EamVua2lucy5pbnN0YWxsLnJ1blNldHVwV2l6YXJkPWZhbHNlCi0gLWphcgotIC9hcHAvamVua2lucy53YXIKdm9sdW1lc1ByZXNlbnQ6IGZhbHNlCmluaXRDb250YWluZXJzUHJlc2VudDogZmFsc2UKdm9sdW1lTW91bnRzUHJlc2VudDogZmFsc2UKZW52UHJlc2VudDogdHJ1ZQp2b2x1bWVOYW1lczoKLSBtbmVtby10b29scwotIG1uZW1vLWNhY2hlCi0gbW5lbW8td29yawp2b2x1bWVzTWFuYWdlZDoKLSBuYW1lOiBtbmVtby10b29scwogIGltYWdlOgogICAgcmVmZXJlbmNlOiBtbmVtby13YXJtdXAtdG9vbHM6YmVuY2gtNzIxODEtMTc5NDM5NDE5MgogICAgcHVsbFBvbGljeTogSWZOb3RQcmVzZW50Ci0gbmFtZTogbW5lbW8tY2FjaGUKICBlbXB0eURpcjogewogICAgfQotIG5hbWU6IG1uZW1vLXdvcmsKICBlbXB0eURpcjogewogICAgfQp2b2x1bWVNb3VudHNNYW5hZ2VkOgotIG5hbWU6IG1uZW1vLXRvb2xzCiAgbW91bnRQYXRoOiAvbW5lbW8tdG9vbHMKICByZWFkT25seTogdHJ1ZQotIG5hbWU6IG1uZW1vLWNhY2hlCiAgbW91bnRQYXRoOiAvbW5lbW8tY2FjaGUKICByZWFkT25seTogZmFsc2UKLSBuYW1lOiBtbmVtby13b3JrCiAgbW91bnRQYXRoOiAvdG1wL21uZW1vLXdhcm11cAogIHJlYWRPbmx5OiBmYWxzZQplbnZNYW5hZ2VkOgotIG5hbWU6IE1ORU1PX1dBUk1VUF9DQUNIRV9ESVIKICB2YWx1ZTogL21uZW1vLWNhY2hlCg==",
+            "warmup.mnemo.io/plain-http": "true",
+            "warmup.mnemo.io/probe-url": "http://localhost:8080/login",
+            "warmup.mnemo.io/store": "oci://172.18.0.4:5000/bench/cached",
+            "warmup.mnemo.io/tools-delivery": "image-volume"
+        },
+        "creationTimestamp": "2026-11-11T10:52:22Z",
+        "generateName": "cached-f56b55d97-",
+        "generation": 1,
+        "labels": {
+            "app": "cached",
+            "pod-template-hash": "f56b55d97"
+        },
+        "name": "cached-f56b55d97-gg47f",
+        "namespace": "bench",
+        "ownerReferences": [
+            {
+                "apiVersion": "apps/v1",
+                "blockOwnerDeletion": true,
+                "controller": true,
+                "kind": "ReplicaSet",
+                "name": "cached-f56b55d97",
+                "uid": "f6c4ab21-de99-4350-9335-333e84844c7b"
+            }
+        ],
+        "resourceVersion": "1458",
+        "uid": "4233d22e-0095-42e7-bfbc-0918d795faac"
+    },
+    "spec": {
+        "containers": [
+            {
+                "args": [
+                    "exec",
+                    "--out",
+                    "/mnemo-cache",
+                    "--jar",
+                    "/app/jenkins.war",
+                    "--work-dir",
+                    "/tmp/mnemo-warmup",
+                    "--store",
+                    "oci://172.18.0.4:5000/bench/cached",
+                    "--cache-type",
+                    "auto",
+                    "--jvm-arg=-Djenkins.install.runSetupWizard=false",
+                    "--plain-http",
+                    "--",
+                    "java",
+                    "-Djenkins.install.runSetupWizard=false",
+                    "-jar",
+                    "/app/jenkins.war"
+                ],
+                "command": [
+                    "/mnemo-tools/opt/mnemo-warmup/bin/mnemo-launcher"
+                ],
+                "env": [
+                    {
+                        "name": "APP_GREETING",
+                        "value": "hello-from-the-workload"
+                    },
+                    {
+                        "name": "MNEMO_WARMUP_TIMING",
+                        "value": "1"
+                    },
+                    {
+                        "name": "MNEMO_WARMUP_CACHE_DIR",
+                        "value": "/mnemo-cache"
+                    }
+                ],
+                "image": "bench-jenkins:72181-1794394192",
+                "imagePullPolicy": "Never",
+                "name": "app",
+                "ports": [
+                    {
+                        "containerPort": 8080,
+                        "protocol": "TCP"
+                    }
+                ],
+                "readinessProbe": {
+                    "failureThreshold": 120,
+                    "httpGet": {
+                        "path": "/login",
+                        "port": 8080,
+                        "scheme": "HTTP"
+                    },
+                    "periodSeconds": 1,
+                    "successThreshold": 1,
+                    "timeoutSeconds": 1
+                },
+                "resources": {
+                    "limits": {
+                        "cpu": "1",
+                        "memory": "1Gi"
+                    },
+                    "requests": {
+                        "cpu": "1",
+                        "memory": "1Gi"
+                    }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                    {
+                        "mountPath": "/mnemo-tools",
+                        "name": "mnemo-tools",
+                        "readOnly": true
+                    },
+                    {
+                        "mountPath": "/mnemo-cache",
+                        "name": "mnemo-cache"
+                    },
+                    {
+                        "mountPath": "/tmp/mnemo-warmup",
+                        "name": "mnemo-work"
+                    },
+                    {
+                        "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                        "name": "kube-api-access-2rwwq",
+                        "readOnly": true
+                    }
+                ]
+            }
+        ],
+        "dnsPolicy": "ClusterFirst",
+        "enableServiceLinks": true,
+        "nodeName": "mw-bench-72181-1794394192-control-plane",
+        "preemptionPolicy": "PreemptLowerPriority",
+        "priority": 0,
+        "restartPolicy": "Always",
+        "schedulerName": "default-scheduler",
+        "securityContext": {},
+        "serviceAccount": "default",
+        "serviceAccountName": "default",
+        "terminationGracePeriodSeconds": 30,
+        "tolerations": [
+            {
+                "effect": "NoExecute",
+                "key": "node.kubernetes.io/not-ready",
+                "operator": "Exists",
+                "tolerationSeconds": 300
+            },
+            {
+                "effect": "NoExecute",
+                "key": "node.kubernetes.io/unreachable",
+                "operator": "Exists",
+                "tolerationSeconds": 300
+            }
+        ],
+        "volumes": [
+            {
+                "image": {
+                    "pullPolicy": "IfNotPresent",
+                    "reference": "mnemo-warmup-tools:bench-72181-1794394192"
+                },
+                "name": "mnemo-tools"
+            },
+            {
+                "emptyDir": {},
+                "name": "mnemo-cache"
+            },
+            {
+                "emptyDir": {},
+                "name": "mnemo-work"
+            },
+            {
+                "name": "kube-api-access-2rwwq",
+                "projected": {
+                    "defaultMode": 420,
+                    "sources": [
+                        {
+                            "serviceAccountToken": {
+                                "expirationSeconds": 3607,
+                                "path": "token"
+                            }
+                        },
+                        {
+                            "configMap": {
+                                "items": [
+                                    {
+                                        "key": "ca.crt",
+                                        "path": "ca.crt"
+                                    }
+                                ],
+                                "name": "kube-root-ca.crt"
+                            }
+                        },
+                        {
+                            "downwardAPI": {
+                                "items": [
+                                    {
+                                        "fieldRef": {
+                                            "apiVersion": "v1",
+                                            "fieldPath": "metadata.namespace"
+                                        },
+                                        "path": "namespace"
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    },
+    "status": {
+        "allocatedResources": {
+            "cpu": "1",
+            "memory": "1Gi"
+        },
+        "conditions": [
+            {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-11-11T10:52:23Z",
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "PodReadyToStartContainers"
+            },
+            {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-11-11T10:52:22Z",
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "Initialized"
+            },
+            {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-11-11T10:52:27Z",
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "Ready"
+            },
+            {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-11-11T10:52:27Z",
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "ContainersReady"
+            },
+            {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-11-11T10:52:22Z",
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "PodScheduled"
+            }
+        ],
+        "containerStatuses": [
+            {
+                "allocatedResources": {
+                    "cpu": "1",
+                    "memory": "1Gi"
+                },
+                "containerID": "containerd://15d6ee750204ad5d3d2d6fbb97ccfc7675141eaa6a5cdcb1d02343511142d117",
+                "image": "docker.io/library/bench-jenkins:72181-1794394192",
+                "imageID": "docker.io/library/import-2026-11-11@sha256:214a2ebf8f39b6bdfc5f75e7d66e1d59a7d47294bc5349e49ad7674abb85f396",
+                "lastState": {},
+                "name": "app",
+                "ready": true,
+                "resources": {
+                    "limits": {
+                        "cpu": "1",
+                        "memory": "1Gi"
+                    },
+                    "requests": {
+                        "cpu": "1",
+                        "memory": "1Gi"
+                    }
+                },
+                "restartCount": 0,
+                "started": true,
+                "state": {
+                    "running": {
+                        "startedAt": "2026-11-11T10:52:23Z"
+                    }
+                },
+                "user": {
+                    "linux": {
+                        "gid": 0,
+                        "supplementalGroups": [
+                            0
+                        ],
+                        "uid": 0
+                    }
+                },
+                "volumeMounts": [
+                    {
+                        "mountPath": "/mnemo-tools",
+                        "name": "mnemo-tools",
+                        "readOnly": true,
+                        "recursiveReadOnly": "Disabled"
+                    },
+                    {
+                        "mountPath": "/mnemo-cache",
+                        "name": "mnemo-cache"
+                    },
+                    {
+                        "mountPath": "/tmp/mnemo-warmup",
+                        "name": "mnemo-work"
+                    },
+                    {
+                        "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                        "name": "kube-api-access-2rwwq",
+                        "readOnly": true,
+                        "recursiveReadOnly": "Disabled"
+                    }
+                ]
+            }
+        ],
+        "hostIP": "172.18.0.3",
+        "hostIPs": [
+            {
+                "ip": "172.18.0.3"
+            }
+        ],
+        "observedGeneration": 1,
+        "phase": "Running",
+        "podIP": "10.244.0.22",
+        "podIPs": [
+            {
+                "ip": "10.244.0.22"
+            }
+        ],
+        "qosClass": "Guaranteed",
+        "resources": {
+            "limits": {
+                "cpu": "1",
+                "memory": "1Gi"
+            },
+            "requests": {
+                "cpu": "975m",
+                "memory": "1Gi"
+            }
+        },
+        "startTime": "2026-11-11T10:52:22Z"
+    }
+}

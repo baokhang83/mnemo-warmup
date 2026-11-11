@@ -1,0 +1,102 @@
+{
+  "run": {
+    "app": "jenkins",
+    "app_dir": "benchmarks/jenkins",
+    "restarts": "12",
+    "archive_bytes": "46661632",
+    "app_cpu_limit": "1",
+    "app_memory_limit": "1Gi",
+    "jdk": "openjdk version \"21.0.13\" 2026-10-20 LTS",
+    "app_jars": "1",
+    "app_kib": "94432",
+    "date": "2026-11-11T10:55:14Z",
+    "tools_delivery": "image-volume",
+    "command": "scripts/bench-cluster.sh --app jenkins --restarts 12 --app-cpu 1 --app-memory 1Gi --tools-delivery image-volume"
+  },
+  "git": {
+    "commit": "4fc46c5",
+    "uncommitted_changes": true
+  },
+  "host": {
+    "system": "Darwin",
+    "kernel": "25.0.0",
+    "machine": "arm64",
+    "os": "macOS 26.0",
+    "cpu_model": "Apple M5",
+    "logical_cpus": 10,
+    "memory_bytes": 25769803776
+  },
+  "docker": {
+    "server_version": "29.4.3",
+    "operating_system": "Docker Desktop",
+    "kernel": "6.12.76-linuxkit",
+    "architecture": "aarch64",
+    "cpus_available_to_docker": 10,
+    "memory_available_to_docker_bytes": 8321712128,
+    "cgroup_version": "2",
+    "storage_driver": "overlayfs"
+  },
+  "kind_node": {
+    "image": "kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5",
+    "docker_limits": {
+      "nano_cpus": 0,
+      "cpu_quota": 0,
+      "cpu_shares": 0,
+      "cpuset_cpus": "",
+      "memory_bytes": 0
+    },
+    "cgroup_cpu_max": "max 100000",
+    "cgroup_memory_max": "max",
+    "visible_cpus": 10
+  },
+  "kubernetes": {
+    "server_version": "v1.36.1",
+    "node_info": {
+      "architecture": "arm64",
+      "bootID": "4621a38f-b96c-40a1-b3c7-ff261c7f3f3d",
+      "containerRuntimeVersion": "containerd://2.3.1",
+      "kernelVersion": "6.12.76-linuxkit",
+      "kubeProxyVersion": "",
+      "kubeletVersion": "v1.36.1",
+      "machineID": "2ad9bb0540ad4d559d358ca988192d9f",
+      "operatingSystem": "linux",
+      "osImage": "Debian GNU/Linux 13 (trixie)",
+      "swap": {
+        "capacity": 1073737728
+      },
+      "systemUUID": "2ad9bb0540ad4d559d358ca988192d9f"
+    },
+    "node_capacity": {
+      "cpu": "10",
+      "ephemeral-storage": "954925484Ki",
+      "hugepages-1Gi": "0",
+      "hugepages-2Mi": "0",
+      "hugepages-32Mi": "0",
+      "hugepages-64Ki": "0",
+      "memory": "8126672Ki",
+      "pods": "110"
+    },
+    "node_allocatable": {
+      "cpu": "10",
+      "ephemeral-storage": "954925484Ki",
+      "hugepages-1Gi": "0",
+      "hugepages-2Mi": "0",
+      "hugepages-32Mi": "0",
+      "hugepages-64Ki": "0",
+      "memory": "8126672Ki",
+      "pods": "110"
+    },
+    "node_count": 1
+  },
+  "tools": {
+    "java": "openjdk version \"25.0.1\" 2025-10-21",
+    "helm": "v3.21.3+g1ad6e68",
+    "kubectl": "v1.36.1",
+    "kind": "kind v0.33.0-alpha+4158cd8dc9ebbf go1.26.3 darwin/amd64",
+    "python": "3.9.6"
+  },
+  "registry": {
+    "implementation": "registry:2 (CNCF distribution) in a container on the kind Docker network, plain HTTP",
+    "note": "latency is measured from the kind node: see registry.txt"
+  }
+}

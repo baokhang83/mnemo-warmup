@@ -18,6 +18,12 @@ spec:
         warmup.mnemo.io/enabled: "true"
         warmup.mnemo.io/store: {{ required "warmup.store is required when warmup.enabled" .Values.warmup.store | quote }}
         warmup.mnemo.io/exit-mode: {{ .Values.warmup.exitMode | quote }}
+        {{- if .Values.warmup.toolsDelivery }}
+        warmup.mnemo.io/tools-delivery: {{ .Values.warmup.toolsDelivery | quote }}
+        {{- end }}
+        {{- if .Values.warmup.probeUrl }}
+        warmup.mnemo.io/probe-url: {{ .Values.warmup.probeUrl | quote }}
+        {{- end }}
         {{- if .Values.warmup.plainHttp }}
         warmup.mnemo.io/plain-http: "true"
         {{- end }}
@@ -38,11 +44,23 @@ spec:
             # Not a secret; it lets the e2e test prove that the injector's preview never prints a value.
             - name: APP_GREETING
               value: "hello-from-the-workload"
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           ports:
-            - containerPort: 8080
+            - containerPort: {{ .Values.port }}
           readinessProbe:
+            {{- if .Values.readinessCommand }}
+            exec:
+              command: {{ .Values.readinessCommand | toJson }}
+            {{- else }}
             httpGet:
-              path: /health
-              port: 8080
+              path: {{ .Values.readinessPath }}
+              port: {{ .Values.port }}
+            {{- end }}
             periodSeconds: 1
             failureThreshold: 120

@@ -12,6 +12,7 @@ runs {{ include "mnemo-warmup.appImage" .Values }} (use the same image, JVM opti
     - name: app
       command: {{ "{{ include \"mnemo-warmup.command\" .Values.warmup }}" }}
       args: ["java", ... your usual command ...]     # the exec wrapper starts it
+                                                     # (with tools.delivery=image-volume, put {{ "{{- include \"mnemo-warmup.argsPrefix\" .Values.warmup | nindent 8 }}" }} first)
       env:
         {{ "{{- include \"mnemo-warmup.env\" .Values.warmup | nindent 12 }}" }}
       volumeMounts:

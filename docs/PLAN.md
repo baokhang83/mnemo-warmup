@@ -151,8 +151,15 @@ Maven coordinates: groupId `io.github.baokhang83.mnemo` (same as warden), artifa
       and support multi-profile archives accordingly
 - [ ] Warden integration (implemented in the warden repo): inject the init container
 - [ ] Savings metrics exported (startup ms, RSS) for dashboards
-- [ ] Evidence: run it on many real applications (frameworks, sizes, JDKs, amd64 and arm64, private registries,
-      several replicas) and publish the results, including pod start to Ready, not only JVM startup
+- [ ] Evidence (done so far: three application profiles at 1 CPU, `benchmarks/README.md`): Spring Boot gains, Jenkins is at parity, SonarQube (multi-process launcher) gains nothing
+  - [ ] JDK 21 AppCDS vs JDK 25 Leyden AOT: speed, archive size on disk and over the network (#71)
+  - [ ] Application size break-even: about 40 MB, 150 MB and 350 MB+ of JARs (#72)
+  - [ ] HPA scale-out burst, 1 to 10 replicas, against a remote registry (#73)
+  - [ ] Comparison matrix against vanilla JVM, build-time AppCDS/AOT and GraalVM Native Image (#74)
+- [ ] Image-volume tools delivery consolidated for the beta: default, fallback, `pull-secret`, CI, more benchmarks (#76, ADR 0012)
+- [ ] Warn in the preview when the image already carries a build-time cache (#70)
+- [ ] Multi-JVM applications such as SonarQube: archives for child JVMs, or a documented limit (#77)
+- [ ] Lighter install than extracting the tools image: curl script, Homebrew tap, asdf (#75)
 - [ ] JDK 24 two-step AOT flow, only if users ask
 
 ### Later

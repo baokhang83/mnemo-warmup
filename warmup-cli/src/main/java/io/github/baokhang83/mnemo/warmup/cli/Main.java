@@ -372,7 +372,9 @@ public class Main implements Runnable {
                 if (storeTimeoutSeconds <= 0) {
                     throw new IllegalArgumentException("--store-timeout-seconds must be positive");
                 }
+                var timer = io.github.baokhang83.mnemo.warmup.core.PhaseTimer.from(System.getenv());
                 JdkInfo jdk = JdkInfo.detect(opts.javaHome, System.getenv());
+                timer.lap("jdk-detect");
                 List<CacheStrategy> order = candidates(jdk);
                 // Extraction (needed to hash a Spring Boot fat JAR's libraries) goes to a fresh directory every
                 // time, because JarExtractor refuses a non-empty destination and fetch must be repeatable,
@@ -394,9 +396,12 @@ public class Main implements Runnable {
                 } finally {
                     deleteTree(scratch);
                 }
+                timer.lap("extract-and-hash-classpath");
                 var archiveStore = openStore(store, registryAuth, plainHttp, storeTimeoutSeconds);
                 var result = new ArchiveFetcher().fetch(archiveStore, live, out);
+                timer.lap("store-lookup-download-verify");
                 result.notes().forEach(n -> e.println("fetch: " + n));
+                timer.summary().ifPresent(t -> e.println("fetch: " + t));
                 if (result.outcome() == ArchiveFetcher.Outcome.HIT) {
                     o.printf("Archive: %s (%s), fingerprint %s%n", result.archive(), result.cacheType(), result.fingerprint());
                     o.printf("Flags: %s%n", result.flagsFile());

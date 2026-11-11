@@ -78,6 +78,20 @@ class RunPlannerTest {
     }
 
     @Test
+    void timingIsReportedOnlyWhenAskedFor(@TempDir Path dir) throws Exception {
+        Cache c = cache(dir);
+        var quiet = plan(c, launch(c, "-Xmx512m"));
+        assertTrue(quiet.notes().stream().noneMatch(n -> n.startsWith("timing:")), quiet.notes().toString());
+
+        var timed = new RunPlanner().plan(launch(c, "-Xmx512m"), c.cacheDir(), Map.of(PhaseTimer.ENV, "1"), null);
+        assertTrue(timed.archiveUsed(), timed.notes().toString());
+        String line = timed.notes().stream().filter(n -> n.startsWith("timing:")).findFirst().orElseThrow();
+        for (String phase : List.of("read-manifest=", "archive-sha256=", "jdk-probe=", "classpath-hash=", "tool-jvm-uptime=")) {
+            assertTrue(line.contains(phase), phase + " missing in: " + line);
+        }
+    }
+
+    @Test
     void optionsThatDoNotAffectTheArchiveAreIgnored(@TempDir Path dir) throws Exception {
         Cache c = cache(dir);
         assertTrue(plan(c, launch(c, "-Xmx512m", "-Dfoo=bar", "-Xlog:gc")).archiveUsed());

@@ -1,0 +1,1 @@
+-XX:SharedArchiveFile=@ROOT@/cache/app.jsa

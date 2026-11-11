@@ -11,10 +11,21 @@ jar: /app/app.jar
 
 replicas: 1
 
+# The readiness probe path of the application, and extra environment variables for the application container
+# (they are copied to the fetch init container and the trainer too).
+readinessPath: /health
+port: 8080
+# Optional: a command instead of the HTTP path, for an application whose HTTP endpoint answers 200 before it is ready.
+readinessCommand: []
+resources: {}      # requests and limits of the application container
+extraEnv: []
+
 # Adoption is these annotations on the pod template. Removing them (or setting enabled to "false") and upgrading
 # returns the Deployment to what it was.
 warmup:
   enabled: true
   store: ""            # required when enabled, e.g. oci://registry.example.com/team/app-warmup
   exitMode: spring-refresh
+  toolsDelivery: ""    # "" or init-container (default), or image-volume: no init containers, needs image volumes (docs/adr/0012)
+  probeUrl: ""         # required with exitMode http-probe, e.g. http://localhost:8080/login
   plainHttp: false     # local registries only

@@ -32,7 +32,7 @@ kubectl -n NS get pods -l app=my-app -o json | jq -r '.items[] | [.metadata.name
 
 Pod condition times have a resolution of one second. For the JVM's own start-up figure, read the application log ("Started ... in N seconds") or run `mnemo-warmup bench --jar app.jar`, which compares no cache, AppCDS and AOT locally ([reference](reference.md#measure-the-savings-bench)).
 
-For scale, not as a prediction: on the small example application on an arm64 kind cluster, pod start-to-Ready was 2 to 3 seconds with and without the archive, while the JVM-reported start was a median 0.48 s without and 0.31 s with it ([details](offline-injector.md#verification)). A real application with a large classpath will differ.
+For scale, not as a prediction: on a Spring Boot application with 69 JARs and a 1 CPU / 1 GiB limit (arm64 kind cluster), the JVM-reported start was a median 3.19 s without and 1.89 s with the archive. Pod start-to-Ready was 5 s without mnemo-warmup, 5 s with the archive and init containers, and 3 s with the tools delivered as an `image` volume. Jenkins gained 0.3 s of JVM start and was at parity in pod readiness; SonarQube, whose container starts a coordinator for three more JVMs, gained nothing. The method, raw data, per-phase breakdown and limits are in [benchmarks](../benchmarks/README.md). On the small bundled example the JVM start fell from 0.48 s to 0.31 s and pod start-to-Ready stayed at 2 to 3 s ([details](offline-injector.md#verification)). Measure your own application.
 
 ## What can still stop a pod
 
@@ -52,7 +52,8 @@ Failures **looking up or validating** the archive never stop a pod; it starts th
 - a `pull-secret` or `push-secret` that does not exist in the namespace;
 - the tools image or the application image cannot be pulled;
 - with the Helm chart, an application image without `/bin/sh`;
-- an application command that is wrong in the first place.
+- an application command that is wrong in the first place;
+- with `tools-delivery: image-volume` ([ADR 0012](adr/0012-tools-as-an-image-volume.md)), a cluster or container runtime that does not support image volumes: the pod stays in `ContainerCreating` and its events say why. Remove the annotation (or set it to `init-container`) to go back.
 
 Pass `--strict` to `fetch` only if you want a missing archive to fail the pod. Do not do this in production start paths.
 

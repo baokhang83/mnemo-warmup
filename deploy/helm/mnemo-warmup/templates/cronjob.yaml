@@ -46,13 +46,15 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if not (include "mnemo-warmup.imageVolume" $v) }}
           initContainers:
             {{- include "mnemo-warmup.installInitContainer" $v | nindent 12 }}
+          {{- end }}
           containers:
             - name: trainer
               image: {{ include "mnemo-warmup.appImage" $v | quote }}
               imagePullPolicy: {{ $v.app.image.pullPolicy }}
-              command: ["/mnemo-tools/bin/mnemo-warmup"]
+              command: ["{{ include "mnemo-warmup.toolsRoot" $v }}/bin/mnemo-warmup"]
               args:
                 - train
                 {{- include "mnemo-warmup.launchArgs" $v | nindent 16 }}
@@ -113,7 +115,13 @@ spec:
                 {{- end }}
           volumes:
             - name: mnemo-tools
+              {{- if include "mnemo-warmup.imageVolume" $v }}
+              image:
+                reference: {{ include "mnemo-warmup.toolsImage" $v | quote }}
+                pullPolicy: {{ $v.tools.image.pullPolicy }}
+              {{- else }}
               emptyDir: {}
+              {{- end }}
             - name: mnemo-work
               emptyDir: {}
             {{- if $v.store.pushSecret }}

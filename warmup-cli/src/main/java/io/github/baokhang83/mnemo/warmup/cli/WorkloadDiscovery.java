@@ -13,7 +13,12 @@ final class WorkloadDiscovery {
     static final String PREFIX = "warmup.mnemo.io/";
     record Workload(String name, String namespace, String container, String image, String store,
                     String exitMode, String probeUrl, String pullSecret, String pushSecret, boolean plainHttp,
-                    List<String> command, List<String> jvmArgs, String jar) {}
+                    List<String> command, List<String> jvmArgs, String jar, String toolsDelivery) {
+        /** The tools arrive as an image volume and the fetch runs in the application container (docs/adr/0012). */
+        boolean imageVolume() { return IMAGE_VOLUME.equals(toolsDelivery); }
+    }
+    static final String INIT_CONTAINER = "init-container";
+    static final String IMAGE_VOLUME = "image-volume";
 
     static Workload discover(Map<String, Object> resource) {
         if (!"apps/v1".equals(resource.get("apiVersion")) || !"Deployment".equals(resource.get("kind"))) return null;
@@ -80,8 +85,16 @@ final class WorkloadDiscovery {
         String pushSecret = optionalString(annotations, PREFIX + "push-secret");
         String plainHttp = optionalString(annotations, PREFIX + "plain-http");
         if (plainHttp != null && !plainHttp.equals("true") && !plainHttp.equals("false")) throw new IllegalArgumentException("plain-http must be true or false");
+        String delivery = optionalString(annotations, PREFIX + "tools-delivery");
+        if (delivery == null) delivery = INIT_CONTAINER;
+        if (!delivery.equals(INIT_CONTAINER) && !delivery.equals(IMAGE_VOLUME))
+            throw new IllegalArgumentException("tools-delivery must be " + INIT_CONTAINER + " or " + IMAGE_VOLUME + ", got: " + delivery);
+        // The fetch would run in the application container, where the application's code could read the Secret (docs/adr/0012).
+        if (delivery.equals(IMAGE_VOLUME) && pullSecret != null)
+            throw new IllegalArgumentException("pull-secret cannot be used with tools-delivery " + IMAGE_VOLUME
+                    + ": the fetch runs in the application container, which would then be able to read the Secret; use " + INIT_CONTAINER);
         return new Workload(name, namespace, containerName, image, store, mode, probe, pullSecret, pushSecret, "true".equals(plainHttp),
-                List.copyOf(command), List.copyOf(jvm), command.get(jarIndex + 1));
+                List.copyOf(command), List.copyOf(jvm), command.get(jarIndex + 1), delivery);
     }
 
     private static String optionalString(Map<String, Object> values, String key) {

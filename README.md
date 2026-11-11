@@ -22,6 +22,7 @@ unchanged JVM application. A pod starts from the cache when it fits its launch e
 <p>
 <a href="#try-the-example">Try the example</a> &middot;
 <a href="#quick-start-in-three-steps">Quick start</a> &middot;
+<a href="#measurements">Measurements</a> &middot;
 <a href="docs/reference.md">Reference</a>
 </p>
 
@@ -29,7 +30,7 @@ unchanged JVM application. A pod starts from the cache when it fits its launch e
 
 ## Key benefits
 
-- **Shorter JVM start-up, no rewrite.** Keep your JDK, your frameworks and your JAR. Pods start from a ready-made class cache instead of loading every class from scratch. Whether that shortens *pod readiness* in your cluster is something to [measure](docs/operations.md#measure-the-benefit).
+- **Shorter JVM start-up, no rewrite.** Keep your JDK, your frameworks and your JAR. Pods start from a ready-made class cache instead of loading every class from scratch. Pod readiness improves where class loading dominates the start (Spring Boot: [-40%](#measurements)); [measure](docs/operations.md#measure-the-benefit) yours.
 - **Three annotations, no source changes.** An injector adds the init containers, the launcher and the trainer to a plain Deployment, and you can preview every change first.
 - **A cache problem never stops a pod.** A missing, outdated, damaged or unreachable cache means an ordinary start, and the log says why.
 - **Set it up once.** When the image or JVM options change, the trainer builds a new cache by itself.
@@ -44,7 +45,7 @@ unchanged JVM application. A pod starts from the cache when it fits its launch e
 
 - A **fingerprint** identifies what a cache is valid for: the JDK build, the classpath JAR contents and the JVM options.
 - The **trainer** is a CronJob that runs your application image once per new fingerprint, stores the cache in the registry, and takes a Kubernetes Lease so only one trainer works at a time.
-- Each **pod** gets two init containers and starts through a small static launcher. When the image or JVM options change, a new fingerprint is trained.
+- Each **pod** gets its tools (two init containers, or a read-only `image` volume on clusters that support it) and starts through a small static launcher. When the image or JVM options change, a new fingerprint is trained.
 
 > **Status: alpha.** Command-line options, annotations, chart values and the manifest format may still change. Validate both the benefit and the deployment behaviour with your own workload before you rely on it. [What has and has not been verified](docs/operations.md#known-limitations).
 
@@ -160,9 +161,21 @@ Details and what is not supported: [configuration](docs/configuration.md#require
 - **Caches use registry storage, and nothing deletes them.** Set a [retention policy](docs/archive-retention.md) on the archive repository.
 - **Cache problems fall back; deployment problems do not.** A missing, damaged or unreachable archive means an ordinary start. A missing Secret, an unpullable image or a wrong command can still keep a pod from starting: [what can still stop a pod](docs/operations.md#what-can-still-stop-a-pod).
 
-## Measure the benefit
+## Measurements
 
-Compare **pod creation to Ready** with and without the cache over several restarts, including init container time, and read the JVM's own start-up figure. On the small bundled example the JVM-reported start dropped from 0.48 s to 0.31 s while pod start-to-Ready stayed at 2 to 3 seconds; your numbers will differ. [How to measure](docs/operations.md#measure-the-benefit); `mnemo-warmup bench --jar app.jar` compares start-up modes locally.
+**Will it make my pods start faster?** It depends on what your app does while it starts. We measured three real applications (1 CPU, 1 GiB, 12 restarts each).
+
+| Workload Profile | Pod start-to-Ready | Verdict |
+|---|---|---|
+| 🟢 **Spring Boot**: start-up is mostly loading classes and creating beans | **5 s → 3 s**<br>40% faster | **Worth it.** The JVM itself starts 41% faster. |
+| 🟡 **Jenkins**: start-up is mostly the application running its own setup code (initializing plugins and configuration) | **4 s → 4 s**<br>no change | **Neutral.** The JVM starts 13% faster, the pod is ready at the same time. |
+| 🔴 **SonarQube**: the container starts a small launcher, which starts three other JVMs that do the real work | **15 s → 17 s**<br>13% slower | **Not a fit yet.** The cache only reaches the launcher ([#77](https://github.com/baokhang83/mnemo-warmup/issues/77)). |
+
+**The rule of thumb:** the more of your start-up is class loading (typical for Spring Boot and similar frameworks), the more you gain. If it is mostly your own initialization code, or a launcher that starts other JVMs, expect little or nothing.
+
+> **Use the `image` volume where your cluster supports it.** The green and yellow rows deliver the tools as a Kubernetes [`image` volume](docs/configuration.md#tools-delivery-init-containers-or-an-image-volume), which needs no init containers. With init containers the Spring Boot pod is ready in 5 s either way (the init containers cost what the cache saves), and Jenkins is 1 s slower. The red row used init containers.
+
+Numbers are medians and pod times have a one-second resolution: read the direction, not the decimals. Measure your own app with `mnemo-warmup bench --jar app.jar` or [the cluster method](docs/operations.md#measure-the-benefit). Method, raw data and limits: [benchmarks](benchmarks/README.md). More studies (JDK 21 vs 25, app size, scale-out, alternatives) are planned for the [0.3.0 beta](https://github.com/baokhang83/mnemo-warmup/milestone/3).
 
 ## Disable or remove it
 
@@ -179,6 +192,7 @@ The explicit Helm-subchart setup (you wire the helpers into your own templates; 
 - [Operating it](docs/operations.md) and [archive retention](docs/archive-retention.md)
 - [Offline injector](docs/offline-injector.md): preview, Helm and GitOps use, what was verified.
 - [Reference](docs/reference.md): every command and option.
+- For LLM tools: [llms.txt](https://baokhang83.github.io/mnemo-warmup/llms.txt) and [llms-full.txt](https://baokhang83.github.io/mnemo-warmup/llms-full.txt) (published with every build).
 - [Example](examples/README.md), [Helm chart setup](docs/helm-chart.md), [design decisions](docs/adr/) and the [project plan](docs/PLAN.md).
 - Related: [`mnemo-jvm-warden`](https://github.com/baokhang83/mnemo-jvm-warden) resizes running pods in place; the planned integration is that warden injects the init containers (not built yet). `warmup-core` is on Maven Central (`io.github.baokhang83.mnemo:warmup-core`).
 

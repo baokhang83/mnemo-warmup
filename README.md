@@ -5,12 +5,12 @@
 
 <div align="center">
 
-<b>Shared JVM startup caches for Kubernetes.</b>
+<b>Faster Java pod starts on Kubernetes, without GraalVM.</b>
 
 <p>
-mnemo-warmup trains an AppCDS or Project Leyden AOT archive <b>once, inside your cluster</b>, and delivers it to every replica of your
-Java application. A pod starts from the archive when it fits its launch exactly, and starts the ordinary way when it does not.
-Built for services whose pods start often: frequent deployments, autoscaling scale-ups and node moves.
+Java services spend their first seconds loading and linking classes, on every deployment, scale-up and node move.
+mnemo-warmup trains an AppCDS or Project Leyden AOT cache <b>once, inside your cluster</b>, and gives it to every replica of your
+unchanged JVM application. A pod starts from the cache when it fits its launch exactly, and starts the ordinary way when it does not.
 </p>
 
 <a href="https://github.com/baokhang83/mnemo-warmup/actions/workflows/build.yml"><img alt="build" src="https://github.com/baokhang83/mnemo-warmup/actions/workflows/build.yml/badge.svg"></a>
@@ -21,22 +21,44 @@ Built for services whose pods start often: frequent deployments, autoscaling sca
 
 <p>
 <a href="#try-the-example">Try the example</a> &middot;
-<a href="#add-it-to-an-application">Add it to an application</a> &middot;
+<a href="#quick-start-in-three-steps">Quick start</a> &middot;
 <a href="docs/reference.md">Reference</a>
 </p>
 
 </div>
 
-## Why use it?
+## Key benefits
 
-Java applications repeat class loading and linking whenever a pod starts. AppCDS and the JDK's AOT cache can reuse some of that work, but creating a cache and getting it to every pod takes effort. mnemo-warmup handles the lifecycle:
+- **Shorter JVM start-up, no rewrite.** Keep your JDK, your frameworks and your JAR. Pods start from a ready-made class cache instead of loading every class from scratch. Whether that shortens *pod readiness* in your cluster is something to [measure](docs/operations.md#measure-the-benefit).
+- **Three annotations, no source changes.** An injector adds the init containers, the launcher and the trainer to a plain Deployment, and you can preview every change first.
+- **A cache problem never stops a pod.** A missing, outdated, damaged or unreachable cache means an ordinary start, and the log says why.
+- **Set it up once.** When the image or JVM options change, the trainer builds a new cache by itself.
+- **Fits what you already run.** An OCI registry you already have, Helm, and `java` stays PID 1. No controller, webhook or CRD. Works on distroless images.
+- **AppCDS or the AOT cache**, chosen from your image's JDK (AppCDS on 21 and later, Leyden AOT on 25).
 
-1. A **trainer** runs your application and stores the cache in an OCI registry.
-2. New pods **fetch** the matching cache before starting.
-3. A small **launcher** checks that the cache fits the application and starts Java with it, so `java` is still PID 1.
-4. When the image or JVM options change, a new cache is trained.
+## How it works
 
-AppCDS is used on JDK 21 and later, the Leyden AOT cache on JDK 25. If a cache is missing or does not fit, the pod starts the ordinary way and its log says why.
+```text
+  Deployment + 3 annotations
+            |  helm template | mnemo-warmup inject
+            v
+  +-------------------+  trains once per fingerprint  +--------------------------+
+  | trainer CronJob   | ----------------------------> | OCI registry             |
+  | (runs your app)   |                               | one archive per          |
+  +-------------------+                               | fingerprint (fp-<hex>)   |
+                                                      +------------+-------------+
+                                                                   |
+        new pod:  init container "fetch"  <-----------------------+
+                       |   verifies the digest
+                       v
+        launcher: does the archive fit this exact launch?
+              yes -> java with the cache flag (still PID 1)
+              no  -> java as before, and the log says why
+```
+
+- A **fingerprint** identifies what a cache is valid for: the JDK build, the classpath JAR contents and the JVM options.
+- The **trainer** is a CronJob that runs your application image once per new fingerprint, stores the cache in the registry, and takes a Kubernetes Lease so only one trainer works at a time.
+- Each **pod** gets two init containers and starts through a small static launcher. When the image or JVM options change, a new fingerprint is trained.
 
 > **Status: alpha.** Command-line options, annotations, chart values and the manifest format may still change. Validate both the benefit and the deployment behaviour with your own workload before you rely on it. [What has and has not been verified](docs/operations.md#known-limitations).
 
@@ -52,27 +74,24 @@ scripts/e2e-kind-inject.sh temurin     # needs docker, kind, kubectl, Helm 3, Ja
 
 It previews and installs an annotated Deployment, shows it starting without a cache, trains one, restarts the pods onto it, changes a JVM option, corrupts the stored archive, stops the registry, and removes everything, checking at each step that the application still starts. See [`examples/`](examples/README.md).
 
-## Add it to an application
+## Quick start in three steps
 
-### 0. Get the CLI
-
-The CLI runs on your machine for the preview and as the Helm post-renderer. It needs Java 21 or newer. Copy it from the tools image (the same image the injected init containers use):
+**Before you start:** the CLI runs on your machine for the preview and as the Helm post-renderer. It needs Java 21 or newer and comes in the tools image (the same one the injected init containers use):
 
 ```bash
-docker create --name mnemo-tools ghcr.io/baokhang83/mnemo-warmup-tools:0.2.5
-docker cp mnemo-tools:/opt/mnemo-warmup ./mnemo-warmup-tools && docker rm mnemo-tools
-export PATH="$PWD/mnemo-warmup-tools/bin:$PATH"
+docker run --rm -v "$PWD":/out --entrypoint cp ghcr.io/baokhang83/mnemo-warmup-tools:0.2.5 -r /opt/mnemo-warmup /out/
+export PATH="$PWD/mnemo-warmup/bin:$PATH"
 mnemo-warmup --version
 ```
 
-Helm 3 needs an executable to call as the post-renderer. Save this as `mnemo-warmup-inject` (and `chmod +x` it):
+Helm 3 calls an executable as the post-renderer. Save this as `mnemo-warmup-inject` and `chmod +x` it:
 
 ```sh
 #!/bin/sh
 exec mnemo-warmup inject "$@"
 ```
 
-### 1. Annotate the Deployment
+### Step 1: annotate the Deployment
 
 Add three annotations to the Deployment's **pod template**, and give the container an explicit Java command (`java [options] -jar <jar> [args]`):
 
@@ -94,7 +113,7 @@ spec:
 
 The store is a repository for caches, not for your application image. [Every annotation and override](docs/configuration.md#annotations).
 
-### 2. Preview
+### Step 2: preview
 
 ```bash
 helm template my-app ./my-chart --namespace my-namespace \
@@ -103,7 +122,7 @@ helm template my-app ./my-chart --namespace my-namespace \
 
 The preview names the application container, image and JAR, the store, the trainer mode, and what the trainer copies from your workload (environment variable names, `envFrom` names, volumes and mounts, **never values**), then lists the Kubernetes fields it would add or change. The trainer starts your application with that configuration, so read it. A launch the injector cannot handle is reported here with the reason, and nothing is changed.
 
-### 3. Deploy
+### Step 3: deploy
 
 ```bash
 helm upgrade --install my-app ./my-chart --namespace my-namespace \
@@ -115,7 +134,7 @@ The injector adds the install and fetch init containers, starts your application
 
 > **Spring Boot:** the trainer and every pod must run the same JAR files, so extract the Spring Boot JAR when you build the image. [Preparing the image](docs/configuration.md#spring-boot), with a distroless example.
 
-### 4. Train, then check
+### Then: train and check that it works
 
 The trainer runs every 10 minutes. To train now and check the result:
 

@@ -167,15 +167,15 @@ Details and what is not supported: [configuration](docs/configuration.md#require
 
 | Your app is like | Pod ready | Verdict |
 |---|---|---|
-| 🟢 **Spring Boot**: loads and wires thousands of classes | ![40% faster](https://img.shields.io/badge/pod%20ready-5%20s%20%E2%86%92%203%20s%20(40%25%20faster)-brightgreen) | **Worth it.** The JVM itself starts 41% faster. |
-| 🟡 **Jenkins**: runs plugin and init code | ![no change](https://img.shields.io/badge/pod%20ready-4%20s%20%E2%86%92%204%20s%20(no%20change)-yellow) | **Neutral.** The JVM starts 13% faster, the pod is ready at the same time. |
-| 🔴 **SonarQube**: a launcher that starts three other JVMs | ![slower](https://img.shields.io/badge/pod%20ready-15%20s%20%E2%86%92%2017%20s%20(slower)-red) | **Not a fit yet.** The cache only reaches the launcher ([#77](https://github.com/baokhang83/mnemo-warmup/issues/77)). |
+| 🟢 **Spring Boot**: loads and wires thousands of classes | **5 s → 3 s**<br>40% faster | **Worth it.** The JVM itself starts 41% faster. |
+| 🟡 **Jenkins**: runs plugin and init code | **4 s → 4 s**<br>no change | **Neutral.** The JVM starts 13% faster, the pod is ready at the same time. |
+| 🔴 **SonarQube**: a launcher that starts three other JVMs | **15 s → 17 s**<br>13% slower | **Not a fit yet.** The cache only reaches the launcher ([#77](https://github.com/baokhang83/mnemo-warmup/issues/77)). |
 
 **The rule of thumb:** the more of your start-up is class loading (typical for Spring Boot and similar frameworks), the more you gain. If it is mostly your own initialization code, or a launcher that starts other JVMs, expect little or nothing.
 
 > **Use the `image` volume where your cluster supports it.** The green and yellow rows deliver the tools as a Kubernetes [`image` volume](docs/configuration.md#tools-delivery-init-containers-or-an-image-volume), which needs no init containers. With init containers the Spring Boot pod is ready in 5 s either way (the init containers cost what the cache saves), and Jenkins is 1 s slower. The red row used init containers.
 
-Numbers are medians from a laptop kind cluster with a local registry, and pod times have a one-second resolution, so read the direction, not the decimals. Measure your own app with `mnemo-warmup bench --jar app.jar` or [the cluster method](docs/operations.md#measure-the-benefit). Method, raw data and limits: [benchmarks](benchmarks/README.md). More studies (JDK 21 vs 25, app size, scale-out, alternatives) are planned for the [0.3.0 beta](https://github.com/baokhang83/mnemo-warmup/milestone/3).
+Numbers are medians and pod times have a one-second resolution: read the direction, not the decimals. Measure your own app with `mnemo-warmup bench --jar app.jar` or [the cluster method](docs/operations.md#measure-the-benefit). Method, raw data and limits: [benchmarks](benchmarks/README.md). More studies (JDK 21 vs 25, app size, scale-out, alternatives) are planned for the [0.3.0 beta](https://github.com/baokhang83/mnemo-warmup/milestone/3).
 
 ## Disable or remove it
 

@@ -11,6 +11,12 @@ jar: /app/app.jar
 
 replicas: 1
 
+# The readiness probe path of the application, and extra environment variables for the application container
+# (they are copied to the fetch init container and the trainer too).
+readinessPath: /health
+resources: {}      # requests and limits of the application container
+extraEnv: []
+
 # Adoption is these annotations on the pod template. Removing them (or setting enabled to "false") and upgrading
 # returns the Deployment to what it was.
 warmup:

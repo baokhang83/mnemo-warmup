@@ -38,11 +38,18 @@ spec:
             # Not a secret; it lets the e2e test prove that the injector's preview never prints a value.
             - name: APP_GREETING
               value: "hello-from-the-workload"
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           ports:
             - containerPort: 8080
           readinessProbe:
             httpGet:
-              path: /health
+              path: {{ .Values.readinessPath }}
               port: 8080
             periodSeconds: 1
             failureThreshold: 120

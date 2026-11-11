@@ -48,7 +48,7 @@ coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,OciArchiveStore,256,
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,OciArchiveStore.ParsedReference,0,9,0,0,0,1,0,1,0,1
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,ArchiveManifest,107,1097,13,77,18,196,13,57,0,25
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,AwsCredentials,0,19,0,0,0,2,0,2,0,2
-coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,MemoryProbe,62,50,3,5,12,9,2,5,0,3
+coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,MemoryProbe,19,93,2,6,6,15,1,6,0,3
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,AwsHttp,19,150,3,11,7,34,3,8,0,4
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,TrainingException,0,18,0,0,0,7,0,3,0,3
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,KubeApi,149,120,13,5,28,24,11,6,3,5

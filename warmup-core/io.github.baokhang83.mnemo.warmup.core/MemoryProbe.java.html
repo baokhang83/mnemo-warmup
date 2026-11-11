@@ -64,7 +64,7 @@ interface MemoryProbe {
     /** RSS of {@code pid} in KiB, or 0 if it cannot be read (for example the process just ended). */
     static long readKb(long pid) {
 <span class="fc" id="L66">        Path status = Path.of(&quot;/proc&quot;, Long.toString(pid), &quot;status&quot;);</span>
-<span class="pc bpc" id="L67" title="1 of 2 branches missed.">        if (Files.isReadable(status)) {</span>
+<span class="fc bfc" id="L67" title="All 2 branches covered.">        if (Files.isReadable(status)) {</span>
             try {
 <span class="fc bfc" id="L69" title="All 2 branches covered.">                for (String line : Files.readAllLines(status)) {</span>
 <span class="fc bfc" id="L70" title="All 2 branches covered.">                    if (line.startsWith(&quot;VmHWM:&quot;)) {</span>
@@ -77,16 +77,16 @@ interface MemoryProbe {
 <span class="fc" id="L77">            return 0;</span>
         }
         try {
-<span class="nc" id="L80">            Process ps = new ProcessBuilder(&quot;ps&quot;, &quot;-o&quot;, &quot;rss=&quot;, &quot;-p&quot;, Long.toString(pid))</span>
-<span class="nc" id="L81">                    .redirectErrorStream(true).start();</span>
-<span class="nc" id="L82">            String out = new String(ps.getInputStream().readAllBytes()).trim();</span>
+<span class="fc" id="L80">            Process ps = new ProcessBuilder(&quot;ps&quot;, &quot;-o&quot;, &quot;rss=&quot;, &quot;-p&quot;, Long.toString(pid))</span>
+<span class="fc" id="L81">                    .redirectErrorStream(true).start();</span>
+<span class="fc" id="L82">            String out = new String(ps.getInputStream().readAllBytes()).trim();</span>
 <span class="nc" id="L83">            ps.waitFor(2, TimeUnit.SECONDS);</span>
 <span class="nc bnc" id="L84" title="All 2 branches missed.">            return out.isEmpty() ? 0 : Long.parseLong(out);</span>
 <span class="nc" id="L85">        } catch (IOException | NumberFormatException e) {</span>
 <span class="nc" id="L86">            return 0;</span>
-<span class="nc" id="L87">        } catch (InterruptedException e) {</span>
-<span class="nc" id="L88">            Thread.currentThread().interrupt();</span>
-<span class="nc" id="L89">            return 0;</span>
+<span class="fc" id="L87">        } catch (InterruptedException e) {</span>
+<span class="fc" id="L88">            Thread.currentThread().interrupt();</span>
+<span class="fc" id="L89">            return 0;</span>
         }
     }
 }

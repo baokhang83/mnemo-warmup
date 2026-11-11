@@ -167,9 +167,9 @@ Details and what is not supported: [configuration](docs/configuration.md#require
 
 | Your app is like | Pod ready | Verdict |
 |---|---|---|
-| 🟢 **Spring Boot**: loads and wires thousands of classes | **5 s → 3 s**<br>40% faster | **Worth it.** The JVM itself starts 41% faster. |
-| 🟡 **Jenkins**: runs plugin and init code | **4 s → 4 s**<br>no change | **Neutral.** The JVM starts 13% faster, the pod is ready at the same time. |
-| 🔴 **SonarQube**: a launcher that starts three other JVMs | **15 s → 17 s**<br>13% slower | **Not a fit yet.** The cache only reaches the launcher ([#77](https://github.com/baokhang83/mnemo-warmup/issues/77)). |
+| 🟢 **Spring Boot**: start-up is mostly loading classes and creating beans | **5 s → 3 s**<br>40% faster | **Worth it.** The JVM itself starts 41% faster. |
+| 🟡 **Jenkins**: start-up is mostly the application running its own setup code (initializing plugins and configuration) | **4 s → 4 s**<br>no change | **Neutral.** The JVM starts 13% faster, the pod is ready at the same time. |
+| 🔴 **SonarQube**: the container starts a small launcher, which starts three other JVMs that do the real work | **15 s → 17 s**<br>13% slower | **Not a fit yet.** The cache only reaches the launcher ([#77](https://github.com/baokhang83/mnemo-warmup/issues/77)). |
 
 **The rule of thumb:** the more of your start-up is class loading (typical for Spring Boot and similar frameworks), the more you gain. If it is mostly your own initialization code, or a launcher that starts other JVMs, expect little or nothing.
 

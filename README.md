@@ -275,12 +275,13 @@ bundled example); an anonymous plain-HTTP `registry:2`. CI runs the whole chain 
 - Alpha: command-line options, chart values and the manifest format may still change.
 - The application image needs **Java 21+** (and `/bin/sh` with the Helm chart, not with the offline injector), and the JARs must be fixed at build time (step 1).
 - The first archive appears after the trainer's first run (up to one schedule interval, unless you start a job by hand).
-- Registry login supports Docker-config basic and token auth; cloud credential helpers and workload identity are not implemented.
+- Registry login supports Docker-config basic and token auth, and Amazon ECR through EKS workload identity ([setup](docs/aws-workload-identity.md)); credential helpers, GKE and AKS are not implemented.
 
 ## More
 
 - [Reference](docs/reference.md): every command and option, the cache types, the manifest and fingerprint, the container image, the trainer and chart in detail.
 - [Example](examples/README.md): a Spring Boot app, an example chart, and `scripts/e2e-kind.sh`, which runs the whole chain on a kind cluster.
+- [Archive retention](docs/archive-retention.md): how the store grows and how to bound it with a registry lifecycle policy.
 - [Design decisions](docs/adr/) and the [project plan and roadmap](docs/PLAN.md).
 - Related: [`mnemo-jvm-warden`](https://github.com/baokhang83/mnemo-jvm-warden) resizes running pods in place; the planned integration is that warden injects the init containers (not built yet). `warmup-core` is on Maven Central (`io.github.baokhang83.mnemo:warmup-core`).
 

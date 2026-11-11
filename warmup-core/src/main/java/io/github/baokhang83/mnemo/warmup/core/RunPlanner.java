@@ -36,15 +36,19 @@ public final class RunPlanner {
      */
     public Plan plan(List<String> javaCommand, Path cacheDir, Map<String, String> environment, String imageDigest) {
         List<String> notes = new ArrayList<>();
+        PhaseTimer timer = PhaseTimer.from(environment);
         try {
-            return decide(javaCommand, cacheDir, environment, imageDigest, notes);
+            Plan plan = decide(javaCommand, cacheDir, environment, imageDigest, notes, timer);
+            timer.summary().ifPresent(notes::add);
+            return plan;
         } catch (RuntimeException e) {
             notes.add("could not validate the archive (" + e.getMessage() + "); starting without it");
+            timer.summary().ifPresent(notes::add);
             return new Plan(List.copyOf(javaCommand), false, notes);
         }
     }
 
-    private Plan decide(List<String> command, Path cacheDir, Map<String, String> env, String imageDigest, List<String> notes) {
+    private Plan decide(List<String> command, Path cacheDir, Map<String, String> env, String imageDigest, List<String> notes, PhaseTimer timer) {
         Plan plain = new Plan(List.copyOf(command), false, notes);
         Path flagsFile = cacheDir.resolve(ArchiveFetcher.FLAGS_FILE);
         String flags = readOrNull(flagsFile);
@@ -63,6 +67,7 @@ public final class RunPlanner {
             return plain;
         }
         ArchiveManifest trained = ArchiveManifest.read(manifestFile);
+        timer.lap("read-manifest");
         if (!flag.equals(trained.cacheType().runtimeFlag(flag.substring(flag.indexOf('=') + 1)))) {
             notes.add("flags (" + flag + ") do not match the manifest's cache type " + trained.cacheType() + "; starting without an archive");
             return plain;
@@ -74,7 +79,9 @@ public final class RunPlanner {
         }
         // Verify before use (§2): the size alone would accept same-length corruption, so hash the bytes
         // that are about to be handed to the JVM.
-        if (!trained.archive().sha256().equals(sha256Hex(archive))) {
+        boolean archiveDigestMatches = trained.archive().sha256().equals(sha256Hex(archive));
+        timer.lap("archive-sha256");
+        if (!archiveDigestMatches) {
             notes.add("archive " + archive + " does not match the SHA-256 in its manifest; starting without it");
             return plain;
         }
@@ -99,9 +106,11 @@ public final class RunPlanner {
         }
 
         JdkInfo jdk = JdkInfo.fromJavaHome(launch.javaHome(env), PROBE_TIMEOUT);
+        timer.lap("jdk-probe");
         var live = ArchiveManifest.describe(
                 new JarExtractor.ExtractedApp(JarExtractor.Kind.EXECUTABLE_JAR, launch.jar().toAbsolutePath()),
                 jdk, trained.cacheType(), launch.jvmOptions(), env, imageDigest);
+        timer.lap("classpath-hash");
         List<String> problems = trained.mismatches(live);
         if (!problems.isEmpty()) {
             notes.add("archive does not match this launch: " + problems + "; starting without it");

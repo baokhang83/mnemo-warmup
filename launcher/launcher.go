@@ -34,6 +34,12 @@ func (l launcher) note(format string, a ...any) {
 	fmt.Fprintf(l.stderr, "mnemo-launcher: "+format+"\n", a...)
 }
 
+// timingOn reports whether MNEMO_WARMUP_TIMING=1 is set: then the launcher reports how long each helper
+// process took, for working out where pod start-up time goes. Off by default, so normal logs are unchanged.
+func (l launcher) timingOn() bool {
+	return slices.Contains(l.environ, "MNEMO_WARMUP_TIMING=1")
+}
+
 func (l launcher) run(args []string) int {
 	if len(args) == 0 {
 		return l.usage()
@@ -93,7 +99,11 @@ func (l launcher) fetch(args []string) int {
 	}
 	cmd := exec.Command(java, append([]string{"-jar", l.jar(), "fetch"}, args...)...)
 	cmd.Stdout, cmd.Stderr, cmd.Env = l.stdout, l.stderr, l.environ
+	started := time.Now()
 	err := cmd.Run()
+	if l.timingOn() {
+		l.note("timing: fetch-process=%d ms", time.Since(started).Milliseconds())
+	}
 	if err == nil {
 		return 0
 	}
@@ -152,7 +162,12 @@ func (l launcher) finalArgv(cmd []string) []string {
 	probe := exec.CommandContext(ctx, java, append([]string{"-jar", l.jar(), "run", "--print", "--format", "nul", "--"}, cmd...)...)
 	var out bytes.Buffer
 	probe.Stdout, probe.Stderr, probe.Env = &out, l.stderr, l.environ
-	if err := probe.Run(); err != nil {
+	started := time.Now()
+	err := probe.Run()
+	if l.timingOn() {
+		l.note("timing: plan-process=%d ms", time.Since(started).Milliseconds())
+	}
+	if err != nil {
 		l.note("helper failed (%v); starting the command unchanged", err)
 		return cmd
 	}

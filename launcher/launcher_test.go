@@ -114,6 +114,19 @@ func TestFetch(t *testing.T) {
 			t.Fatalf("java got %q, want %q", b, want)
 		}
 	})
+	t.Run("reports how long the helper took only when MNEMO_WARMUP_TIMING=1", func(t *testing.T) {
+		quiet := newHarness(t, true)
+		quiet.l.fetch(nil)
+		if strings.Contains(quiet.stderr.String(), "timing:") {
+			t.Fatalf("timing printed without MNEMO_WARMUP_TIMING: %q", quiet.stderr.String())
+		}
+		timed := newHarness(t, true)
+		timed.l.environ = append(timed.l.environ, "MNEMO_WARMUP_TIMING=1")
+		timed.l.fetch(nil)
+		if !strings.Contains(timed.stderr.String(), "mnemo-launcher: timing: fetch-process=") {
+			t.Fatalf("no timing line: %q", timed.stderr.String())
+		}
+	})
 	t.Run("a failing jar is swallowed unless --strict, which keeps its status", func(t *testing.T) {
 		h := newHarness(t, true, "FAKE_JAVA_EXIT", "3")
 		if got := h.l.fetch(nil); got != 0 {

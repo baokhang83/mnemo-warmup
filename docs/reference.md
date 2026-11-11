@@ -340,6 +340,7 @@ more than one application (see the [project plan](PLAN.md)).
 - **Registry login:** Docker-config Basic/Bearer auth, and Amazon ECR through EKS IRSA ([setup](aws-workload-identity.md)).
   EKS Pod Identity, GKE, AKS and credential helpers are not implemented. The ECR path is tested against local
   fakes and AWS's SigV4 test vectors, not yet against a live EKS/ECR; other registries were tested without TLS.
+- **Archives are never deleted.** Storage grows by one archive per fingerprint; see [archive retention](archive-retention.md) for bounding it with a registry lifecycle policy.
 - **`run` hashes the classpath JARs and the archive at start.** That costs startup time on a large
   classpath; it has not been measured yet.
 

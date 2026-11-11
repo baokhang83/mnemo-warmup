@@ -1,9 +1,9 @@
 {
   "schema_version": "1",
-  "feature": "020-57-add-workload-identity-authentication-for-eks-and-ecr",
-  "branch": "feature/020-57-add-workload-identity-authentication-for-eks-and-ecr",
-  "stage": "build",
-  "last_session": "004-ecr-registry-auth-mid-run-refresh-environment-selection",
+  "feature": "021-58-document-conservative-oci-archive-retention",
+  "branch": "feature/021-58-document-conservative-oci-archive-retention",
+  "stage": "design",
+  "last_session": "",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

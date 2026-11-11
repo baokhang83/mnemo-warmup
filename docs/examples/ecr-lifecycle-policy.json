@@ -1,0 +1,15 @@
+{
+  "rules": [
+    {
+      "rulePriority": 1,
+      "description": "Keep the newest 30 mnemo-warmup archives (tags fp-*); expire older ones",
+      "selection": {
+        "tagStatus": "tagged",
+        "tagPatternList": ["fp-*"],
+        "countType": "imageCountMoreThan",
+        "countNumber": 30
+      },
+      "action": { "type": "expire" }
+    }
+  ]
+}

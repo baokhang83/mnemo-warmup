@@ -169,7 +169,7 @@ without a shell. Your application image needs Java 21 or newer.
 Bake it into your image:
 
 ```dockerfile
-COPY --from=ghcr.io/baokhang83/mnemo-warmup-tools:0.2.0 /opt/mnemo-warmup /opt/mnemo-warmup
+COPY --from=ghcr.io/baokhang83/mnemo-warmup-tools:0.2.5 /opt/mnemo-warmup /opt/mnemo-warmup
 ENTRYPOINT ["/opt/mnemo-warmup/bin/mnemo-warmup-exec"]
 CMD ["java", "-jar", "/app/app.jar"]
 ```
@@ -179,7 +179,7 @@ or copy it at deploy time with an init container (what the Helm chart does):
 ```yaml
 initContainers:
   - name: mnemo-warmup-install
-    image: ghcr.io/baokhang83/mnemo-warmup-tools:0.2.0
+    image: ghcr.io/baokhang83/mnemo-warmup-tools:0.2.5
     command: ["cp", "-R", "/opt/mnemo-warmup/.", "/mnemo-tools/"]
     volumeMounts: [{ name: mnemo-tools, mountPath: /mnemo-tools }]
   - name: mnemo-warmup-fetch
@@ -265,7 +265,7 @@ snippet, and [`deploy/helm/tests/parent`](../deploy/helm/tests/parent) is a work
 
 ```yaml
 dependencies:
-  - { name: mnemo-warmup, version: 0.2.0, repository: "https://baokhang83.github.io/mnemo-warmup/", alias: warmup }
+  - { name: mnemo-warmup, version: 0.2.5, repository: "https://baokhang83.github.io/mnemo-warmup/", alias: warmup }
 ```
 
 The values that must match your Deployment are `app.image`, `app.jar`, `app.jvmArgs` and `app.env`: an archive is only

@@ -24,7 +24,7 @@ helm search repo mnemo-warmup
 # Chart.yaml
 dependencies:
   - name: mnemo-warmup
-    version: 0.2.0
+    version: 0.2.5
     repository: https://baokhang83.github.io/mnemo-warmup/
     alias: warmup
 ```

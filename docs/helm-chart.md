@@ -2,7 +2,7 @@
 
 This is the explicit setup: you add the mnemo-warmup chart as a dependency of your application's chart and wire its helpers into your Deployment. Use it when you want to see and own the generated YAML, or for images that have `/bin/sh` and a Helm chart you already control. For the quickest start, with no template changes and with shell-free (distroless) images, use the annotation path described in the [README](../README.md) and [configuration](configuration.md) instead.
 
-The chart path is the one released in 0.2.0. Chart `0.2.0` deploys the `0.2.0` tools image ([release notes](https://github.com/baokhang83/mnemo-warmup/releases/tag/v0.2.0)).
+The chart's version is the release version: chart `0.2.5` deploys the `0.2.5` tools image ([release notes](https://github.com/baokhang83/mnemo-warmup/releases/tag/v0.2.5)). This path is unchanged since 0.2.0.
 
 **Requirements specific to the chart:** the application image needs `/bin/sh` (the chart's launcher and wrapper are shell scripts) and Java 21 or newer. Everything else is in [configuration](configuration.md#requirements).
 
@@ -28,14 +28,14 @@ Build one image per JDK you run: the image's JDK decides the cache type (AppCDS 
 
 ```bash
 helm repo add mnemo-warmup https://baokhang83.github.io/mnemo-warmup/
-helm search repo mnemo-warmup              # mnemo-warmup/mnemo-warmup  0.2.0
+helm search repo mnemo-warmup              # mnemo-warmup/mnemo-warmup  0.2.5
 ```
 
 ```yaml
 # your-chart/Chart.yaml
 dependencies:
   - name: mnemo-warmup
-    version: 0.2.0
+    version: 0.2.5
     repository: https://baokhang83.github.io/mnemo-warmup/
     alias: warmup
 ```

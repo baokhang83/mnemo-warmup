@@ -76,4 +76,24 @@ Things to know when comparing with another environment:
 
 ## Results
 
-Each run is committed under `results/<timestamp>-<app>` (the default `--out`; rename it to add the conditions, for example `-no-limits`). No full run has been published yet; the first will be added with its `summary.md`.
+Two complete runs are committed, each with its full `summary.md` (the end-to-end breakdown), `results.csv`, `environment.json`, `registry.txt` and the raw pod objects and logs:
+
+- [`20261111-spring-heavy-no-limits-clean`](results/20261111-spring-heavy-no-limits-clean/summary.md): no pod limits (the JVM sees all 10 CPUs).
+- [`20261111-spring-heavy-1cpu-1gi`](results/20261111-spring-heavy-1cpu-1gi/summary.md): application container at 1 CPU and 1 GiB, requests = limits.
+
+Both: spring-heavy, 12 measured rounds per arm, Apple M5 laptop, kind on Docker Desktop, JDK 21. Medians; pod timestamps have 1 s resolution.
+
+| | no limits | 1 CPU / 1 GiB |
+|---|---|---|
+| Pod start-to-Ready, `none` | 3 s | 5 s |
+| Pod start-to-Ready, `nocache` | 4 s | 6 s |
+| Pod start-to-Ready, `cached` | 4 s | 5 s |
+| `cached` minus `none`, paired per round | +1.5 s (range +1 to +2) | 0 s (range 0 to +1) |
+| Application start (`Started ... in`), without / with the archive | 1318 ms / 696 ms | 3136 ms / 1872 ms |
+| Time the helpers (`fetch` + `run`) take before the app starts, `cached` | about 990 ms | about 1050 ms |
+
+**What this says.** The archive does what it is for: the application starts 0.6 to 1.3 s sooner. On this application and this setup that gain is matched or exceeded by the cost of the helpers, which mostly start two small JVMs before the application can start (`fetch` about 770 to 790 ms of wall time, `run` about 200 to 280 ms; the registry download itself is about 270 to 280 ms). So **pod start-to-Ready did not get shorter**: it was equal with a 1 CPU limit and about 1.5 s longer without limits. The `nocache` arm shows the price of the machinery alone: 1 s or more.
+
+**What this does not say.** It is one application family on one laptop with a local registry and no image pull. The result may be different for an application whose start-up takes much longer than 1.3 to 3.1 s, where the same fixed helper cost is a smaller share, and for pods that start together on a busy node. It also says nothing about a remote registry, which would make `cached` slower. Reducing the helper cost (for example one helper JVM instead of two) is the obvious lever; these numbers are the baseline for it.
+
+An earlier no-limits run and a first 1 CPU run were discarded because other benchmark runs were active on the same machine while they ran. The two published runs ran alone.

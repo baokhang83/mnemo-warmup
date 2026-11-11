@@ -162,7 +162,17 @@ Details and what is not supported: [configuration](docs/configuration.md#require
 
 ## Measure the benefit
 
-Compare **pod creation to Ready** with and without the cache over several restarts, including init container time, and read the JVM's own start-up figure. On the small bundled example the JVM-reported start dropped from 0.48 s to 0.31 s while pod start-to-Ready stayed at 2 to 3 seconds; your numbers will differ. [How to measure](docs/operations.md#measure-the-benefit); `mnemo-warmup bench --jar app.jar` compares start-up modes locally.
+Compare **pod creation to Ready** with and without the cache over several restarts, including init container time, and read the JVM's own start-up figure. Do not assume a gain: the archive shortens the JVM's start-up, but the init container and the helper JVMs that fetch and check it add time before the application starts.
+
+Measured on a Spring Boot application with 69 JARs (kind on a laptop, local registry, image already on the node, 12 interleaved restarts per arm, medians):
+
+| | no pod limits | 1 CPU / 1 GiB |
+|---|---|---|
+| JVM-reported start, without / with the archive | 1.32 s / 0.70 s | 3.14 s / 1.87 s |
+| Pod start-to-Ready, no mnemo-warmup | 3 s | 5 s |
+| Pod start-to-Ready, with a trained archive | 4 s | 5 s |
+
+Here the archive was **not** a net win for pod start-to-Ready: about 1 s of helper start-up cancelled the 0.6 to 1.3 s it saved. Your application, node and registry will differ, so measure yours. The method, the raw data, the full phase breakdown and the limits of the study are in [benchmarks](benchmarks/README.md), and one command repeats it. [How to measure your own](docs/operations.md#measure-the-benefit); `mnemo-warmup bench --jar app.jar` compares start-up modes locally.
 
 ## Disable or remove it
 

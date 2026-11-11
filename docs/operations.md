@@ -32,7 +32,7 @@ kubectl -n NS get pods -l app=my-app -o json | jq -r '.items[] | [.metadata.name
 
 Pod condition times have a resolution of one second. For the JVM's own start-up figure, read the application log ("Started ... in N seconds") or run `mnemo-warmup bench --jar app.jar`, which compares no cache, AppCDS and AOT locally ([reference](reference.md#measure-the-savings-bench)).
 
-For scale, not as a prediction: on the small example application on an arm64 kind cluster, pod start-to-Ready was 2 to 3 seconds with and without the archive, while the JVM-reported start was a median 0.48 s without and 0.31 s with it ([details](offline-injector.md#verification)). A real application with a large classpath will differ.
+For scale, not as a prediction: on a Spring Boot application with 69 JARs on an arm64 kind cluster, the JVM-reported start was a median 1.32 s without and 0.70 s with the archive (3.14 s and 1.87 s with a 1 CPU limit), but pod start-to-Ready was not shorter (3 s without and 4 s with the cache; 5 s and 5 s with the limit), because the fetch and run helpers add about 1 s before the application starts. The method, raw data, per-phase breakdown and limits are in [benchmarks](../benchmarks/README.md). On the small bundled example the JVM start fell from 0.48 s to 0.31 s and pod start-to-Ready stayed at 2 to 3 s ([details](offline-injector.md#verification)). Measure your own application.
 
 ## What can still stop a pod
 

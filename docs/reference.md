@@ -105,7 +105,7 @@ archive first (JDK 25+) and then AppCDS. A hit writes the archive, its manifest 
 | Option | Meaning |
 |--------|---------|
 | `--store` | `oci://host[:port]/repository`. Archives are OCI artifacts tagged `fp-<hex>`. |
-| `--registry-auth` | Docker-config style JSON (a mounted `dockerconfigjson` Secret). `push` needs push scope, `fetch` pull scope. Defaults to `$MNEMO_WARMUP_REGISTRY_AUTH`, then anonymous. Basic and Bearer-token auth are supported; credential helpers and cloud workload identity are not yet. |
+| `--registry-auth` | Docker-config style JSON (a mounted `dockerconfigjson` Secret). `push` needs push scope, `fetch` pull scope. Defaults to `$MNEMO_WARMUP_REGISTRY_AUTH`, then anonymous. Basic and Bearer-token auth are supported. For an Amazon ECR registry on EKS with no file entry, the pod's IRSA identity is used ([setup](aws-workload-identity.md)); credential helpers, GKE and AKS are not supported yet. |
 | `--plain-http` | Use http instead of https (local registries only). |
 | `--out` | `fetch`: output directory (default `.mnemo-warmup/cache`). |
 | `--cache-type` | `fetch`: `auto` (default), `appcds` or `aot`. |
@@ -337,9 +337,9 @@ more than one application (see the [project plan](PLAN.md)).
   `mvn verify -pl warmup-core -Dwarmup.test.springBootJar=/path/to/app.jar`.
 - AppCDS behaviour on JDK 21-24 was checked in Docker ([results](appcds-jdk-matrix.md)); CI runs
   the tests on 21 and 25.
-- **Registry login:** Docker-config Basic/Bearer auth only. ECR/GCR/ACR credential helpers and
-  workload-identity token exchange are not implemented, and only plain registries were tested (not TLS
-  or a cloud registry).
+- **Registry login:** Docker-config Basic/Bearer auth, and Amazon ECR through EKS IRSA ([setup](aws-workload-identity.md)).
+  EKS Pod Identity, GKE, AKS and credential helpers are not implemented. The ECR path is tested against local
+  fakes and AWS's SigV4 test vectors, not yet against a live EKS/ECR; other registries were tested without TLS.
 - **`run` hashes the classpath JARs and the archive at start.** That costs startup time on a large
   classpath; it has not been measured yet.
 

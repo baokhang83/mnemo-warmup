@@ -1,9 +1,9 @@
 {
   "schema_version": "1",
-  "feature": "022-59-verify-the-annotated-workload-adoption-path-end-to-en",
-  "branch": "feature/022-59-verify-the-annotated-workload-adoption-path-end-to-en",
-  "stage": "build",
-  "last_session": "001-end-to-end-script-for-the-annotated-adoption-path",
+  "feature": "023-60-publish-the-v0-2-5-adoption-guide-and-configuration-r",
+  "branch": "feature/023-60-publish-the-v0-2-5-adoption-guide-and-configuration-r",
+  "stage": "design",
+  "last_session": "",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

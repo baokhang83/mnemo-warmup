@@ -451,11 +451,26 @@ public final class OciArchiveStore implements ArchiveStore {
             String actions) {
         URI current = uri;
         boolean authenticated = false;
+        boolean refreshed = false;
         for (int hops = 0; hops <= MAX_REDIRECTS; hops++) {
             checkTransport(base, current);
             boolean sameHost = sameOrigin(base, current);
             HttpResponse<T> r = send(method, current, headers, body, handler, sameHost);
             int status = r.statusCode();
+            if (status == 401 && sameHost && authenticated && !refreshed) {
+                // We sent a login and were still refused: it may have expired mid-run (ECR tokens last about
+                // 12 hours). Ask the provider for a fresh one; if it hands back the same login, the refusal is real.
+                String previous = authorization;
+                auth.invalidate();
+                authorize(r.headers().firstValue("WWW-Authenticate").orElse(""), actions);
+                refreshed = true;
+                if (authorization != null && !authorization.equals(previous)) {
+                    closeQuietly(r.body());
+                    hops--;
+                    continue;
+                }
+                return r;
+            }
             if (status == 401 && sameHost && !authenticated) {
                 String challenge = r.headers().firstValue("WWW-Authenticate").orElse("");
                 closeQuietly(r.body());

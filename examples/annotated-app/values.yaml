@@ -1,0 +1,20 @@
+image:
+  repository: mnemo-example
+  tag: "21"
+  pullPolicy: IfNotPresent
+
+# The application's own command, exactly as it would be without mnemo-warmup. The injector takes the JAR and the
+# JVM options from here; it needs an explicit command.
+command: ["java"]
+javaOptions: []
+jar: /app/app.jar
+
+replicas: 1
+
+# Adoption is these annotations on the pod template. Removing them (or setting enabled to "false") and upgrading
+# returns the Deployment to what it was.
+warmup:
+  enabled: true
+  store: ""            # required when enabled, e.g. oci://registry.example.com/team/app-warmup
+  exitMode: spring-refresh
+  plainHttp: false     # local registries only

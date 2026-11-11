@@ -1,9 +1,9 @@
 {
   "schema_version": "1",
-  "feature": "021-58-document-conservative-oci-archive-retention",
-  "branch": "feature/021-58-document-conservative-oci-archive-retention",
-  "stage": "build",
-  "last_session": "001-archive-retention-guide-with-a-verified-ecr-lifecycle-ex",
+  "feature": "022-59-verify-the-annotated-workload-adoption-path-end-to-en",
+  "branch": "feature/022-59-verify-the-annotated-workload-adoption-path-end-to-en",
+  "stage": "design",
+  "last_session": "",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

@@ -1,6 +1,7 @@
 GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,TrainingLock,0,7,0,0,0,1,0,2,0,2
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,TrainingOrchestrator.Outcome,0,12,0,0,0,1,0,1,0,1
+coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,PhaseTimer,0,61,0,4,0,16,0,6,0,4
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,RunPlanner.JavaLaunch,79,143,26,18,15,23,18,7,0,3
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,ArchiveStore.StoredArchive,0,9,0,0,0,1,0,1,0,1
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,CommandRunner.CommandResult,0,9,0,0,0,1,0,1,0,1
@@ -16,7 +17,7 @@ coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,StsResponse,30,113,8
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,KubernetesLeaseLock.LeaseHandle,9,248,3,15,4,41,2,12,0,5
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,RegistryAuth,0,11,0,0,0,4,0,4,0,4
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,CacheStrategy,0,62,0,8,0,16,0,10,0,6
-coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,RunPlanner,23,378,3,37,8,72,3,24,0,7
+coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,RunPlanner,23,414,3,37,8,81,3,24,0,7
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,JarExtractor.Kind,0,15,0,0,0,3,0,1,0,1
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,EcrRegistryAuth,26,200,7,11,6,41,7,7,0,5
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,JvmFlags,2,144,2,18,0,26,2,12,0,4
@@ -48,7 +49,7 @@ coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,OciArchiveStore,256,
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,OciArchiveStore.ParsedReference,0,9,0,0,0,1,0,1,0,1
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,ArchiveManifest,107,1097,13,77,18,196,13,57,0,25
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,AwsCredentials,0,19,0,0,0,2,0,2,0,2
-coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,MemoryProbe,19,93,2,6,6,15,1,6,0,3
+coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,MemoryProbe,65,47,4,4,14,7,3,4,0,3
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,AwsHttp,19,150,3,11,7,34,3,8,0,4
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,TrainingException,0,18,0,0,0,7,0,3,0,3
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,KubeApi,149,120,13,5,28,24,11,6,3,5
@@ -70,14 +71,14 @@ coverage/warmup-cli,io.github.baokhang83.mnemo.warmup.cli,ManifestStream,8,131,3
 coverage/warmup-cli,io.github.baokhang83.mnemo.warmup.cli,Main.Inject,1,124,2,6,0,17,2,6,0,4
 coverage/warmup-cli,io.github.baokhang83.mnemo.warmup.cli,Main.AppOptions,0,13,0,0,0,3,0,1,0,1
 coverage/warmup-cli,io.github.baokhang83.mnemo.warmup.cli,Main.Bench,14,304,4,16,4,46,4,11,0,5
-coverage/warmup-cli,io.github.baokhang83.mnemo.warmup.cli,OfflineInjector,141,2729,49,153,6,207,47,85,1,30
+coverage/warmup-cli,io.github.baokhang83.mnemo.warmup.cli,OfflineInjector,141,2859,49,171,6,226,47,97,1,33
 coverage/warmup-cli,io.github.baokhang83.mnemo.warmup.cli,Main.Train,53,229,6,18,7,33,7,8,1,2
 coverage/warmup-cli,io.github.baokhang83.mnemo.warmup.cli,Main.VersionProvider,0,23,0,4,0,3,0,5,0,3
 coverage/warmup-cli,io.github.baokhang83.mnemo.warmup.cli,Main.Build,22,250,1,5,4,34,1,4,0,2
 coverage/warmup-cli,io.github.baokhang83.mnemo.warmup.cli,Main,46,90,6,7,8,18,8,7,3,5
-coverage/warmup-cli,io.github.baokhang83.mnemo.warmup.cli,WorkloadDiscovery,180,574,72,92,11,91,62,28,1,7
-coverage/warmup-cli,io.github.baokhang83.mnemo.warmup.cli,Main.Fetch,139,279,16,25,22,49,13,17,1,8
-coverage/warmup-cli,io.github.baokhang83.mnemo.warmup.cli,WorkloadDiscovery.Workload,0,42,0,0,0,1,0,1,0,1
+coverage/warmup-cli,io.github.baokhang83.mnemo.warmup.cli,WorkloadDiscovery,180,608,72,102,11,97,62,33,1,7
+coverage/warmup-cli,io.github.baokhang83.mnemo.warmup.cli,Main.Fetch,144,296,16,25,22,54,14,17,2,8
+coverage/warmup-cli,io.github.baokhang83.mnemo.warmup.cli,WorkloadDiscovery.Workload,0,50,0,0,0,2,0,2,0,2
 coverage/warmup-cli,io.github.baokhang83.mnemo.warmup.cli,Main.Push,45,107,3,5,8,20,3,3,0,2
 coverage/warmup-cli,io.github.baokhang83.mnemo.warmup.cli,Main.Run,51,318,11,29,13,63,9,20,1,8
 coverage/warmup-cli,io.github.baokhang83.mnemo.warmup.cli,ManifestDiff,25,214,6,24,0,27,6,14,0,5

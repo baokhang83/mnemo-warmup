@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>PhaseTimer.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">PhaseTimer.java</span></div><h1>PhaseTimer.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.lang.management.ManagementFactory;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+/**
+ * Optional timing of the phases of {@code fetch} and {@code run}, for working out where pod start-up time goes. It does
+ * nothing unless {@code MNEMO_WARMUP_TIMING=1}, so normal logs are unchanged. Output is one line,
+ * {@code timing: phase=N ms, ...}, ending with this tool JVM's own uptime (JVM start plus everything before the line).
+ */
+public final class PhaseTimer {
+
+    public static final String ENV = &quot;MNEMO_WARMUP_TIMING&quot;;
+
+    private final boolean enabled;
+<span class="fc" id="L19">    private final List&lt;String&gt; parts = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L20">    private long last = System.nanoTime();</span>
+
+<span class="fc" id="L22">    private PhaseTimer(boolean enabled) {</span>
+<span class="fc" id="L23">        this.enabled = enabled;</span>
+<span class="fc" id="L24">    }</span>
+
+    public static PhaseTimer from(Map&lt;String, String&gt; environment) {
+<span class="fc" id="L27">        return new PhaseTimer(&quot;1&quot;.equals(environment.get(ENV)));</span>
+    }
+
+    /** Records the time since the previous lap (or since creation) under {@code phase}. */
+    public void lap(String phase) {
+<span class="fc bfc" id="L32" title="All 2 branches covered.">        if (!enabled) {</span>
+<span class="fc" id="L33">            return;</span>
+        }
+<span class="fc" id="L35">        long now = System.nanoTime();</span>
+<span class="fc" id="L36">        parts.add(phase + &quot;=&quot; + (now - last) / 1_000_000 + &quot; ms&quot;);</span>
+<span class="fc" id="L37">        last = now;</span>
+<span class="fc" id="L38">    }</span>
+
+    /** The timing line, or empty when timing is off. */
+    public Optional&lt;String&gt; summary() {
+<span class="fc bfc" id="L42" title="All 2 branches covered.">        if (!enabled) {</span>
+<span class="fc" id="L43">            return Optional.empty();</span>
+        }
+<span class="fc" id="L45">        long uptime = ManagementFactory.getRuntimeMXBean().getUptime();</span>
+<span class="fc" id="L46">        return Optional.of(&quot;timing: &quot; + String.join(&quot;, &quot;, parts) + &quot;, tool-jvm-uptime=&quot; + uptime + &quot; ms&quot;);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

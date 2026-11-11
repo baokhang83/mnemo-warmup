@@ -1,0 +1,37 @@
+# mnemo-warmup
+
+> Faster Java pod starts on Kubernetes without GraalVM: trains an AppCDS or Project Leyden AOT class cache once inside the cluster, stores it in an OCI registry, and gives it to every replica of an unchanged JVM application. A cache problem never stops a pod: a missing, outdated or damaged archive means an ordinary start.
+
+An annotated Deployment (three annotations, no source changes) is rendered through an injector that adds a launcher, a trainer CronJob and either two init containers or a read-only `image` volume. A fingerprint (JDK build, classpath JAR contents, JVM options) decides which cache a pod may use; the digest is verified before use. The JVM stays PID 1.
+
+- **What it helps.** Framework-heavy applications whose start is class loading (Spring Boot: pod ready 5 s to 3 s at 1 CPU / 1 GiB with the `image` volume). Neutral on initialization-heavy ones (Jenkins). No gain when the container starts a coordinator that launches other JVMs (SonarQube).
+- **Requirements.** Kubernetes with CronJobs and Leases, Java 21 or newer in the application image (AppCDS on 21-24, Leyden AOT on 25), an OCI registry, the same JAR files in trainer and pods. `image` volume delivery needs a cluster with image-volume support.
+- **Status.** Alpha, heading to a 0.3.0 beta. Not verified: live EKS/ECR, Helm 4, remote-registry scale-out.
+- **Install.** Tools image `ghcr.io/baokhang83/mnemo-warmup-tools`, Helm repo `https://baokhang83.github.io/mnemo-warmup/`, Maven Central `io.github.baokhang83.mnemo:warmup-core`.
+
+## Core documentation
+
+- [README](https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/README.md): Overview, quick start, measurements, requirements.
+- [Configuration and requirements](https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/docs/configuration.md): Annotations, overrides, Spring Boot image preparation, tools delivery.
+- [Operating it](https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/docs/operations.md): Measuring, what can still stop a pod, disabling, known limitations.
+- [Offline injector](https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/docs/offline-injector.md): Preview, Helm post-renderer and GitOps use, what was verified.
+- [Reference](https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/docs/reference.md): Every command and option.
+- [Helm chart setup](https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/docs/helm-chart.md): The explicit subchart route.
+
+## Registries and storage
+
+- [Registry authentication](https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/docs/registry-auth.md): Docker-config Secrets, Basic and Bearer login.
+- [EKS and ECR](https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/docs/aws-workload-identity.md): IAM roles for service accounts (not yet verified on a live cluster).
+- [Archive retention](https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/docs/archive-retention.md): Nothing deletes archives; guidance for a retention policy.
+
+## Evidence and design
+
+- [Benchmarks](https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/benchmarks/README.md): Method, raw data, per-phase breakdown and limits for Spring Boot, Jenkins and SonarQube.
+- [AppCDS across JDKs](https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/docs/appcds-jdk-matrix.md): Verified behaviour on JDK 21 to 25.
+- [Design decisions (ADRs)](https://github.com/baokhang83/mnemo-warmup/tree/main/docs/adr): Fingerprint, store, tools image, native helpers, image-volume delivery.
+- [Roadmap](https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/docs/PLAN.md): Phases and the 0.3.0 beta items.
+
+## Optional
+
+- [Full documentation in one file](https://baokhang83.github.io/mnemo-warmup/llms-full.txt): README, guides and benchmarks concatenated, generated at build time.
+- [Related: mnemo-jvm-warden](https://github.com/baokhang83/mnemo-jvm-warden): Resizes running JVM pods in place.

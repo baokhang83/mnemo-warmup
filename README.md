@@ -165,7 +165,7 @@ Details and what is not supported: [configuration](docs/configuration.md#require
 
 **Will it make my pods start faster?** It depends on what your app does while it starts. We measured three real applications (1 CPU, 1 GiB, 12 restarts each).
 
-| Your app is like | Pod ready | Verdict |
+| Your app is like | Pod start-to-Ready | Verdict |
 |---|---|---|
 | 🟢 **Spring Boot**: start-up is mostly loading classes and creating beans | **5 s → 3 s**<br>40% faster | **Worth it.** The JVM itself starts 41% faster. |
 | 🟡 **Jenkins**: start-up is mostly the application running its own setup code (initializing plugins and configuration) | **4 s → 4 s**<br>no change | **Neutral.** The JVM starts 13% faster, the pod is ready at the same time. |

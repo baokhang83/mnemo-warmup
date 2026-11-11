@@ -3,7 +3,7 @@
   "feature": "020-57-add-workload-identity-authentication-for-eks-and-ecr",
   "branch": "feature/020-57-add-workload-identity-authentication-for-eks-and-ecr",
   "stage": "build",
-  "last_session": "001-introduce-the-registryauth-provider-boundary",
+  "last_session": "002-hand-written-sigv4-signer-checked-against-aws-test-vecto",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

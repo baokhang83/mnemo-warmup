@@ -276,8 +276,17 @@ YAML
   if line=$(source_line) && has "$line" "DemoApplication source: shared objects file"; then ok "rolling back to the original options uses the original archive"; else fail "after rollback: '${line:-<none>}'"; fi
 
   # ---- 6a. invalid cache: same-size change to the archive blob in the registry (the digest check must catch it) ----
-  blob=$(docker exec "$REG" sh -c "for d in /var/lib/registry/docker/registry/v2/repositories/mnemo/$v/_layers/sha256/*; do h=\$(basename \$d); f=/var/lib/registry/docker/registry/v2/blobs/sha256/\$(echo \$h | cut -c1-2)/\$h/data; [ \$(wc -c <\$f) -gt 1000000 ] && echo \$f; done" | head -1)
-  if [ -z "$blob" ]; then die "$NS" "cannot find the archive blob in the registry"; fi
+  # The archive THIS pod fetched: its fingerprint names the tag, the tag's manifest names the layer. (After the update step
+  # the repository holds two archives, so "the big blob in the repository" could be the wrong one and the test would corrupt
+  # an archive nobody reads. CI on amd64 hit exactly that.)
+  fp=$(k -n "$NS" logs "$POD" -c mnemo-warmup-fetch 2>&1 | sed -n 's/.*fingerprint sha256:\([0-9a-f]*\).*/\1/p' | head -1)
+  [ -n "$fp" ] || die "$NS" "cannot read the fingerprint from the fetch log"
+  manifest=$(docker exec "$REG" wget -qO- --header 'Accept: application/vnd.oci.image.manifest.v1+json' "http://127.0.0.1:5000/v2/mnemo/$v/manifests/fp-$fp") \
+    || die "$NS" "cannot read the manifest of fp-$fp from the registry"
+  layer=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["layers"][0]["digest"].split(":")[1])' <<<"$manifest") \
+    || die "$NS" "cannot find the archive layer in the manifest"
+  blob="/var/lib/registry/docker/registry/v2/blobs/sha256/$(cut -c1-2 <<<"$layer")/$layer/data"
+  [ "$(docker exec "$REG" sh -c "wc -c <$blob")" -gt 1000000 ] || die "$NS" "the archive blob is missing or smaller than 1 MB"
   docker exec "$REG" cp "$blob" "$blob.bak" || die "$NS" "cannot back up the archive blob"
   before=$(docker exec "$REG" sha256sum "$blob" | cut -d' ' -f1)
   # overwrite 4 KiB of the middle of the file with random bytes (same size, so only the digest check can catch it)

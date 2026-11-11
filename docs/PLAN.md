@@ -136,6 +136,15 @@ Maven coordinates: groupId `io.github.baokhang83.mnemo` (same as warden), artifa
 - [x] Trainer CronJob, `train` command with a Lease, Helm chart with `cacheType` value (`docs/adr/0005-trainer-and-chart.md`)
 - [x] Example Spring Boot app, tested on kind with JDK 21 (AppCDS) and JDK 25 (AOT) (`examples/`, `scripts/e2e-kind.sh`)
 
+### Phase 2.5: simpler workload adoption (v0.2.5)
+- [x] Offline injector: annotate a Deployment, preview, deploy through a Helm post-renderer (`docs/adr/0007-offline-injection-contract.md`, `docs/offline-injector.md`)
+- [x] Shell-free native launcher, so distroless images work (`launcher/`, ADR 0004 amended)
+- [x] Registry login providers and Amazon ECR through EKS workload identity (`docs/adr/0008-registry-auth-providers.md`, `docs/aws-workload-identity.md`)
+- [x] Conservative retention guidance, no deletion (`docs/archive-retention.md`)
+- [x] End-to-end check of the annotated path on kind with a distroless image, in CI on amd64 and arm64 (`scripts/e2e-kind-inject.sh`)
+- [x] Adoption guide and configuration reference (`docs/configuration.md`, `docs/registry-auth.md`, `docs/operations.md`)
+- [ ] Not verified yet: a live EKS and ECR, Helm 4, JDK 25 through the injector
+
 ### Phase 3: automation and ecosystem (v0.3.0)
 - [x] Publish `warmup-core` to Maven Central so warden can depend on it (0.1.0, 0.2.0)
 - [ ] Investigate which JVM flags invalidate an archive (e.g. `SoftMaxHeapSize` vs `-Xmx`)

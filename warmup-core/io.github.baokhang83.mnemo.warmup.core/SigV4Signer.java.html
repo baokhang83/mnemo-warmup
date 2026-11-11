@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>SigV4Signer.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">SigV4Signer.java</span></div><h1>SigV4Signer.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
+import java.security.MessageDigest;
+import java.time.ZoneOffset;
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+
+/**
+ * AWS Signature Version 4 for the two small calls this tool makes (STS and ECR). Hand-written over the JDK
+ * so the core stays dependency-free (constitution section 4); checked against AWS's published test suite.
+ * Handles the paths and queries of those calls (a single {@code /} path, simple query strings), not S3.
+ */
+final class SigV4Signer {
+
+<span class="fc" id="L26">    private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern(&quot;yyyyMMdd'T'HHmmss'Z'&quot;).withZone(ZoneOffset.UTC);</span>
+    private static final String ALGORITHM = &quot;AWS4-HMAC-SHA256&quot;;
+
+    private SigV4Signer() {}
+
+    /**
+     * The headers to add to the request: {@code x-amz-date}, {@code x-amz-security-token} when the
+     * credentials have a session token, and {@code Authorization}. {@code headers} are the request's other
+     * headers that should be signed (names compared case-insensitively); {@code host} is always signed.
+     */
+    static Map&lt;String, String&gt; sign(
+            String method,
+            URI uri,
+            Map&lt;String, String&gt; headers,
+            byte[] body,
+            AwsCredentials credentials,
+            String region,
+            String service,
+            Instant now) {
+<span class="fc" id="L45">        String amzDate = STAMP.format(now);</span>
+<span class="fc" id="L46">        String day = amzDate.substring(0, 8);</span>
+
+<span class="fc" id="L48">        TreeMap&lt;String, String&gt; toSign = new TreeMap&lt;&gt;();</span>
+<span class="fc" id="L49">        headers.forEach((k, v) -&gt; toSign.put(k.toLowerCase(Locale.ROOT), v.trim().replaceAll(&quot;\\s+&quot;, &quot; &quot;)));</span>
+<span class="fc" id="L50">        toSign.put(&quot;host&quot;, uri.getAuthority());</span>
+<span class="fc" id="L51">        toSign.put(&quot;x-amz-date&quot;, amzDate);</span>
+<span class="fc bfc" id="L52" title="All 2 branches covered.">        if (credentials.sessionToken() != null) {</span>
+<span class="fc" id="L53">            toSign.put(&quot;x-amz-security-token&quot;, credentials.sessionToken());</span>
+        }
+
+<span class="fc" id="L56">        StringBuilder canonicalHeaders = new StringBuilder();</span>
+<span class="fc" id="L57">        toSign.forEach((k, v) -&gt; canonicalHeaders.append(k).append(':').append(v).append('\n'));</span>
+<span class="fc" id="L58">        String signedHeaders = String.join(&quot;;&quot;, toSign.keySet());</span>
+
+<span class="fc" id="L60">        String canonicalRequest = method + '\n'</span>
+<span class="fc" id="L61">                + canonicalPath(uri) + '\n'</span>
+<span class="fc" id="L62">                + canonicalQuery(uri) + '\n'</span>
+                + canonicalHeaders + '\n'
+                + signedHeaders + '\n'
+<span class="fc" id="L65">                + hex(sha256(body));</span>
+
+<span class="fc" id="L67">        String scope = day + &quot;/&quot; + region + &quot;/&quot; + service + &quot;/aws4_request&quot;;</span>
+<span class="fc" id="L68">        String stringToSign = ALGORITHM + '\n' + amzDate + '\n' + scope + '\n' + hex(sha256(canonicalRequest.getBytes(StandardCharsets.UTF_8)));</span>
+
+<span class="fc" id="L70">        byte[] key = hmac((&quot;AWS4&quot; + credentials.secretAccessKey()).getBytes(StandardCharsets.UTF_8), day);</span>
+<span class="fc" id="L71">        key = hmac(key, region);</span>
+<span class="fc" id="L72">        key = hmac(key, service);</span>
+<span class="fc" id="L73">        key = hmac(key, &quot;aws4_request&quot;);</span>
+<span class="fc" id="L74">        String signature = hex(hmac(key, stringToSign));</span>
+
+<span class="fc" id="L76">        TreeMap&lt;String, String&gt; out = new TreeMap&lt;&gt;(String.CASE_INSENSITIVE_ORDER);</span>
+<span class="fc" id="L77">        out.put(&quot;x-amz-date&quot;, amzDate);</span>
+<span class="fc bfc" id="L78" title="All 2 branches covered.">        if (credentials.sessionToken() != null) {</span>
+<span class="fc" id="L79">            out.put(&quot;x-amz-security-token&quot;, credentials.sessionToken());</span>
+        }
+<span class="fc" id="L81">        out.put(&quot;Authorization&quot;, ALGORITHM + &quot; Credential=&quot; + credentials.accessKeyId() + &quot;/&quot; + scope</span>
+                + &quot;, SignedHeaders=&quot; + signedHeaders + &quot;, Signature=&quot; + signature);
+<span class="fc" id="L83">        return out;</span>
+    }
+
+    private static String canonicalPath(URI uri) {
+<span class="fc" id="L87">        String path = uri.getRawPath();</span>
+<span class="pc bpc" id="L88" title="2 of 4 branches missed.">        return path == null || path.isEmpty() ? &quot;/&quot; : path;</span>
+    }
+
+    private static String canonicalQuery(URI uri) {
+<span class="fc" id="L92">        String raw = uri.getRawQuery();</span>
+<span class="pc bpc" id="L93" title="1 of 4 branches missed.">        if (raw == null || raw.isEmpty()) {</span>
+<span class="fc" id="L94">            return &quot;&quot;;</span>
+        }
+<span class="fc" id="L96">        List&lt;String&gt; pairs = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L97" title="All 2 branches covered.">        for (String part : raw.split(&quot;&amp;&quot;)) {</span>
+<span class="fc" id="L98">            int eq = part.indexOf('=');</span>
+<span class="pc bpc" id="L99" title="1 of 2 branches missed.">            pairs.add(eq &lt; 0 ? part + &quot;=&quot; : part);</span>
+        }
+<span class="fc" id="L101">        pairs.sort(null);</span>
+<span class="fc" id="L102">        return String.join(&quot;&amp;&quot;, pairs);</span>
+    }
+
+    private static byte[] sha256(byte[] data) {
+        try {
+<span class="fc" id="L107">            return MessageDigest.getInstance(&quot;SHA-256&quot;).digest(data);</span>
+<span class="nc" id="L108">        } catch (GeneralSecurityException e) {</span>
+<span class="nc" id="L109">            throw new IllegalStateException(e);</span>
+        }
+    }
+
+    private static byte[] hmac(byte[] key, String data) {
+        try {
+<span class="fc" id="L115">            Mac mac = Mac.getInstance(&quot;HmacSHA256&quot;);</span>
+<span class="fc" id="L116">            mac.init(new SecretKeySpec(key, &quot;HmacSHA256&quot;));</span>
+<span class="fc" id="L117">            return mac.doFinal(data.getBytes(StandardCharsets.UTF_8));</span>
+<span class="nc" id="L118">        } catch (GeneralSecurityException e) {</span>
+<span class="nc" id="L119">            throw new IllegalStateException(e);</span>
+        }
+    }
+
+    private static String hex(byte[] bytes) {
+<span class="fc" id="L124">        return HexFormat.of().formatHex(bytes);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

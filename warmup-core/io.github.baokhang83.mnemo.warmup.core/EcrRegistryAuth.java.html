@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>EcrRegistryAuth.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">EcrRegistryAuth.java</span></div><h1>EcrRegistryAuth.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+/**
+ * Registry login for Amazon ECR from the pod's AWS identity. {@code GetAuthorizationToken} (SigV4-signed with
+ * the temporary keys) returns a base64 {@code AWS:&lt;password&gt;} valid for about 12 hours; it is cached and
+ * re-requested shortly before it expires, or at once after {@link #invalidate()}.
+ */
+final class EcrRegistryAuth implements RegistryAuth {
+
+    /** Refresh this long before expiry so a request never starts with a token about to die. */
+<span class="fc" id="L22">    static final Duration SKEW = Duration.ofMinutes(5);</span>
+    /** Used when ECR gives no usable expiry. */
+<span class="fc" id="L24">    private static final Duration FALLBACK_LIFETIME = Duration.ofHours(1);</span>
+    private static final String TARGET = &quot;AmazonEC2ContainerRegistry_V20150921.GetAuthorizationToken&quot;;
+
+    private final AwsCredentialsSource source;
+    private final String region;
+    private final URI ecrEndpoint;
+    private final AwsHttp http;
+    private final Clock clock;
+    private RegistryCredentials cached;
+<span class="fc" id="L33">    private Instant refreshAt = Instant.MIN;</span>
+
+<span class="fc" id="L35">    EcrRegistryAuth(AwsCredentialsSource source, String region, URI ecrEndpoint, AwsHttp http, Clock clock) {</span>
+<span class="fc" id="L36">        this.source = source;</span>
+<span class="fc" id="L37">        this.region = region;</span>
+<span class="fc" id="L38">        this.ecrEndpoint = ecrEndpoint;</span>
+<span class="fc" id="L39">        this.http = http;</span>
+<span class="fc" id="L40">        this.clock = clock;</span>
+<span class="fc" id="L41">    }</span>
+
+    @Override
+    public synchronized Optional&lt;RegistryCredentials&gt; credentials() {
+<span class="fc" id="L45">        Instant now = clock.instant();</span>
+<span class="fc bfc" id="L46" title="All 4 branches covered.">        if (cached == null || !now.isBefore(refreshAt)) {</span>
+<span class="fc" id="L47">            cached = fetch(now);</span>
+        }
+<span class="fc" id="L49">        return Optional.of(cached);</span>
+    }
+
+    @Override
+    public synchronized void invalidate() {
+<span class="fc" id="L54">        cached = null;</span>
+<span class="fc" id="L55">        refreshAt = Instant.MIN;</span>
+<span class="fc" id="L56">    }</span>
+
+    private RegistryCredentials fetch(Instant now) {
+<span class="fc" id="L59">        AwsCredentials keys = source.resolve();</span>
+<span class="fc" id="L60">        byte[] body = &quot;{}&quot;.getBytes(StandardCharsets.UTF_8);</span>
+<span class="fc" id="L61">        Map&lt;String, String&gt; headers = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L62">        headers.put(&quot;Content-Type&quot;, &quot;application/x-amz-json-1.1&quot;);</span>
+<span class="fc" id="L63">        headers.put(&quot;X-Amz-Target&quot;, TARGET);</span>
+<span class="fc" id="L64">        Map&lt;String, String&gt; request = new LinkedHashMap&lt;&gt;(headers);</span>
+<span class="fc" id="L65">        request.putAll(SigV4Signer.sign(&quot;POST&quot;, ecrEndpoint, headers, body, keys, region, &quot;ecr&quot;, now));</span>
+<span class="fc" id="L66">        String json = http.post(&quot;ECR GetAuthorizationToken&quot;, ecrEndpoint, request, body);</span>
+
+        Object root;
+        try {
+<span class="fc" id="L70">            root = Json.parse(json);</span>
+<span class="nc" id="L71">        } catch (RuntimeException e) {</span>
+<span class="nc" id="L72">            throw new StoreException(&quot;ECR GetAuthorizationToken response is not valid JSON&quot;, e);</span>
+<span class="fc" id="L73">        }</span>
+<span class="pc bpc" id="L74" title="1 of 2 branches missed.">        if (!(root instanceof Map&lt;?, ?&gt; top)</span>
+<span class="pc bpc" id="L75" title="1 of 2 branches missed.">                || !(top.get(&quot;authorizationData&quot;) instanceof List&lt;?&gt; data)</span>
+<span class="pc bpc" id="L76" title="1 of 2 branches missed.">                || data.isEmpty()</span>
+<span class="pc bpc" id="L77" title="1 of 2 branches missed.">                || !(data.get(0) instanceof Map&lt;?, ?&gt; first)</span>
+<span class="pc bpc" id="L78" title="1 of 2 branches missed.">                || !(first.get(&quot;authorizationToken&quot;) instanceof String token)) {</span>
+<span class="nc" id="L79">            throw new StoreException(&quot;ECR GetAuthorizationToken response has no authorization token&quot;);</span>
+        }
+        String decoded;
+        try {
+<span class="fc" id="L83">            decoded = new String(Base64.getDecoder().decode(token), StandardCharsets.UTF_8);</span>
+<span class="nc" id="L84">        } catch (IllegalArgumentException e) {</span>
+<span class="nc" id="L85">            throw new StoreException(&quot;ECR authorization token is not valid base64&quot;);</span>
+<span class="fc" id="L86">        }</span>
+<span class="fc" id="L87">        int colon = decoded.indexOf(':');</span>
+<span class="pc bpc" id="L88" title="1 of 2 branches missed.">        if (colon &lt;= 0) {</span>
+<span class="nc" id="L89">            throw new StoreException(&quot;ECR authorization token has an unexpected format&quot;);</span>
+        }
+<span class="pc bpc" id="L91" title="1 of 2 branches missed.">        Instant expires = first.get(&quot;expiresAt&quot;) instanceof Number n</span>
+<span class="fc" id="L92">                ? Instant.ofEpochMilli((long) (n.doubleValue() * 1000))</span>
+<span class="pc" id="L93">                : now.plus(FALLBACK_LIFETIME);</span>
+<span class="fc" id="L94">        refreshAt = expires.minus(SKEW);</span>
+<span class="fc" id="L95">        return new RegistryCredentials(decoded.substring(0, colon), decoded.substring(colon + 1));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

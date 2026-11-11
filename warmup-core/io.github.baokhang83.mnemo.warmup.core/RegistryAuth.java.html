@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RegistryAuth.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">RegistryAuth.java</span></div><h1>RegistryAuth.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.util.Optional;
+
+/**
+ * Where a registry login comes from. {@link OciArchiveStore} asks for credentials each time it needs a
+ * registry token, rather than holding one fixed password, so a provider whose credentials expire (ECR)
+ * can hand out a fresh one. Implementations must be thread-safe and must never log a secret.
+ */
+public interface RegistryAuth {
+
+    /** The login to present, or empty for anonymous access. Throws {@link StoreException} if it cannot be obtained. */
+    Optional&lt;RegistryCredentials&gt; credentials();
+
+    /** The registry refused the credentials last handed out: drop any cached copy so the next call re-fetches. */
+<span class="fc" id="L16">    default void invalidate() {}</span>
+
+    /** No login. */
+    static RegistryAuth anonymous() {
+<span class="fc" id="L20">        return Optional::empty;</span>
+    }
+
+    /** A fixed login (a Docker-config entry), or anonymous if {@code credentials} is null. */
+    static RegistryAuth fixed(RegistryCredentials credentials) {
+<span class="fc" id="L25">        Optional&lt;RegistryCredentials&gt; value = Optional.ofNullable(credentials);</span>
+<span class="fc" id="L26">        return () -&gt; value;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

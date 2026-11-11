@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>AwsHttp.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">AwsHttp.java</span></div><h1>AwsHttp.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.Map;
+
+/**
+ * One POST to an AWS API with a few retries for transient trouble: connection errors, 429 and 5xx. A 4xx is
+ * an answer (denied, expired, malformed) and is never retried. Error text carries the status and AWS's own
+ * error message, never a token or key.
+ */
+final class AwsHttp {
+
+<span class="fc" id="L19">    private final HttpClient http =</span>
+<span class="fc" id="L20">            HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NEVER).build();</span>
+    private final Duration timeout;
+    private final int attempts;
+    private final Duration backoff;
+
+<span class="fc" id="L25">    AwsHttp(Duration timeout, int attempts, Duration backoff) {</span>
+<span class="fc" id="L26">        this.timeout = timeout;</span>
+<span class="fc" id="L27">        this.attempts = attempts;</span>
+<span class="fc" id="L28">        this.backoff = backoff;</span>
+<span class="fc" id="L29">    }</span>
+
+    /** Returns the body of a 200 response. {@code step} names the call in error messages. */
+    String post(String step, URI uri, Map&lt;String, String&gt; headers, byte[] body) {
+<span class="fc" id="L33">        StoreException last = null;</span>
+<span class="fc bfc" id="L34" title="All 2 branches covered.">        for (int attempt = 1; attempt &lt;= attempts; attempt++) {</span>
+<span class="fc bfc" id="L35" title="All 2 branches covered.">            if (attempt &gt; 1) {</span>
+<span class="fc" id="L36">                sleep(backoff.multipliedBy(1L &lt;&lt; (attempt - 2)));</span>
+            }
+<span class="fc" id="L38">            HttpRequest.Builder b = HttpRequest.newBuilder(uri).timeout(timeout).POST(HttpRequest.BodyPublishers.ofByteArray(body));</span>
+<span class="fc" id="L39">            headers.forEach(b::header);</span>
+            try {
+<span class="fc" id="L41">                HttpResponse&lt;byte[]&gt; r = http.send(b.build(), HttpResponse.BodyHandlers.ofByteArray());</span>
+<span class="fc" id="L42">                String text = new String(r.body(), StandardCharsets.UTF_8);</span>
+<span class="fc bfc" id="L43" title="All 2 branches covered.">                if (r.statusCode() == 200) {</span>
+<span class="fc" id="L44">                    return text;</span>
+                }
+<span class="fc" id="L46">                StoreException failure = new StoreException(step + &quot; failed (HTTP &quot; + r.statusCode() + &quot;)&quot; + detail(text));</span>
+<span class="pc bpc" id="L47" title="1 of 4 branches missed.">                if (r.statusCode() != 429 &amp;&amp; r.statusCode() &lt; 500) {</span>
+<span class="fc" id="L48">                    throw failure;</span>
+                }
+<span class="fc" id="L50">                last = failure;</span>
+<span class="fc" id="L51">            } catch (IOException e) {</span>
+<span class="fc" id="L52">                last = new StoreException(step + &quot;: cannot reach &quot; + uri.getAuthority() + &quot;: &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L53">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L54">                Thread.currentThread().interrupt();</span>
+<span class="nc" id="L55">                throw new StoreException(step + &quot;: interrupted&quot;, e);</span>
+<span class="fc" id="L56">            }</span>
+        }
+<span class="fc" id="L58">        throw last;</span>
+    }
+
+    /** AWS's own error message from a JSON or XML error body, when there is one. */
+    private static String detail(String body) {
+<span class="fc" id="L63">        String lower = body.toLowerCase();</span>
+<span class="fc" id="L64">        int i = lower.indexOf(&quot;\&quot;message\&quot;&quot;);</span>
+<span class="pc bpc" id="L65" title="1 of 2 branches missed.">        if (i &lt; 0) {</span>
+<span class="nc" id="L66">            i = lower.indexOf(&quot;&lt;message&gt;&quot;);</span>
+        }
+<span class="pc bpc" id="L68" title="1 of 2 branches missed.">        if (i &lt; 0) {</span>
+<span class="nc" id="L69">            return &quot;&quot;;</span>
+        }
+<span class="fc" id="L71">        String snippet = body.substring(i, Math.min(body.length(), i + 200)).replaceAll(&quot;[\\r\\n]+&quot;, &quot; &quot;);</span>
+<span class="fc" id="L72">        return &quot;: &quot; + snippet;</span>
+    }
+
+    private static void sleep(Duration d) {
+        try {
+<span class="fc" id="L77">            Thread.sleep(d.toMillis());</span>
+<span class="nc" id="L78">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L79">            Thread.currentThread().interrupt();</span>
+<span class="fc" id="L80">        }</span>
+<span class="fc" id="L81">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

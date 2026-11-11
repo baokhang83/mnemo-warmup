@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>StsResponse.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">StsResponse.java</span></div><h1>StsResponse.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.time.Instant;
+import java.util.Map;
+
+/** Reads the temporary keys out of a JSON STS response ({@code Accept: application/json}). */
+final class StsResponse {
+
+    private StsResponse() {}
+
+    static AwsCredentials credentials(String action, String json) {
+        Object root;
+        try {
+<span class="fc" id="L14">            root = Json.parse(json);</span>
+<span class="nc" id="L15">        } catch (RuntimeException e) {</span>
+<span class="nc" id="L16">            throw new StoreException(&quot;STS &quot; + action + &quot; response is not valid JSON&quot;, e);</span>
+<span class="fc" id="L17">        }</span>
+<span class="fc" id="L18">        Object c = path(root, action + &quot;Response&quot;, action + &quot;Result&quot;, &quot;Credentials&quot;);</span>
+<span class="pc bpc" id="L19" title="1 of 2 branches missed.">        if (!(c instanceof Map&lt;?, ?&gt; creds)</span>
+<span class="pc bpc" id="L20" title="1 of 2 branches missed.">                || !(creds.get(&quot;AccessKeyId&quot;) instanceof String id)</span>
+<span class="pc bpc" id="L21" title="1 of 2 branches missed.">                || !(creds.get(&quot;SecretAccessKey&quot;) instanceof String secret)</span>
+<span class="pc bpc" id="L22" title="1 of 2 branches missed.">                || !(creds.get(&quot;SessionToken&quot;) instanceof String session)) {</span>
+<span class="nc" id="L23">            throw new StoreException(&quot;STS &quot; + action + &quot; response has no credentials&quot;);</span>
+        }
+<span class="fc" id="L25">        return new AwsCredentials(id, secret, session, expiration(creds.get(&quot;Expiration&quot;)));</span>
+    }
+
+    private static Object path(Object node, String... keys) {
+<span class="fc bfc" id="L29" title="All 2 branches covered.">        for (String key : keys) {</span>
+<span class="pc bpc" id="L30" title="1 of 2 branches missed.">            if (!(node instanceof Map&lt;?, ?&gt; map)) {</span>
+<span class="nc" id="L31">                return null;</span>
+            }
+<span class="fc" id="L33">            node = map.get(key);</span>
+        }
+<span class="fc" id="L35">        return node;</span>
+    }
+
+    /** STS JSON gives epoch seconds (a number); tolerate an ISO-8601 string too. */
+    private static Instant expiration(Object value) {
+<span class="pc bpc" id="L40" title="1 of 2 branches missed.">        if (value instanceof Number n) {</span>
+<span class="fc" id="L41">            return Instant.ofEpochMilli((long) (n.doubleValue() * 1000));</span>
+        }
+<span class="nc bnc" id="L43" title="All 2 branches missed.">        if (value instanceof String s) {</span>
+            try {
+<span class="nc" id="L45">                return Instant.parse(s);</span>
+<span class="nc" id="L46">            } catch (RuntimeException e) {</span>
+<span class="nc" id="L47">                return null;</span>
+            }
+        }
+<span class="nc" id="L50">        return null;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

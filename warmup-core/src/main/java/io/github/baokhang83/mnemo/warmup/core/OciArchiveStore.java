@@ -53,15 +53,15 @@ public final class OciArchiveStore implements ArchiveStore {
 
     private final URI base;
     private final String repository;
-    private final RegistryCredentials credentials;
+    private final RegistryAuth auth;
     private final Duration timeout;
     private final HttpClient http;
     private volatile String authorization;
 
-    private OciArchiveStore(URI base, String repository, RegistryCredentials credentials, Duration timeout) {
+    private OciArchiveStore(URI base, String repository, RegistryAuth auth, Duration timeout) {
         this.base = base;
         this.repository = repository;
-        this.credentials = credentials;
+        this.auth = auth;
         this.timeout = timeout;
         this.http = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
@@ -76,9 +76,16 @@ public final class OciArchiveStore implements ArchiveStore {
      * @param timeout     per request; archives are large, so make it generous
      */
     public static OciArchiveStore of(String reference, boolean plainHttp, RegistryCredentials credentials, Duration timeout) {
+        return withAuth(reference, plainHttp, RegistryAuth.fixed(credentials), timeout);
+    }
+
+    /**
+     * @param auth where the registry login comes from; asked afresh for every token request
+     */
+    public static OciArchiveStore withAuth(String reference, boolean plainHttp, RegistryAuth auth, Duration timeout) {
         ParsedReference ref = parse(reference);
         URI base = URI.create((plainHttp ? "http://" : "https://") + ref.host());
-        return new OciArchiveStore(base, ref.repository(), credentials, timeout);
+        return new OciArchiveStore(base, ref.repository(), auth, timeout);
     }
 
     /** The {@code host[:port]} of an {@code oci://} reference, for looking up credentials. */
@@ -444,11 +451,26 @@ public final class OciArchiveStore implements ArchiveStore {
             String actions) {
         URI current = uri;
         boolean authenticated = false;
+        boolean refreshed = false;
         for (int hops = 0; hops <= MAX_REDIRECTS; hops++) {
             checkTransport(base, current);
             boolean sameHost = sameOrigin(base, current);
             HttpResponse<T> r = send(method, current, headers, body, handler, sameHost);
             int status = r.statusCode();
+            if (status == 401 && sameHost && authenticated && !refreshed) {
+                // We sent a login and were still refused: it may have expired mid-run (ECR tokens last about
+                // 12 hours). Ask the provider for a fresh one; if it hands back the same login, the refusal is real.
+                String previous = authorization;
+                auth.invalidate();
+                authorize(r.headers().firstValue("WWW-Authenticate").orElse(""), actions);
+                refreshed = true;
+                if (authorization != null && !authorization.equals(previous)) {
+                    closeQuietly(r.body());
+                    hops--;
+                    continue;
+                }
+                return r;
+            }
             if (status == 401 && sameHost && !authenticated) {
                 String challenge = r.headers().firstValue("WWW-Authenticate").orElse("");
                 closeQuietly(r.body());
@@ -519,6 +541,7 @@ public final class OciArchiveStore implements ArchiveStore {
 
     /** Sets {@link #authorization} from a {@code WWW-Authenticate} challenge. */
     private void authorize(String challenge, String actions) {
+        RegistryCredentials credentials = auth.credentials().orElse(null);
         if (challenge.regionMatches(true, 0, "Bearer", 0, 6)) {
             Map<String, String> params = new LinkedHashMap<>();
             Matcher m = PARAM.matcher(challenge);
@@ -543,6 +566,7 @@ public final class OciArchiveStore implements ArchiveStore {
             HttpResponse<byte[]> r = await(
                     http.sendAsync(b.GET().build(), BodyHandlers.ofByteArray()), URI.create(realm));
             if (r.statusCode() != 200) {
+                auth.invalidate();
                 throw new StoreException("Registry token service refused the request (HTTP " + r.statusCode() + ")"
                         + (credentials == null ? "; no credentials were provided" : ""));
             }

@@ -1,11 +1,11 @@
 {
   "schema_version": "1",
-  "feature": "56-add-a-shell-free-native-go-launcher-and-fetch-path-for-d",
-  "branch": "feature/56-add-a-shell-free-native-go-launcher-and-fetch-path-for-d",
+  "feature": "020-57-add-workload-identity-authentication-for-eks-and-ecr",
+  "branch": "feature/020-57-add-workload-identity-authentication-for-eks-and-ecr",
   "stage": "build",
-  "last_session": "006-document-the-launcher-its-limits-and-the-adr-amendment",
+  "last_session": "004-ecr-registry-auth-mid-run-refresh-environment-selection",
   "base_ref": "main",
   "feature_dir": "",
-  "plan": "v0-2-5-simplify-workload-adoption-with-offline-injection-clo",
-  "updated": "2026-11-10"
+  "plan": "",
+  "updated": "2026-11-11"
 }

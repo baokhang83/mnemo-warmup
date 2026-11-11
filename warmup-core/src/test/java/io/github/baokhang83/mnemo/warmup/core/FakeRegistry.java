@@ -24,6 +24,8 @@ final class FakeRegistry implements AutoCloseable {
     final Map<String, byte[]> manifests = new ConcurrentHashMap<>();
     final AtomicInteger tokenRequests = new AtomicInteger();
     volatile boolean requireAuth;
+    /** When set, the registry wants Basic auth as USER:basicPassword (like ECR) instead of a bearer token. */
+    volatile String basicPassword;
     volatile boolean redirectBlobs;
     volatile boolean stallBlobs;
     /** absolute-path (default), relative ("u1") or query ("?_state=x"). */
@@ -66,6 +68,14 @@ final class FakeRegistry implements AutoCloseable {
                 }
                 serveBlob(ex, method, "sha256:" + path.substring("/redirected/sha256:".length()), false);
                 return;
+            }
+            if (basicPassword != null) {
+                String want = "Basic " + Base64.getEncoder().encodeToString((USER + ":" + basicPassword).getBytes(StandardCharsets.UTF_8));
+                if (!want.equals(ex.getRequestHeaders().getFirst("Authorization"))) {
+                    ex.getResponseHeaders().add("WWW-Authenticate", "Basic realm=\"fake\"");
+                    reply(ex, 401, new byte[0]);
+                    return;
+                }
             }
             if (requireAuth && !("Bearer " + TOKEN).equals(ex.getRequestHeaders().getFirst("Authorization"))) {
                 ex.getResponseHeaders().add(

@@ -11,7 +11,9 @@ import io.github.baokhang83.mnemo.warmup.core.ExitMode;
 import io.github.baokhang83.mnemo.warmup.core.HttpProbeExitMode;
 import io.github.baokhang83.mnemo.warmup.core.JarExtractor;
 import io.github.baokhang83.mnemo.warmup.core.JdkInfo;
+import io.github.baokhang83.mnemo.warmup.core.AwsRegistryAuth;
 import io.github.baokhang83.mnemo.warmup.core.OciArchiveStore;
+import io.github.baokhang83.mnemo.warmup.core.RegistryAuth;
 import io.github.baokhang83.mnemo.warmup.core.RegistryCredentials;
 import io.github.baokhang83.mnemo.warmup.core.KubernetesLeaseLock;
 import io.github.baokhang83.mnemo.warmup.core.RunPlanner;
@@ -221,16 +223,27 @@ public class Main implements Runnable {
         }
     }
 
-    /** The store named by {@code --store}, with the login from {@code --registry-auth} or the environment, if any. */
+    /**
+     * The store named by {@code --store}. The login comes from {@code --registry-auth} or
+     * {@code $MNEMO_WARMUP_REGISTRY_AUTH} when that file has an entry for the registry; otherwise, for an ECR
+     * registry on EKS, from the pod's workload identity; otherwise the access is anonymous.
+     */
     static OciArchiveStore openStore(String store, Path registryAuth, boolean plainHttp, long timeoutSeconds) {
+        return openStore(store, registryAuth, plainHttp, timeoutSeconds, System.getenv());
+    }
+
+    static OciArchiveStore openStore(
+            String store, Path registryAuth, boolean plainHttp, long timeoutSeconds, java.util.Map<String, String> env) {
         Path auth = registryAuth;
-        if (auth == null && System.getenv("MNEMO_WARMUP_REGISTRY_AUTH") != null) {
-            auth = Path.of(System.getenv("MNEMO_WARMUP_REGISTRY_AUTH"));
+        if (auth == null && env.get("MNEMO_WARMUP_REGISTRY_AUTH") != null) {
+            auth = Path.of(env.get("MNEMO_WARMUP_REGISTRY_AUTH"));
         }
-        RegistryCredentials credentials = auth == null
-                ? null
-                : RegistryCredentials.fromDockerConfig(auth, OciArchiveStore.registryHost(store)).orElse(null);
-        return OciArchiveStore.of(store, plainHttp, credentials, Duration.ofSeconds(timeoutSeconds));
+        String host = OciArchiveStore.registryHost(store);
+        RegistryCredentials credentials = auth == null ? null : RegistryCredentials.fromDockerConfig(auth, host).orElse(null);
+        RegistryAuth login = credentials != null
+                ? RegistryAuth.fixed(credentials)
+                : AwsRegistryAuth.fromEnvironment(host, env).orElse(RegistryAuth.anonymous());
+        return OciArchiveStore.withAuth(store, plainHttp, login, Duration.ofSeconds(timeoutSeconds));
     }
 
     @Command(name = "push",

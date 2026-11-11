@@ -68,3 +68,6 @@ trainer:
   serviceAccount:
     create: true
     name: ""
+    # On EKS, the IAM role the trainer assumes through IRSA (push scope on the archive repository):
+    #   annotations: { eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/mnemo-warmup-push }
+    annotations: {}

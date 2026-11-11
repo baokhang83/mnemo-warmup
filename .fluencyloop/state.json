@@ -3,7 +3,7 @@
   "feature": "020-57-add-workload-identity-authentication-for-eks-and-ecr",
   "branch": "feature/020-57-add-workload-identity-authentication-for-eks-and-ecr",
   "stage": "build",
-  "last_session": "003-irsa-web-identity-credentials-aws-endpoints-and-retrying",
+  "last_session": "004-ecr-registry-auth-mid-run-refresh-environment-selection",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

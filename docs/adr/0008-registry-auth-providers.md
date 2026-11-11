@@ -12,7 +12,7 @@ Status: accepted (v0.2.5, issue 57)
 - `EcrRegistryAuth` exchanges AWS keys for an ECR login with a hand-written SigV4 signer, caches it until five minutes before expiry and re-requests it after `invalidate()`. Keys come from `AssumeRoleWithWebIdentity` (IRSA), optionally followed by `AssumeRole` for a second role. No AWS SDK.
 - Selection happens in `Main.openStore`: a Docker-config entry for the registry wins; otherwise an ECR host with a pod web identity selects ECR; otherwise anonymous.
 - Separate fetch and trainer identities are IAM and service-account configuration, not code.
-- Transient AWS errors (connection failures, 429, 5xx) are retried three times; 4xx answers are not.
+- Transient AWS errors (connection failures, 429, 5xx) get up to three attempts; 4xx answers are not retried.
 
 ## Consequences
 

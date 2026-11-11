@@ -76,7 +76,7 @@ To start from one identity and act as another (a role in a different account, fo
 
 ## What happens on failure
 
-`fetch` treats every login problem (missing token file, denied permission, STS or ECR down) as "no archive": it prints the reason to stderr and the application starts without a cache, exit code 0 (`--strict` exits 1). Transient errors (connection failures, HTTP 429 and 5xx) are retried three times; permission errors are not.
+`fetch` treats every login problem (missing token file, denied permission, STS or ECR down) as "no archive": it prints the reason to stderr and the application starts without a cache, exit code 0 (`--strict` exits 1). Transient errors (connection failures, HTTP 429 and 5xx) get up to three attempts; permission errors are not retried.
 
 ## Verify on your cluster
 

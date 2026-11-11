@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+      {{- if .Values.warmup.enabled }}
+      annotations:
+        warmup.mnemo.io/enabled: "true"
+        warmup.mnemo.io/store: {{ required "warmup.store is required when warmup.enabled" .Values.warmup.store | quote }}
+        warmup.mnemo.io/exit-mode: {{ .Values.warmup.exitMode | quote }}
+        {{- if .Values.warmup.plainHttp }}
+        warmup.mnemo.io/plain-http: "true"
+        {{- end }}
+      {{- end }}
+    spec:
+      containers:
+        - name: app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: {{ .Values.command | toJson }}
+          args:
+            {{- range .Values.javaOptions }}
+            - {{ . | quote }}
+            {{- end }}
+            - -jar
+            - {{ .Values.jar | quote }}
+          env:
+            # Not a secret; it lets the e2e test prove that the injector's preview never prints a value.
+            - name: APP_GREETING
+              value: "hello-from-the-workload"
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 1
+            failureThreshold: 120

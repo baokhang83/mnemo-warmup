@@ -4,6 +4,10 @@
 that runs it with mnemo-warmup. Together they are what the end-to-end test (`scripts/e2e-kind.sh`) runs on a kind cluster
 with JDK 21 (AppCDS) and JDK 25 (AOT).
 
+`annotated-app/` is the other way in: a plain Deployment that adopts mnemo-warmup only through pod template annotations and the
+offline injector, with no mnemo-warmup subchart. `scripts/e2e-kind-inject.sh` runs it on kind against a temurin and a distroless image
+(`spring-boot/Dockerfile.distroless`); see [the injector guide](../docs/offline-injector.md#verification).
+
 ## What to copy into your own application
 
 **1. Extract the JAR when you build the image** (`spring-boot/Dockerfile`):

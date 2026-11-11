@@ -1,0 +1,19 @@
+# syntax=docker/dockerfile:1
+#
+# The example application on a distroless Java image: no shell, no cp, no package manager. The annotated adoption
+# path works here because every generated step runs the static mnemo-launcher instead of a shell script.
+#   docker build -f examples/spring-boot/Dockerfile.distroless -t mnemo-example:distroless examples/spring-boot
+#
+# Extracted at build time, like Dockerfile, so the trainer and every replica run identical files.
+FROM maven:3.9-eclipse-temurin-21 AS build
+WORKDIR /src
+COPY pom.xml .
+COPY src src
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -B -ntp -DskipTests package \
+ && java -Djarmode=tools -jar target/app.jar extract --destination /out
+
+FROM gcr.io/distroless/java21-debian12
+COPY --from=build /out /app
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]

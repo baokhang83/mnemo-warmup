@@ -3,6 +3,9 @@ name: e2e
 # The whole chain on a real cluster: trainer CronJob, Lease, fetch init container, run as PID 1, on JDK 21 (AppCDS)
 # and JDK 25 (AOT). It takes several minutes (it builds a Spring Boot image per JDK and starts a kind cluster), so it
 # runs on demand and when the pieces it exercises change on main.
+#
+# A second job (kind-inject) drives the annotated adoption path (Helm post-renderer, injected init containers, the
+# native launcher, a distroless image) on amd64 and arm64 runners.
 
 on:
   workflow_dispatch:
@@ -15,6 +18,9 @@ on:
       - 'deploy/helm/**'
       - 'examples/**'
       - 'scripts/e2e-kind.sh'
+      - 'scripts/e2e-kind-inject.sh'
+      - 'scripts/mnemo-warmup-inject'
+      - 'launcher/**'
       - '.github/workflows/e2e.yml'
 
 permissions:
@@ -38,3 +44,36 @@ jobs:
         with:
           name: e2e-logs
           path: /tmp/mw-e2e-*
+
+  kind-inject:
+    name: annotated adoption path (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      # Helm 3: the post-renderer here is a script path, which Helm 4 does not accept (docs/offline-injector.md)
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - uses: helm/kind-action@v1
+        with:
+          install_only: true
+      - run: scripts/e2e-kind-inject.sh
+      - name: Collect logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-inject-logs-${{ matrix.arch }}
+          path: /tmp/mw-inj-*

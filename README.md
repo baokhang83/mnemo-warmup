@@ -188,13 +188,13 @@ The explicit Helm-subchart setup (you wire the helpers into your own templates; 
 ## Documentation
 
 - [Configuration and requirements](docs/configuration.md): annotations, overrides, Spring Boot.
+- [Security and blast radius](docs/security.md): RBAC scope, secret isolation, registry permissions, and fail-safe execution.
 - [Registry authentication](docs/registry-auth.md) and [EKS and ECR](docs/aws-workload-identity.md)
 - [Operating it](docs/operations.md) and [archive retention](docs/archive-retention.md)
 - [Offline injector](docs/offline-injector.md): preview, Helm and GitOps use, what was verified.
 - [Reference](docs/reference.md): every command and option.
 - For LLM tools: [llms.txt](https://baokhang83.github.io/mnemo-warmup/llms.txt) and [llms-full.txt](https://baokhang83.github.io/mnemo-warmup/llms-full.txt) (published with every build).
 - [Example](examples/README.md), [Helm chart setup](docs/helm-chart.md), [design decisions](docs/adr/) and the [project plan](docs/PLAN.md).
-- Related: [`mnemo-jvm-warden`](https://github.com/baokhang83/mnemo-jvm-warden) resizes running pods in place; the planned integration is that warden injects the init containers (not built yet). `warmup-core` is on Maven Central (`io.github.baokhang83.mnemo:warmup-core`).
 
 ## Building from source
 

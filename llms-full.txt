@@ -225,6 +225,10 @@ The project is still at an early stage and the design is still moving. Issues an
 discussion about the open decisions in the plan are the most useful contribution right
 now.
 
+## Articles
+
+[Faster Java Pod Startups Without GraalVM: Why AppCDS Needs Kubernetes Image Volumes](https://baokhang.hashnode.dev/faster-java-pod-startups-without-graalvm-appcds-kubernetes-image-volumes)
+
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).

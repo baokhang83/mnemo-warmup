@@ -212,7 +212,7 @@ call it as `mnemo-warmup`.
 
 ## Contributing
 
-The project is at a very early stage and the design is still moving. Issues and
+The project is still at an early stage and the design is still moving. Issues and
 discussion about the open decisions in the plan are the most useful contribution right
 now.
 

@@ -145,7 +145,9 @@ shell as PID 1 and receives Kubernetes' SIGTERM directly with no extra process. 
 is missing or fails, it execs your original command. Images without `/bin/sh` can use
 `mnemo-warmup run --spawn -- java ...` instead: it starts the command as a child process,
 forwards SIGTERM, waits for it (up to `--stop-timeout-seconds`, default 25) and returns its exit
-code, but keeps a second JVM resident.
+code, but keeps a second JVM resident. If shutdown starts while the child is still being started,
+the wrapper can wait up to the same timeout for the start result before waiting for the child to
+exit. Allow up to twice the configured timeout in the pod's termination grace period.
 
 Why extraction at build time: the JVM silently ignores an archive when a classpath JAR's size,
 modification time or path differs from training. Run the same extracted files, at the same path,

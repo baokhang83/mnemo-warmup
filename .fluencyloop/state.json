@@ -1,11 +1,11 @@
 {
   "schema_version": "1",
-  "feature": "023-60-publish-the-v0-2-5-adoption-guide-and-configuration-r",
-  "branch": "feature/023-60-publish-the-v0-2-5-adoption-guide-and-configuration-r",
+  "feature": "52-fix-run-spawn-sigterm-forwarding-race-and-restore-its-end",
+  "branch": "feature/52-fix-run-spawn-sigterm-forwarding-race-and-restore-its-end",
   "stage": "build",
-  "last_session": "001-adoption-guide-pages-and-release-ready-readme",
-  "base_ref": "main",
+  "last_session": "001-forward-shutdown-across-child-publication",
+  "base_ref": "bench/pod-to-ready-breakdown",
   "feature_dir": "",
   "plan": "",
-  "updated": "2026-11-11"
+  "updated": "2026-11-13"
 }

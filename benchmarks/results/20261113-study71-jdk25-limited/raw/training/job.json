@@ -1,0 +1,194 @@
+{
+    "apiVersion": "batch/v1",
+    "kind": "Job",
+    "metadata": {
+        "annotations": {
+            "cronjob.kubernetes.io/instantiate": "manual"
+        },
+        "creationTimestamp": "2026-11-13T16:11:15Z",
+        "generation": 1,
+        "labels": {
+            "batch.kubernetes.io/controller-uid": "3ef793c2-57d5-4ca6-a1af-3949f2ea439b",
+            "batch.kubernetes.io/job-name": "train",
+            "controller-uid": "3ef793c2-57d5-4ca6-a1af-3949f2ea439b",
+            "job-name": "train"
+        },
+        "name": "train",
+        "namespace": "bench",
+        "ownerReferences": [
+            {
+                "apiVersion": "batch/v1",
+                "controller": true,
+                "kind": "CronJob",
+                "name": "cached-mw-1cem1wi",
+                "uid": "b16d38e6-e975-4f99-baed-e9c2027ad5ae"
+            }
+        ],
+        "resourceVersion": "649",
+        "uid": "3ef793c2-57d5-4ca6-a1af-3949f2ea439b"
+    },
+    "spec": {
+        "activeDeadlineSeconds": 3600,
+        "backoffLimit": 0,
+        "completionMode": "NonIndexed",
+        "completions": 1,
+        "manualSelector": false,
+        "parallelism": 1,
+        "podReplacementPolicy": "TerminatingOrFailed",
+        "selector": {
+            "matchLabels": {
+                "batch.kubernetes.io/controller-uid": "3ef793c2-57d5-4ca6-a1af-3949f2ea439b"
+            }
+        },
+        "suspend": false,
+        "template": {
+            "metadata": {
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "3ef793c2-57d5-4ca6-a1af-3949f2ea439b",
+                    "batch.kubernetes.io/job-name": "train",
+                    "controller-uid": "3ef793c2-57d5-4ca6-a1af-3949f2ea439b",
+                    "job-name": "train"
+                }
+            },
+            "spec": {
+                "automountServiceAccountToken": true,
+                "containers": [
+                    {
+                        "args": [
+                            "jar",
+                            "train",
+                            "--jar",
+                            "/app/app.jar",
+                            "--work-dir",
+                            "/tmp/mnemo-warmup",
+                            "--store",
+                            "oci://172.18.0.4:5000/bench/cached",
+                            "--cache-type",
+                            "auto",
+                            "--plain-http",
+                            "--exit-mode",
+                            "spring-refresh"
+                        ],
+                        "command": [
+                            "/mnemo-tools/bin/mnemo-launcher"
+                        ],
+                        "env": [
+                            {
+                                "name": "APP_GREETING",
+                                "value": "hello-from-the-workload"
+                            },
+                            {
+                                "name": "MNEMO_WARMUP_TIMING",
+                                "value": "1"
+                            },
+                            {
+                                "name": "POD_NAMESPACE",
+                                "valueFrom": {
+                                    "fieldRef": {
+                                        "apiVersion": "v1",
+                                        "fieldPath": "metadata.namespace"
+                                    }
+                                }
+                            }
+                        ],
+                        "image": "bench-spring-heavy:53777-1794586240",
+                        "imagePullPolicy": "Never",
+                        "name": "trainer",
+                        "resources": {},
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/mnemo-tools",
+                                "name": "mnemo-tools",
+                                "readOnly": true
+                            },
+                            {
+                                "mountPath": "/tmp/mnemo-warmup",
+                                "name": "mnemo-work"
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "initContainers": [
+                    {
+                        "command": [
+                            "/opt/mnemo-warmup/bin/mnemo-launcher",
+                            "install",
+                            "/mnemo-tools"
+                        ],
+                        "image": "mnemo-warmup-tools:bench-53777-1794586240",
+                        "imagePullPolicy": "IfNotPresent",
+                        "name": "mnemo-warmup-install",
+                        "resources": {},
+                        "securityContext": {
+                            "allowPrivilegeEscalation": false,
+                            "capabilities": {
+                                "drop": [
+                                    "ALL"
+                                ]
+                            },
+                            "readOnlyRootFilesystem": true,
+                            "runAsNonRoot": true,
+                            "runAsUser": 65532,
+                            "seccompProfile": {
+                                "type": "RuntimeDefault"
+                            }
+                        },
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/mnemo-tools",
+                                "name": "mnemo-tools"
+                            }
+                        ]
+                    }
+                ],
+                "restartPolicy": "Never",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "serviceAccount": "cached-mw-1cem1wi",
+                "serviceAccountName": "cached-mw-1cem1wi",
+                "terminationGracePeriodSeconds": 30,
+                "volumes": [
+                    {
+                        "emptyDir": {},
+                        "name": "mnemo-tools"
+                    },
+                    {
+                        "emptyDir": {},
+                        "name": "mnemo-work"
+                    }
+                ]
+            }
+        }
+    },
+    "status": {
+        "completionTime": "2026-11-13T16:11:24Z",
+        "conditions": [
+            {
+                "lastProbeTime": "2026-11-13T16:11:24Z",
+                "lastTransitionTime": "2026-11-13T16:11:24Z",
+                "message": "Reached expected number of succeeded pods",
+                "reason": "CompletionsReached",
+                "status": "True",
+                "type": "SuccessCriteriaMet"
+            },
+            {
+                "lastProbeTime": "2026-11-13T16:11:24Z",
+                "lastTransitionTime": "2026-11-13T16:11:24Z",
+                "message": "Reached expected number of succeeded pods",
+                "reason": "CompletionsReached",
+                "status": "True",
+                "type": "Complete"
+            }
+        ],
+        "ready": 0,
+        "startTime": "2026-11-13T16:11:15Z",
+        "succeeded": 1,
+        "terminating": 0,
+        "uncountedTerminatedPods": {}
+    }
+}

@@ -1,0 +1,28 @@
+[0.004s][warning][aot] Unable to use AOT cache.
+[                    ] The saved state of UseCompressedOops and UseCompressedClassPointers is different from runtime, CDS will be disabled.
+[0.004s][error  ][aot] An error has occurred while processing the AOT cache. Run with -Xlog:aot for details.
+[0.004s][error  ][aot] Loading static archive failed.
+[0.004s][info   ][cds] Opening of static archive /work/archive-25-zgc.aot failed
+[0.004s][error  ][aot] Unable to map shared spaces
+VM settings:
+    Max. Heap Size: 256.00M
+    Using VM: OpenJDK 64-Bit Server VM
+
+[0.067s][info   ][class,load] io.github.baokhang83.mnemo.example.DemoApplication source: file:/work/app/app.jar
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::               (v3.5.16)
+
+2026-11-13T14:34:55.374Z  INFO 1 --- [           main] i.g.b.mnemo.example.DemoApplication      : Starting DemoApplication v0.1.0 using Java 25.0.5 with PID 1 (/work/app/app.jar started by root in /)
+2026-11-13T14:34:55.376Z  INFO 1 --- [           main] i.g.b.mnemo.example.DemoApplication      : No active profile set, falling back to 1 default profile: "default"
+2026-11-13T14:34:55.756Z  INFO 1 --- [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8080 (http)
+2026-11-13T14:34:55.765Z  INFO 1 --- [           main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-11-13T14:34:55.765Z  INFO 1 --- [           main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.55]
+2026-11-13T14:34:55.780Z  INFO 1 --- [           main] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-11-13T14:34:55.781Z  INFO 1 --- [           main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 378 ms

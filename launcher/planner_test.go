@@ -91,6 +91,16 @@ func TestNativePlanUsesAnArchiveThatFits(t *testing.T) {
 	}
 }
 
+func TestNativePlanKeepsArchiveWhenSoftMaximumChanges(t *testing.T) {
+	f := newFixture(t)
+	f.cmd = append(f.cmd[:2], append([]string{"-XX:SoftMaxHeapSize=128m"}, f.cmd[2:]...)...)
+	f.env = append(f.env, "JAVA_TOOL_OPTIONS=-XX:SoftMaxHeapSize=256m")
+	got := f.plan()
+	if !got.decided || len(got.argv) < 3 || !strings.HasPrefix(got.argv[1], "-XX:SharedArchiveFile=") {
+		t.Fatalf("expected archive reuse with soft maximum changes: %#v", got)
+	}
+}
+
 func TestNativePlanReportsTimingWhenAsked(t *testing.T) {
 	f := newFixture(t)
 	f.env = append(f.env, "MNEMO_WARMUP_TIMING=1")
@@ -230,8 +240,8 @@ func TestJarManifestContinuationLines(t *testing.T) {
 }
 
 func TestRelevantJvmFlagsMatchTheJavaRules(t *testing.T) {
-	env := map[string]string{"JAVA_TOOL_OPTIONS": "-Xmx256m -XX:+UseZGC -Dfoo=bar", "JDK_JAVA_OPTIONS": "-XX:-UseCompressedOops"}
-	got := relevantJvmFlags([]string{"-Xmx512m", "-Xms64m", "-XX:+UseG1GC", "-Dx=y", "-XX:MaxRAMPercentage=50"}, env)
+	env := map[string]string{"JAVA_TOOL_OPTIONS": "-Xmx256m -XX:+UseZGC -XX:SoftMaxHeapSize=128m -Dfoo=bar", "JDK_JAVA_OPTIONS": "-XX:-UseCompressedOops"}
+	got := relevantJvmFlags([]string{"-Xmx512m", "-Xms64m", "-XX:+UseG1GC", "-XX:SoftMaxHeapSize=192m", "-Dx=y", "-XX:MaxRAMPercentage=50"}, env)
 	// JvmFlags.relevant: the command line, then JDK_JAVA_OPTIONS, then JAVA_TOOL_OPTIONS; the last occurrence of a key wins;
 	// ordered by key; options that cannot invalidate an archive are dropped.
 	want := []string{"-XX:MaxRAMPercentage=50", "-XX:-UseCompressedOops", "-XX:+UseG1GC", "-XX:+UseZGC", "-Xms64m", "-Xmx256m"}

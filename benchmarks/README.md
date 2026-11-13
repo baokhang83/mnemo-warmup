@@ -4,6 +4,8 @@ Measurements of what mnemo-warmup does to **pod start-to-Ready**, with the metho
 
 The question is not "does the JVM start faster with an archive" (it does). It is "does a *pod* become Ready sooner once you add the init containers, the archive download, the digest checks and the helper JVMs that the cache needs", and where the time goes.
 
+The separate [archive compatibility study](../docs/archive-compatibility.md) tests JVM flag and container-limit changes; it is not a startup timing benchmark.
+
 ## Method
 
 `scripts/bench-cluster.sh` creates a throw-away [kind](https://kind.sigs.k8s.io/) cluster and an archive registry (`registry:2` on the kind network), builds the tools image from this checkout and the application image, and deploys **three arms** of the same chart (`examples/annotated-app`), all running the same application image:

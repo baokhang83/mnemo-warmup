@@ -5,7 +5,7 @@ mnemo-warmup stores one archive per fingerprint in an OCI registry and never del
 ## How the store grows
 
 - Each fingerprint is one tag, `fp-<64 hex characters>`, on a manifest with two blobs: a small config blob (the manifest JSON) and the archive itself, typically hundreds of MB ([ADR 0001](adr/0001-archive-store.md)).
-- The fingerprint covers the JDK build, the classpath, the JVM flags, the cache type and the image digest when one is given. A new image build, a JDK patch release or a changed JVM flag therefore produces a new fingerprint and a new archive. Old fingerprints are never reused or overwritten by newer ones.
+- The fingerprint covers the JDK build, the classpath, the JVM flags, the cache type and the image digest when one is given. A new image build, a JDK patch release or a changed fingerprinted JVM flag can produce a new fingerprint and a new archive. `SoftMaxHeapSize` is excluded; see [archive compatibility](archive-compatibility.md). Old fingerprints are never reused or overwritten by newer ones.
 - Growth is roughly *archives per release x number of releases x archive size*. For illustration: 300 MB per archive, one archive per release (AppCDS), 20 releases a month is about 6 GB a month. Measure your own archive size with `mnemo-warmup build` before deciding on a budget.
 
 ## What deleting an archive costs

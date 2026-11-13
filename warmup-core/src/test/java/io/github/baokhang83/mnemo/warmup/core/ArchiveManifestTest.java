@@ -86,6 +86,17 @@ class ArchiveManifestTest {
     }
 
     @Test
+    void softMaximumChangesReuseTheSameFingerprintAndManifest() throws Exception {
+        ExtractedApp app = layout(dir, "AAA", "BBBB");
+        ArchiveManifest trained = describe(app, JDK, CacheStrategy.LEYDEN_AOT,
+                List.of("-Xmx512m", "-XX:SoftMaxHeapSize=128m"), "sha256:img");
+        ArchiveManifest live = describe(app, JDK, CacheStrategy.LEYDEN_AOT,
+                List.of("-Xmx512m", "-XX:SoftMaxHeapSize=256m"), "sha256:img");
+        assertEquals(trained.fingerprint(), live.fingerprint());
+        assertEquals(List.of(), trained.mismatches(live));
+    }
+
+    @Test
     void theFingerprintIsTheSameForTheSameContentInAnotherDirectory() throws Exception {
         ExtractedApp one = layout(Files.createDirectory(dir.resolve("one")), "AAA", "BBBB");
         ExtractedApp two = layout(Files.createDirectory(dir.resolve("two")), "AAA", "BBBB");

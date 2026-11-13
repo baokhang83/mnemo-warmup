@@ -51,6 +51,7 @@ Needs docker, kind, kubectl, Helm 3, Java 21 and Maven (to build the CLI), pytho
 scripts/bench-cluster.sh                                  # 12 rounds, no pod limits
 scripts/bench-cluster.sh --app-cpu 1 --app-memory 1Gi     # requests = limits on the application container
 scripts/bench-cluster.sh --app example                    # the small example app instead
+scripts/bench-cluster.sh --app spring-heavy --jdk 25       # use JDK 25 for the Spring workload
 scripts/bench-cluster.sh --restarts 30 --out /tmp/mine    # more rounds, other output directory
 KEEP=1 scripts/bench-cluster.sh                           # keep the cluster for poking around
 ```

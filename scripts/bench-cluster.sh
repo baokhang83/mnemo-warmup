@@ -11,7 +11,7 @@
 # back to 0. One discarded warm-up round per arm comes first. Raw pod JSON and logs are kept; scripts/bench_summarize.py turns
 # them into the tables. See benchmarks/README.md for the method, its limits and the results.
 #
-# Usage: scripts/bench-cluster.sh [--app spring-heavy|example|jenkins|sonarqube] [--restarts N] [--out DIR] [--app-cpu CPUS] [--app-memory MEM] [--tools-delivery init-container|image-volume]
+# Usage: scripts/bench-cluster.sh [--app spring-heavy|example|jenkins|sonarqube] [--jdk 21|25] [--restarts N] [--out DIR] [--app-cpu CPUS] [--app-memory MEM] [--tools-delivery init-container|image-volume]
 #   --app-cpu / --app-memory set requests = limits on the APPLICATION container (for example 1 and 1Gi, which makes the pod
 #   Guaranteed). The default is no pod limits (BestEffort). The generated fetch init container never gets limits from the injector.
 #   Needs docker, kind, kubectl, helm 3, java 21+, python3 and network access. KEEP=1 keeps the cluster and registry.
@@ -22,6 +22,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 ROOT=$(pwd)
 APP=spring-heavy
+JDK=21
 RESTARTS=12
 APP_CPU=""
 APP_MEMORY=""
@@ -31,6 +32,7 @@ OUT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --app) APP=$2; shift 2 ;;
+    --jdk) JDK=$2; shift 2 ;;
     --restarts) RESTARTS=$2; shift 2 ;;
     --out) OUT=$2; shift 2 ;;
     --app-cpu) APP_CPU=$2; shift 2 ;;
@@ -43,9 +45,13 @@ done
 mkdir -p "$OUT/raw"
 OUT=$(cd "$OUT" && pwd)
 
+case "$JDK" in 21|25) ;; *) echo "unsupported --jdk: $JDK (use 21 or 25)"; exit 2 ;; esac
+if [ "$JDK" != 21 ] && [ "$APP" != spring-heavy ] && [ "$APP" != example ]; then
+  echo "--jdk is supported only for spring-heavy and example"; exit 2
+fi
 case "$APP" in
-  spring-heavy) APP_DIR=benchmarks/spring-heavy;  APP_IMAGE="bench-spring-heavy:$RUN"; READY_PATH=/actuator/health/readiness; BUILD_ARGS=(--build-arg JDK=21) ;;
-  example)      APP_DIR=examples/spring-boot; APP_IMAGE="mnemo-example:bench-$RUN"; READY_PATH=/health;                    BUILD_ARGS=(--build-arg JDK=21) ;;
+  spring-heavy) APP_DIR=benchmarks/spring-heavy;  APP_IMAGE="bench-spring-heavy:$RUN"; READY_PATH=/actuator/health/readiness; BUILD_ARGS=(--build-arg JDK="$JDK") ;;
+  example)      APP_DIR=examples/spring-boot; APP_IMAGE="mnemo-example:bench-$RUN"; READY_PATH=/health;                    BUILD_ARGS=(--build-arg JDK="$JDK") ;;
   # Jenkins LTS WAR (third party, not Spring Boot): trained with http-probe on /login, which answers 200 only once it is up.
   jenkins)      APP_DIR=benchmarks/jenkins;      APP_IMAGE="bench-jenkins:$RUN";      READY_PATH=/login; BUILD_ARGS=(--build-arg JDK=21)
                 APP_JAR=/app/jenkins.war; APP_JAVA_OPTS='["-Djenkins.install.runSetupWizard=false"]'
@@ -183,6 +189,9 @@ cron=$(k -n "$NS" get cronjob -l warmup.mnemo.io/owner=cached -o name | head -1 
 k -n "$NS" create job train --from="cronjob/$cron" >/dev/null || { echo "cannot start the training job"; exit 1; }
 k -n "$NS" wait --for=condition=complete job/train --timeout=900s >/dev/null 2>&1 || { echo "the training job did not complete"; k -n "$NS" logs job/train -c trainer | tail -20; exit 1; }
 k -n "$NS" logs job/train -c trainer >"$OUT/raw/train.log" 2>&1
+mkdir -p "$OUT/raw/training"
+k -n "$NS" get job train -o json >"$OUT/raw/training/job.json"
+k -n "$NS" get pods -l job-name=train -o json >"$OUT/raw/training/pods.json"
 grep -q "train: TRAINED" "$OUT/raw/train.log" || { echo "training did not report TRAINED; the end of the trainer log:"; tail -25 "$OUT/raw/train.log" | cut -c1-220; exit 1; }
 ARCHIVE_BYTES=$(docker exec "$REG" sh -c 'find /var/lib/registry -path "*blobs*" -name data -size +100k -exec wc -c {} \;' | sort -n | tail -1 | awk '{print $1}')
 
@@ -248,7 +257,7 @@ python3 scripts/bench_env.py "$CTX" "$NODE" "$OUT/environment.json" \
   "app_kib=$(docker run --rm --entrypoint sh "$APP_IMAGE" -c "du -sk $APP_ROOT | cut -f1" | tr -d ' ')" \
   "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   "tools_delivery=$TOOLS_DELIVERY" \
-  "command=scripts/bench-cluster.sh --app $APP --restarts $RESTARTS${APP_CPU:+ --app-cpu $APP_CPU}${APP_MEMORY:+ --app-memory $APP_MEMORY}${TOOLS_DELIVERY:+ --tools-delivery $TOOLS_DELIVERY}"
+  "command=scripts/bench-cluster.sh --app $APP --jdk $JDK --restarts $RESTARTS${APP_CPU:+ --app-cpu $APP_CPU}${APP_MEMORY:+ --app-memory $APP_MEMORY}${TOOLS_DELIVERY:+ --tools-delivery $TOOLS_DELIVERY}"
 
-python3 scripts/bench_summarize.py "$OUT" | tee "$OUT/summary.md"
+python3 scripts/bench_summarize.py "$OUT" | tee "$OUT/summary.md" || exit 1
 echo "results in $OUT"

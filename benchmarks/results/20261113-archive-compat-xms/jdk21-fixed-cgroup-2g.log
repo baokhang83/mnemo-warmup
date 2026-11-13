@@ -1,0 +1,58 @@
+[0.003s][info][cds] trying to map /opt/java/openjdk/lib/server/classes.jsa
+[0.003s][info][cds] Opened archive /opt/java/openjdk/lib/server/classes.jsa.
+[0.003s][info][cds] Archive was created with UseCompressedOops = 1, UseCompressedClassPointers = 1
+[0.003s][info][cds] Core region alignment: 65536
+[0.003s][info][cds] trying to map /work/archive-21-fixed.jsa
+[0.003s][info][cds] Opened archive /work/archive-21-fixed.jsa.
+[0.003s][info][cds] Archive was created with UseCompressedOops = 1, UseCompressedClassPointers = 1
+[0.003s][info][cds] ArchiveRelocationMode == 1: always map archive(s) at an alternative address
+[0.003s][info][cds] Try to map archive(s) at an alternative address
+[0.003s][info][cds] Reserved archive_space_rs [0x0000006000000000 - 0x0000006003000000] (50331648) bytes
+[0.003s][info][cds] Reserved class_space_rs   [0x0000006003000000 - 0x0000006043000000] (1073741824) bytes
+[0.003s][info][cds] Mapped static  region #0 at base 0x0000006000000000 top 0x0000006000490000 (ReadWrite)
+[0.003s][info][cds] Mapped static  region #1 at base 0x0000006000490000 top 0x0000006000cb0000 (ReadOnly)
+[0.003s][info][cds] Mapped static  region #2 at base 0x0000ffff97631000 top 0x0000ffff97671000 (Bitmap)
+[0.007s][info][cds] Mapped dynamic region #0 at base 0x0000006000cb0000 top 0x0000006001820000 (ReadWrite)
+[0.007s][info][cds] Mapped dynamic region #1 at base 0x0000006001820000 top 0x0000006002a70000 (ReadOnly)
+[0.007s][info][cds] Mapped dynamic region #2 at base 0x0000ffff87255000 top 0x0000ffff872d5000 (Bitmap)
+[0.019s][info][cds] CDS archive was created with max heap size = 3924M, and the following configuration:
+[0.019s][info][cds]     narrow_klass_base = 0x0000006000000000, narrow_klass_shift = 0
+[0.019s][info][cds]     narrow_oop_mode = 1, narrow_oop_base = 0x0000000000000000, narrow_oop_shift = 3
+[0.019s][info][cds]     heap range = [0x000000070ac00000 - 0x0000000800000000]
+[0.019s][info][cds] The current max heap size = 256M, HeapRegion::GrainBytes = 1048576
+[0.019s][info][cds]     narrow_klass_base = 0x0000006000000000, narrow_klass_shift = 0
+[0.019s][info][cds]     narrow_oop_mode = 0, narrow_oop_base = 0x0000000000000000, narrow_oop_shift = 0
+[0.019s][info][cds]     heap range = [0x00000000f0000000 - 0x0000000100000000]
+[0.019s][info][cds] Requested heap region [0x00000007ffe00000 - 0x00000007fff0c778] =  1099640 bytes
+[0.019s][info][cds] CDS heap data needs to be relocated because the archive was created with an incompatible oop encoding mode.
+[0.019s][info][cds] CDS heap data relocation delta = -30064771072 bytes
+[0.019s][info][cds] Trying to map heap data at 0x00000000ffe00000, size =  1099640 bytes
+[0.019s][info][cds] optimized module handling: enabled
+[0.019s][info][cds] full module graph: enabled
+[0.019s][info][cds] use_full_module_graph = true; java.base = 0x000000600047cde0
+[0.019s][info][cds] patching heap embedded pointers: narrowOop 0xfffc0000 -> 0xffe00000
+[0.019s][info][cds] CDS heap data quick relocation not possible
+[0.019s][info][cds] Unmapping region #2 at base 0x0000ffff97631000 (Bitmap)
+[0.019s][info][cds] Unmapping region #2 at base 0x0000ffff87255000 (Bitmap)
+VM settings:
+    Max. Heap Size: 256.00M
+    Using VM: OpenJDK 64-Bit Server VM
+
+[0.030s][info][class,load] io.github.baokhang83.mnemo.example.DemoApplication source: shared objects file (top)
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::               (v3.5.16)
+
+2026-11-13T14:34:01.393Z  INFO 1 --- [           main] i.g.b.mnemo.example.DemoApplication      : Starting DemoApplication v0.1.0 using Java 21.0.13 with PID 1 (/work/app/app.jar started by root in /)
+2026-11-13T14:34:01.394Z  INFO 1 --- [           main] i.g.b.mnemo.example.DemoApplication      : No active profile set, falling back to 1 default profile: "default"
+2026-11-13T14:34:01.608Z  INFO 1 --- [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8080 (http)
+2026-11-13T14:34:01.611Z  INFO 1 --- [           main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-11-13T14:34:01.611Z  INFO 1 --- [           main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.55]
+2026-11-13T14:34:01.618Z  INFO 1 --- [           main] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-11-13T14:34:01.619Z  INFO 1 --- [           main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 206 ms

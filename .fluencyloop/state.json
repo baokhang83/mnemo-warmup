@@ -1,9 +1,9 @@
 {
   "schema_version": "1",
-  "feature": "76-consolidate-image-volume-tools-delivery-for-the-beta",
-  "branch": "feature/76-consolidate-image-volume-tools-delivery-for-the-beta",
+  "feature": "20-measure-jvm-archive-compatibility-and-align-fingerprint-r",
+  "branch": "feature/20-measure-jvm-archive-compatibility-and-align-fingerprint-r",
   "stage": "build",
-  "last_session": "004-match-the-kind-cli-to-its-node-image",
+  "last_session": "003-implement-the-evidence-based-fingerprint-rule-and-docume",
   "base_ref": "bench/pod-to-ready-breakdown",
   "feature_dir": "",
   "plan": "",

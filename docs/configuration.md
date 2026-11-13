@@ -42,7 +42,7 @@ java [JVM options] -jar <jar> [application arguments]
 
 - The first word must be `java` or end in `/java`.
 - Everything between `java` and `-jar` is a JVM option. Each must start with `-`. `-cp`, `--class-path`, `-classpath` and `@argfiles` are refused.
-- The word after `-jar` is the JAR path. The injector gives the JVM options to `fetch` and to the trainer, so **a changed JVM option is a new fingerprint**: new pods start without an archive until the trainer has trained one for the new options, and rolling back finds the old archive again.
+- The word after `-jar` is the JAR path. The injector gives the JVM options to `fetch` and to the trainer, so a changed **fingerprinted** JVM option selects a new archive. `SoftMaxHeapSize` is excluded; some other options are also outside the fingerprint. See [archive compatibility](archive-compatibility.md).
 - Anything else is reported by the preview with the reason, and nothing is changed. Use `warmup.mnemo.io/command` when the image supplies the Java command.
 
 ## Spring Boot

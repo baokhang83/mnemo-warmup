@@ -41,7 +41,7 @@ Failures **looking up or validating** the archive never stop a pod; it starts th
 | Situation | What you see |
 |---|---|
 | No archive yet (first deploy) | `fetch`: "No usable archive"; `run`: "no archive was fetched" |
-| A JVM option differs from when the archive was trained | a new fingerprint: `fetch` finds none and the trainer trains one on its next run |
+| A fingerprinted JVM option differs from training | a new fingerprint: `fetch` finds none and the trainer trains one on its next run. `SoftMaxHeapSize` is excluded; see [archive compatibility](archive-compatibility.md). |
 | New image or JARs | a new fingerprint, the same |
 | Registry unreachable or login refused | `fetch` logs the reason and exits 0; the pod becomes Ready after `fetch` gives up (about 15 s with an unreachable registry in the end-to-end run) |
 | Stored archive damaged | rejected by the digest check; the pod starts uncached |

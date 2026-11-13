@@ -178,6 +178,8 @@ Maven coordinates: groupId `io.github.baokhang83.mnemo` (same as warden), artifa
   flags in 25); keep the value in cluster-aware sharing, fingerprinting and safe
   fallback, not in wrapping flags.
 - Archive size and storage cost (AOT caches are larger than CDS archives).
-- AppCDS behaviour on JDK 21-24 is verified (`docs/appcds-jdk-matrix.md`); the fingerprint
-  rules (issue #20) are not yet measured with a real application.
+- AppCDS behaviour on JDK 21-24 is verified (`docs/appcds-jdk-matrix.md`). Issue #20's
+  fingerprint rules have been measured with the Spring Boot example on JDK 21 and 25
+  (`docs/archive-compatibility.md`); automatic profile selection from cgroup-derived
+  heap sizing remains a known limitation.
 - Market is unproven; validate with a few JVM platform teams before the warden integration.

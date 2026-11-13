@@ -1,0 +1,104 @@
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::               (v3.5.16)
+
+2026-11-13T14:34:26.140Z  INFO 1 --- [           main] i.g.b.mnemo.example.DemoApplication      : Starting DemoApplication v0.1.0 using Java 25.0.5 with PID 1 (/work/app/app.jar started by root in /)
+2026-11-13T14:34:26.142Z  INFO 1 --- [           main] i.g.b.mnemo.example.DemoApplication      : No active profile set, falling back to 1 default profile: "default"
+2026-11-13T14:34:26.421Z  INFO 1 --- [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8080 (http)
+2026-11-13T14:34:26.429Z  INFO 1 --- [           main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-11-13T14:34:26.429Z  INFO 1 --- [           main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.55]
+2026-11-13T14:34:26.440Z  INFO 1 --- [           main] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-11-13T14:34:26.440Z  INFO 1 --- [           main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 278 ms
+[0.721s][warning][aot] Preload Warning: Verification failed for org.springframework.boot.http.client.HttpComponentsClientHttpRequestFactoryBuilder
+[0.724s][warning][aot] Preload Warning: Verification failed for org.springframework.core.ReactiveAdapterRegistry$ReactorAdapter
+[0.730s][warning][aot] Preload Warning: Verification failed for org.springframework.boot.jdbc.init.DataSourceScriptDatabaseInitializer
+[0.731s][warning][aot] Preload Warning: Verification failed for org.springframework.boot.autoconfigure.cache.RedisCacheConfiguration
+[0.731s][warning][aot] Preload Warning: Verification failed for org.springframework.boot.autoconfigure.cache.InfinispanCacheConfiguration
+[0.732s][warning][aot] Preload Warning: Verification failed for org.springframework.http.codec.multipart.DefaultPartHttpMessageReader
+[0.744s][warning][aot] Preload Warning: Verification failed for org.springframework.boot.logging.log4j2.Log4J2LoggingSystem
+[0.752s][warning][aot] Preload Warning: Verification failed for org.springframework.web.servlet.view.freemarker.FreeMarkerView
+[0.772s][warning][aot] Skipping jdk/internal/event/Event: JFR event class
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy53: Unsupported location
+[0.772s][warning][aot] Skipping org/springframework/core/$Proxy5: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy58: Unsupported location
+[0.772s][warning][aot] Skipping org/springframework/boot/logging/log4j2/Log4J2LoggingSystem: Failed verification
+[0.772s][warning][aot] Skipping jdk/proxy1/$Proxy8: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy1/$Proxy7: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy1/$Proxy57: Unsupported location
+[0.772s][warning][aot] Skipping org/springframework/core/$Proxy39: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy47: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy24: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy44: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy43: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy45: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy46: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy9: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy2: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy33: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy51: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy52: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy54: Unsupported location
+[0.772s][warning][aot] Skipping org/springframework/boot/autoconfigure/http/$Proxy55: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy56: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy1/$Proxy18: Unsupported location
+[0.772s][warning][aot] Skipping jdk/internal/event/ThreadSleepEvent: JFR event class
+[0.772s][warning][aot] Skipping org/springframework/boot/autoconfigure/cache/InfinispanCacheConfiguration: Failed verification
+[0.772s][warning][aot] Skipping org/springframework/boot/autoconfigure/cache/RedisCacheConfiguration: Failed verification
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy17: Unsupported location
+[0.772s][warning][aot] Skipping org/springframework/web/servlet/view/freemarker/FreeMarkerView: Failed verification
+[0.772s][warning][aot] Skipping org/springframework/http/codec/multipart/DefaultPartHttpMessageReader: Failed verification
+[0.772s][warning][aot] Skipping org/springframework/boot/http/client/HttpComponentsClientHttpRequestFactoryBuilder: Failed verification
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy30: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy19: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy38: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy28: Unsupported location
+[0.772s][warning][aot] Skipping jdk/proxy2/$Proxy37: Unsupported location
+[0.773s][warning][aot] Skipping org/springframework/boot/jdbc/init/DataSourceScriptDatabaseInitializer: Failed verification
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy49: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy50: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy16: Unsupported location
+[0.773s][warning][aot] Skipping org/springframework/core/ReactiveAdapterRegistry$ReactorAdapter: Failed verification
+[0.773s][warning][aot] Skipping jdk/proxy1/$Proxy1: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy1/$Proxy0: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy25: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy26: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy27: Unsupported location
+[0.773s][warning][aot] Skipping jdk/internal/event/SecurityProviderServiceEvent: JFR event class
+[0.773s][warning][aot] Skipping com/sun/proxy/jdk/proxy1/$Proxy48: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy15: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy11: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy36: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy20: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy31: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy21: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy41: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy42: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy35: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy10: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy14: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy34: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy32: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy13: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy6: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy23: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy22: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy12: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy40: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy2/$Proxy29: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy1/$Proxy3: Unsupported location
+[0.773s][warning][aot] Skipping jdk/proxy1/$Proxy4: Unsupported location
+Temporary AOTConfiguration recorded: /work/archive-25-fixed.aot.config
+Launching child process /opt/java/openjdk/bin/java to assemble AOT cache /work/archive-25-fixed.aot using configuration /work/archive-25-fixed.aot.config
+Picked up JAVA_TOOL_OPTIONS: -Djava.class.path=/work/app/app.jar -Xmx256m -XX:SoftMaxHeapSize=192m -XX:+UseG1GC -Dspring.context.exit=onRefresh -XX:AOTCacheOutput=/work/archive-25-fixed.aot -XX:AOTConfiguration=/work/archive-25-fixed.aot.config -XX:AOTMode=create
+Reading AOTConfiguration /work/archive-25-fixed.aot.config and writing AOTCache /work/archive-25-fixed.aot
+[0.314s][warning][aot] Skipping org/springframework/web/servlet/view/freemarker/FreeMarkerView: Unlinked class not supported by AOTClassLinking
+[0.314s][warning][aot] Skipping org/springframework/boot/logging/log4j2/Log4J2LoggingSystem: Unlinked class not supported by AOTClassLinking
+[0.315s][warning][aot] Skipping org/springframework/core/ReactiveAdapterRegistry$ReactorAdapter: Unlinked class not supported by AOTClassLinking
+AOTCache creation is complete: /work/archive-25-fixed.aot 51445760 bytes
+Removed temporary AOT configuration file /work/archive-25-fixed.aot.config

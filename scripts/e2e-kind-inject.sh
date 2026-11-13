@@ -189,7 +189,7 @@ kind create cluster --name "$CLUSTER" ${KIND_NODE_IMAGE:+--image "$KIND_NODE_IMA
 docker run -d --name "$REG" --network kind registry:2 >/dev/null || { echo "registry start failed"; exit 1; }
 REG_IP=$(docker inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' "$REG")
 [ -n "$REG_IP" ] || { echo "no registry address on the kind network"; exit 1; }
-for img in "${IMAGES[@]}"; do kind load docker-image "$img" --name "$CLUSTER" >/dev/null 2>&1 || { echo "kind load failed for $img"; exit 1; }; done
+for img in "${IMAGES[@]}"; do kind load docker-image "$img" --name "$CLUSTER" || { echo "kind load failed for $img"; exit 1; }; done
 NODE_ARCH=$(k get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}')
 
 # ---- one pass per application image --------------------------------------------------------------------------------

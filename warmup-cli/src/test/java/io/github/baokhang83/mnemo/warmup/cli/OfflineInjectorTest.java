@@ -1,6 +1,9 @@
 package io.github.baokhang83.mnemo.warmup.cli;
 
 import static org.junit.jupiter.api.Assertions.*;
+import io.github.baokhang83.mnemo.warmup.core.OciImageConfigReader;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class OfflineInjectorTest {
@@ -28,6 +31,31 @@ class OfflineInjectorTest {
         kind: Service
         metadata: {name: service, namespace: test}
         """;
+    @Test void previewWarnsOnImageCacheOptionsWithoutPrintingTheirValues() {
+        var warnings = OfflineInjector.previewImageWarnings(INPUT, image -> {
+            assertEquals("example/demo:1", image);
+            return List.of(new OciImageConfigReader.ImageConfig(
+                    List.of("java", "-XX:SharedArchiveFile=/sensitive/app.jsa"), List.of(),
+                    Map.of("JAVA_TOOL_OPTIONS", "-XX:AOTCache=/private/cache", "TOKEN", "secret-value"), Map.of()));
+        });
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("image appears to carry a build-time JVM cache"));
+        assertFalse(warnings.toString().contains("sensitive"));
+        assertFalse(warnings.toString().contains("private"));
+        assertFalse(warnings.toString().contains("secret-value"));
+    }
+
+    @Test void previewInspectionFailureIsNonBlockingAndSanitized() {
+        var warnings = OfflineInjector.previewImageWarnings(INPUT, image -> { throw new RuntimeException("secret-token"); });
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("cache presence is unknown"));
+        assertFalse(warnings.toString().contains("secret-token"));
+    }
+
+    @Test void previewSkipsRegistryInspectionForUnoptedWorkloads() {
+        String unrelated = INPUT.replace("warmup.mnemo.io/enabled: \"true\"", "warmup.mnemo.io/enabled: \"false\"");
+        assertTrue(OfflineInjector.previewImageWarnings(unrelated, image -> { fail("unexpected registry read"); return List.of(); }).isEmpty());
+    }
     @Test void emitsWorkloadAndTrainerAndIsStableOnReinjection() {
         var first = inject(INPUT);
         assertEquals(6, ManifestStream.parse(first.yaml()).size());

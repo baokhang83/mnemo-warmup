@@ -6,15 +6,83 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.regex.Pattern;
+import io.github.baokhang83.mnemo.warmup.core.AwsRegistryAuth;
+import io.github.baokhang83.mnemo.warmup.core.OciImageConfigReader;
+import io.github.baokhang83.mnemo.warmup.core.RegistryAuth;
+import io.github.baokhang83.mnemo.warmup.core.RegistryCredentials;
 
 /** Offline manifest transformation; all input is validated before output is returned. */
 final class OfflineInjector {
+    private static final Pattern CACHE_OPTION = Pattern.compile("(?:^|\\s)-XX:(?:SharedArchiveFile|AOTCache|AOTCacheOutput)(?:=|\\s|$)");
     private static final String MARKER = WorkloadDiscovery.PREFIX + "injected-v1";
     private static final String OWNER = WorkloadDiscovery.PREFIX + "owner";
     private static final String CHECKSUM = WorkloadDiscovery.PREFIX + "generated-checksum";
     private static final String TOOLS_REPOSITORY = "ghcr.io/baokhang83/mnemo-warmup-tools";
 
     record Result(String yaml, List<String> notes) {}
+
+    /** Preview-only registry inspection. Errors are deliberately reduced to a generic note. */
+    static List<String> previewImageWarnings(String input, java.util.Map<String, String> env) {
+        return previewImageWarnings(input, image -> OciImageConfigReader.read(image, previewAuth(OciImageConfigReader.registryHost(image), env), Duration.ofSeconds(5)));
+    }
+
+    @FunctionalInterface
+    interface ImageConfigInspector {
+        List<OciImageConfigReader.ImageConfig> inspect(String image);
+    }
+
+    static List<String> previewImageWarnings(String input, ImageConfigInspector inspector) {
+        List<String> warnings = new ArrayList<>();
+        for (Map<String, Object> doc : ManifestStream.parse(input)) {
+            if (!"Deployment".equals(doc.get("kind")) || !"apps/v1".equals(doc.get("apiVersion"))) continue;
+            String workloadName = "opted-in workload";
+            try {
+                Map<String, Object> template = map(map(doc.get("spec"), "spec").get("template"), "template");
+                if (!(template.get("metadata") instanceof Map<?, ?> metadata)
+                        || !(metadata.get("annotations") instanceof Map<?, ?> annotations)
+                        || !"true".equals(annotations.get(WorkloadDiscovery.PREFIX + "enabled"))) continue;
+                WorkloadDiscovery.Workload workload = WorkloadDiscovery.discover(doc);
+                if (workload == null) continue;
+                workloadName = workload.namespace() + "/" + workload.name();
+                List<OciImageConfigReader.ImageConfig> configs = inspector.inspect(workload.image());
+                boolean marker = workload.command().stream().anyMatch(OfflineInjector::hasCacheOption);
+                for (OciImageConfigReader.ImageConfig config : configs) {
+                    marker |= config.entrypoint().stream().anyMatch(OfflineInjector::hasCacheOption);
+                    marker |= config.cmd().stream().anyMatch(OfflineInjector::hasCacheOption);
+                    marker |= config.env().values().stream().anyMatch(OfflineInjector::hasCacheOption);
+                    marker |= "true".equalsIgnoreCase(config.env().get("BP_JVM_AOTCACHE_ENABLED"));
+                    marker |= config.labels().keySet().stream().anyMatch(key -> key.toLowerCase(java.util.Locale.ROOT).contains("aotcache"));
+                }
+                if (marker) warnings.add(workload.namespace() + "/" + workload.name()
+                        + ": image appears to carry a build-time JVM cache; check its JVM cache flags for compatibility with the cluster-trained archive");
+            } catch (RuntimeException e) {
+                // A preview must remain useful when an image is private, missing, malformed, or unreachable.
+                warnings.add(workloadName + ": image metadata could not be inspected; cache presence is unknown");
+            }
+        }
+        return List.copyOf(warnings);
+    }
+
+    private static boolean hasCacheOption(String value) { return CACHE_OPTION.matcher(value).find(); }
+
+    private static RegistryAuth previewAuth(String host, java.util.Map<String, String> env) {
+        String configured = env.get("DOCKER_CONFIG");
+        Path config = configured == null || configured.isBlank()
+                ? Path.of(System.getProperty("user.home"), ".docker", "config.json")
+                : Path.of(configured).resolve("config.json");
+        RegistryCredentials credentials = null;
+        if (Files.isRegularFile(config)) {
+            credentials = RegistryCredentials.fromDockerConfig(config, host).orElse(null);
+            if (credentials == null && host.equals("registry-1.docker.io"))
+                credentials = RegistryCredentials.fromDockerConfig(config, "index.docker.io").orElse(null);
+        }
+        return credentials != null ? RegistryAuth.fixed(credentials)
+                : AwsRegistryAuth.fromEnvironment(host, env).orElse(RegistryAuth.anonymous());
+    }
 
     /**
      * The tools image that matches this CLI: the CLI runs from that image, so its release version is the image tag. A development

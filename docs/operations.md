@@ -9,6 +9,12 @@ What it costs, how to check that it works, what can and cannot stop a pod, and h
 - **One archive per fingerprint** (per image, JDK and JVM options) is stored in your registry and is never deleted by this tool. See [retention](#retention).
 - **The first pods start uncached.** Training is asynchronous: the trainer runs on its schedule (every 10 minutes) after you deploy, and only pods that start after it has finished can use the archive.
 
+## Images with a build-time cache
+
+Run `mnemo-warmup inject --preview` to inspect opted-in application images. The preview reads the OCI manifest and runtime config, then warns when it finds known cache flags in the image launch or JVM option environment, or a supported framework cache marker. It does not download image layers. If the registry is private or unreachable, preview continues and reports that cache presence is unknown. The warning is a clue; image defaults can be replaced by Kubernetes `command`, `args`, or environment settings.
+
+A cluster-trained archive can still be useful when it matches the workload's actual image, JDK, and fingerprinted JVM options and the baked cache does not. Measure the result. Do not assume two different cache types can be combined. In a local OpenJDK 25.0.1 check, `JAVA_TOOL_OPTIONS=-XX:AOTCache=<file>` together with the generated `-XX:SharedArchiveFile=<file>` stopped VM initialization: JDK 25 rejects `AOTCache` and `SharedArchiveFile` in the same launch. The same check with `AOTCache` in both places started normally. This check covered JDK 25 only; JDK 21 and 24 precedence and framework-specific image behavior remain unverified. The preview warning does not establish which cache the JVM will use or guarantee that the launch is compatible.
+
 ## Check that it works
 
 After the trainer has finished (`kubectl get jobs`; its log says `train: TRAINED` or `ALREADY_STORED`), start new pods and read what they did:

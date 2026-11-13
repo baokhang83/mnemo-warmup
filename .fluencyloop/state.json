@@ -1,9 +1,9 @@
 {
   "schema_version": "1",
-  "feature": "20-measure-jvm-archive-compatibility-and-align-fingerprint-r",
-  "branch": "feature/20-measure-jvm-archive-compatibility-and-align-fingerprint-r",
+  "feature": "70-warn-when-an-application-image-already-carries-a-build-ti",
+  "branch": "feature/70-warn-when-an-application-image-already-carries-a-build-ti",
   "stage": "build",
-  "last_session": "003-implement-the-evidence-based-fingerprint-rule-and-docume",
+  "last_session": "004-complete-preview-cache-detection-compatibility-docs-and",
   "base_ref": "bench/pod-to-ready-breakdown",
   "feature_dir": "",
   "plan": "",

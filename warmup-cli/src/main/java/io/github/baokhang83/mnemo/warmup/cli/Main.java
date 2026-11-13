@@ -64,6 +64,7 @@ public class Main implements Runnable {
                 var result = OfflineInjector.inject(input.toString(), namespace, () -> toolsImage != null ? toolsImage : OfflineInjector.defaultToolsImage());
                 if (preview) {
                     result.notes().forEach(spec.commandLine().getOut()::println);
+                    OfflineInjector.previewImageWarnings(input.toString(), System.getenv()).forEach(spec.commandLine().getOut()::println);
                     if (result.notes().isEmpty()) spec.commandLine().getOut().println("No opted-in workloads.");
                     ManifestDiff.describe(input.toString(), result.yaml()).forEach(spec.commandLine().getOut()::println);
                 } else {

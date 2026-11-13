@@ -3,7 +3,7 @@
   "feature": "76-consolidate-image-volume-tools-delivery-for-the-beta",
   "branch": "feature/76-consolidate-image-volume-tools-delivery-for-the-beta",
   "stage": "build",
-  "last_session": "003-expose-kind-image-load-errors-in-ci",
+  "last_session": "004-match-the-kind-cli-to-its-node-image",
   "base_ref": "bench/pod-to-ready-breakdown",
   "feature_dir": "",
   "plan": "",

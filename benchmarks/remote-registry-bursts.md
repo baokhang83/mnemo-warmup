@@ -50,4 +50,34 @@ Moto 5.1.22 returns a simulated token with an expiry in 2015. It does not valida
 
 ## Evidence status
 
-The harness has completed one-round local smoke runs with one-second and five-second probes, including the slow proxy: all nine new cached pods reported archive use and all nine new fault-arm pods became Ready with uncached fallback in each run. These are functional checks, not remote registry results or performance conclusions. GHCR and Docker Hub measurements require their own completed runs and raw records.
+The eight remote configurations completed on 2026-11-13: GHCR and Docker Hub, JDK 21 and JDK 25, and readiness periods of one and five seconds. Each configuration has three rounds, or 27 scale-out pods per arm. Each run directory below includes pod-level CSV, burst-level CSV, environment metadata, pod JSON, and container logs.
+
+| Registry | JDK | Archive size | Probe period | Cached fetches | Uncached fallbacks | Cached pod creation to Ready, median | Successful transfer, hash and write, median |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| GHCR | 21 | 83.3 MiB | 1 s | 27/27 | 0/27 | 212 s | 203.5 s |
+| Docker Hub | 21 | 83.3 MiB | 1 s | 27/27 | 0/27 | 199 s | 191.4 s |
+| GHCR | 25 | 104.3 MiB | 1 s | 27/27 | 0/27 | 301 s | 293.3 s |
+| Docker Hub | 25 | 104.4 MiB | 1 s | 27/27 | 0/27 | 289 s | 281.8 s |
+| GHCR | 21 | 83.3 MiB | 5 s | 18/27 | 9/27 | 229 s | 235.1 s |
+| Docker Hub | 21 | 83.3 MiB | 5 s | 27/27 | 0/27 | 199 s | 190.4 s |
+| GHCR | 25 | 104.3 MiB | 5 s | 27/27 | 0/27 | 264 s | 254.6 s |
+| Docker Hub | 25 | 104.4 MiB | 5 s | 19/27 | 8/27 | 338 s | 301.0 s |
+
+Every cached pod that fetched an archive reported a hit; the others fell back and started without it. Both fallback events were bursts where all nine concurrent pods hit the fetcher's 120-second no-data timeout: round 1 on GHCR/JDK 21/5 s, and round 3 on Docker Hub/JDK 25/5 s. Their application pods still became Ready. The other six provider/JDK/probe configurations had no fallback. No fetch log reported HTTP 429. Zero reported 429s do not rule out bandwidth shaping or other throttling.
+
+The no-tool arms became Ready in 8–12 seconds median and the refused-connection fallback arms in 9–14 seconds median, depending on configuration. Scheduling was effectively immediate in this one-node kind cluster. The readiness period was visible after the app container started: median app-container-start-to-Ready was 3–5 seconds at a one-second period and 6 seconds at a five-second period. That phase is small next to the archive transfer. Coarse Kubernetes timestamps have whole-second resolution.
+
+These are measurements from a single Apple M5 laptop using Docker Desktop and a one-node kind cluster, not production Kubernetes. All pods fetched their own archive from a pod-local `emptyDir`; there is no shared archive layer cache in this setup. JDK 21 uses AppCDS and JDK 25 uses AOT, so JVM, archive mechanism, and archive size all change together. The study cannot attribute the difference to size alone. Provider and run comparisons are also subject to internet and time variation. Each environment file records source commit `0abf42c`; the worktree was marked dirty only because an unrelated, pre-existing article file was untracked.
+
+| Run | Raw results |
+|---|---|
+| GHCR, JDK 21, 1 s | [summary](results/20261113-remote-registry-ghcr-jdk21-probe1/summary.md) · [pods.csv](results/20261113-remote-registry-ghcr-jdk21-probe1/pods.csv) |
+| Docker Hub, JDK 21, 1 s | [summary](results/20261113-remote-registry-dockerhub-jdk21-probe1/summary.md) · [pods.csv](results/20261113-remote-registry-dockerhub-jdk21-probe1/pods.csv) |
+| GHCR, JDK 25, 1 s | [summary](results/20261113-remote-registry-ghcr-jdk25-probe1/summary.md) · [pods.csv](results/20261113-remote-registry-ghcr-jdk25-probe1/pods.csv) |
+| Docker Hub, JDK 25, 1 s | [summary](results/20261113-remote-registry-dockerhub-jdk25-probe1/summary.md) · [pods.csv](results/20261113-remote-registry-dockerhub-jdk25-probe1/pods.csv) |
+| GHCR, JDK 21, 5 s | [summary](results/20261113-remote-registry-ghcr-jdk21-probe5/summary.md) · [pods.csv](results/20261113-remote-registry-ghcr-jdk21-probe5/pods.csv) |
+| Docker Hub, JDK 21, 5 s | [summary](results/20261113-remote-registry-dockerhub-jdk21-probe5/summary.md) · [pods.csv](results/20261113-remote-registry-dockerhub-jdk21-probe5/pods.csv) |
+| GHCR, JDK 25, 5 s | [summary](results/20261113-remote-registry-ghcr-jdk25-probe5/summary.md) · [pods.csv](results/20261113-remote-registry-ghcr-jdk25-probe5/pods.csv) |
+| Docker Hub, JDK 25, 5 s | [summary](results/20261113-remote-registry-dockerhub-jdk25-probe5/summary.md) · [pods.csv](results/20261113-remote-registry-dockerhub-jdk25-probe5/pods.csv) |
+
+One-round local smoke runs with one- and five-second probes, including the synthetic slow proxy, also completed. These verify harness paths only; they are not included as remote-registry performance evidence. The Moto 5.1.22 ECR authorization-token test passed against a local fake registry challenge. Moto does not verify live ECR, AWS identity, IAM, token expiration, throttling, or registry performance.

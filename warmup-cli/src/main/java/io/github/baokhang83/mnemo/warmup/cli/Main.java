@@ -513,7 +513,8 @@ public class Main implements Runnable {
                 names = "--stop-timeout-seconds",
                 defaultValue = "25",
                 description = "--spawn: after SIGTERM, how long to wait for the command to exit before killing it. "
-                        + "Keep it below the pod's terminationGracePeriodSeconds. Default: ${DEFAULT-VALUE}.")
+                        + "If process startup is still in progress, shutdown can take up to twice this value. "
+                        + "Keep that within the pod's terminationGracePeriodSeconds. Default: ${DEFAULT-VALUE}.")
         long stopTimeoutSeconds;
 
         @Parameters(arity = "1..*", paramLabel = "COMMAND", description = "The command to start, after --.")
@@ -549,23 +550,14 @@ public class Main implements Runnable {
             // The hook is registered BEFORE the child starts: a SIGTERM that arrives while the child is
             // still coming up (or while this JVM is still linking the hook) must not be lost, or this JVM
             // would exit at once and leave the child running with no grace period.
-            var child = new java.util.concurrent.atomic.AtomicReference<Process>();
-            var terminating = new java.util.concurrent.atomic.AtomicBoolean();
+            var child = new java.util.concurrent.CompletableFuture<Process>();
             Thread forwarder = new Thread(() -> {
-                terminating.set(true);
-                Process running = child.get();
-                if (running != null) {
-                    stop(running, stopTimeout);
-                }
+                stopWhenPublished(child, stopTimeout);
             }, "run-signal-forwarder");
             Runtime.getRuntime().addShutdownHook(forwarder);
             try {
                 Process process = new ProcessBuilder(command).inheritIO().start();
-                child.set(process);
-                if (terminating.get()) {
-                    // the hook ran before the child existed: stop it ourselves, and wait for it
-                    stop(process, stopTimeout);
-                }
+                child.complete(process);
                 try {
                     return process.waitFor();
                 } catch (InterruptedException e) {
@@ -574,6 +566,7 @@ public class Main implements Runnable {
                     return 130;
                 }
             } catch (java.io.IOException e) {
+                child.completeExceptionally(e);
                 cmd.getErr().println("error: cannot start " + command.get(0) + ": " + e.getMessage());
                 return 127;
             } finally {
@@ -582,6 +575,16 @@ public class Main implements Runnable {
                 } catch (IllegalStateException ignored) {
                     // JVM is already shutting down
                 }
+            }
+        }
+
+        static void stopWhenPublished(java.util.concurrent.CompletableFuture<Process> child, Duration timeout) {
+            try {
+                stop(child.get(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS), timeout);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException ignored) {
+                // Starting failed or did not finish within the bounded shutdown wait.
             }
         }
 

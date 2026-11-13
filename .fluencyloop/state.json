@@ -1,9 +1,9 @@
 {
   "schema_version": "1",
-  "feature": "52-fix-run-spawn-sigterm-forwarding-race-and-restore-its-end",
-  "branch": "feature/52-fix-run-spawn-sigterm-forwarding-race-and-restore-its-end",
+  "feature": "76-consolidate-image-volume-tools-delivery-for-the-beta",
+  "branch": "feature/76-consolidate-image-volume-tools-delivery-for-the-beta",
   "stage": "build",
-  "last_session": "001-forward-shutdown-across-child-publication",
+  "last_session": "002-make-cluster-support-explicit-and-exercise-delivery-mode",
   "base_ref": "bench/pod-to-ready-breakdown",
   "feature_dir": "",
   "plan": "",

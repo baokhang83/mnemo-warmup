@@ -1,0 +1,36 @@
+# from the kind node to the archive registry (172.18.0.4:5000): request time of GET /v2/ (ms), then archive blob downloads
+rtt_ms 0.71
+rtt_ms 0.62
+rtt_ms 1.09
+rtt_ms 0.56
+rtt_ms 0.51
+rtt_ms 0.50
+rtt_ms 1.19
+rtt_ms 0.64
+rtt_ms 0.60
+rtt_ms 1.11
+rtt_ms 0.59
+rtt_ms 0.48
+rtt_ms 0.60
+rtt_ms 2.11
+rtt_ms 0.52
+rtt_ms 0.51
+rtt_ms 0.54
+rtt_ms 1.83
+rtt_ms 0.65
+rtt_ms 0.64
+rtt_ms 0.57
+rtt_ms 2.36
+rtt_ms 0.66
+rtt_ms 0.60
+rtt_ms 0.63
+rtt_ms 1.47
+rtt_ms 0.58
+rtt_ms 0.60
+rtt_ms 2.17
+rtt_ms 0.56
+download_bytes 31522816 seconds 0.012745
+download_bytes 31522816 seconds 0.010175
+download_bytes 31522816 seconds 0.010364
+download_bytes 31522816 seconds 0.009546
+download_bytes 31522816 seconds 0.009616

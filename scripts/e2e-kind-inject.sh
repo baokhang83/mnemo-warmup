@@ -16,7 +16,7 @@
 # Variants: temurin (eclipse-temurin JRE, has a shell) and distroless (gcr.io/distroless/java21, no shell).
 # Tools delivery: TOOLS_DELIVERY=init-container (default) or image-volume (docs/adr/0012: no init containers, the tools are an image
 # volume and the fetch runs in the application container). The same scenarios run in both modes; the second needs a cluster
-# with image volume support (kind with Kubernetes 1.33+ and containerd 2.1+, which is what kind's default node image has).
+# with image volume support (including its feature gate and a compatible container runtime).
 # Usage: scripts/e2e-kind-inject.sh [temurin] [distroless]
 #   Needs docker, kind, kubectl, helm 3 (the post-renderer is a script path), java 21+, and network access.
 #   REPEATS=3 (start-to-Ready samples per condition), KEEP=1 keeps the cluster and registry, ARTIFACTS=<dir> for failure logs,
@@ -299,6 +299,34 @@ YAML
   deploy --wait --timeout 6m >/dev/null 2>&1 || die "$NS" "rolling back the update did not become Ready"
   wait_ready 120 || die "$NS" "no Ready pod after the rollback"
   if line=$(source_line) && has "$line" "DemoApplication source: shared objects file"; then ok "rolling back to the original options uses the original archive"; else fail "after rollback: '${line:-<none>}'"; fi
+
+  # Exercise secret-backed image-volume delivery in a second Deployment. The registry is anonymous, so this checks
+  # isolation and cache use, not authentication against a private registry.
+  if [ "$TOOLS_DELIVERY" = image-volume ]; then
+    k -n "$NS" create secret docker-registry mnemo-test-pull --docker-server="$REG_IP:5000" --docker-username=test --docker-password=test >/dev/null || die "$NS" "cannot create pull secret"
+    SECRET_MANIFEST="$BIN/secret-$v.yaml"
+    helm --kube-context "$CTX" template secret-demo examples/annotated-app -n "$NS" -f "$VALUES" \
+      | python3 -c 'import sys; s=sys.stdin.read(); s=s.replace("warmup.mnemo.io/enabled:", "warmup.mnemo.io/pull-secret: mnemo-test-pull\n        warmup.mnemo.io/enabled:"); sys.stdout.write(s)' \
+      | mnemo-warmup inject --namespace "$NS" --tools-image "$TOOLS_IMAGE" >"$SECRET_MANIFEST" || die "$NS" "cannot render the secret-backed workload"
+    k -n "$NS" apply -f "$SECRET_MANIFEST" >/dev/null || die "$NS" "cannot apply the secret-backed workload"
+    k -n "$NS" rollout status deployment/secret-demo --timeout=360s >/dev/null || die "$NS" "secret-backed workload did not become ready"
+    secret_pod=$(k -n "$NS" get pod -l app=secret-demo -o jsonpath='{.items[0].metadata.name}')
+    init_names=$(k -n "$NS" get pod "$secret_pod" -o jsonpath='{.spec.initContainers[*].name}')
+    app_mounts=$(k -n "$NS" get pod "$secret_pod" -o jsonpath='{.spec.containers[0].volumeMounts[*].name}')
+    fetch_mounts=$(k -n "$NS" get pod "$secret_pod" -o jsonpath='{.spec.initContainers[0].volumeMounts[*].name}')
+    if [ "$init_names" = mnemo-warmup-fetch ] && has "$fetch_mounts" mnemo-registry-pull && ! has "$app_mounts" mnemo-registry-pull; then
+      ok "image-volume pull secret is mounted only in the fetch init container"
+    else fail "secret-backed mounts: init=$init_names fetch=$fetch_mounts app=$app_mounts"; fi
+    secret_app_log=$(k -n "$NS" logs "$secret_pod" -c app 2>&1)
+    if has "$secret_app_log" 'DemoApplication source: shared objects file'; then
+      ok "the secret-backed workload uses the trained archive"
+    else
+      secret_fetch_log=$(k -n "$NS" logs "$secret_pod" -c mnemo-warmup-fetch 2>&1)
+      fail "secret-backed archive not used; fetch: $secret_fetch_log; run: $(grep -E '^run:' <<<"$secret_app_log" || true)"
+    fi
+    k -n "$NS" delete -f "$SECRET_MANIFEST" --ignore-not-found >/dev/null
+    k -n "$NS" delete secret mnemo-test-pull >/dev/null
+  fi
 
   # ---- 6a. invalid cache: same-size change to the archive blob in the registry (the digest check must catch it) ----
   # The archive THIS pod fetched: its fingerprint names the tag, the tag's manifest names the layer. (After the update step

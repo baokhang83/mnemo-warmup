@@ -1,6 +1,6 @@
 # ADR 0012: deliver the tools as an image volume, and fetch inside the application container
 
-Status: accepted (v0.2.6), opt-in
+Status: accepted (v0.2.6), opt-in. Updated for pull-secret support in issue #76.
 
 ## Context
 
@@ -35,7 +35,7 @@ or `tools.delivery: image-volume` (the Helm chart). The default stays `init-cont
   The launcher still becomes the JVM (`exec`), so the JVM is PID 1 and gets SIGTERM directly.
 - **The application container therefore mounts the cache read-write** (it was read-only) and a scratch volume, and the fetch
   uses the application's own environment and security context. These are the things the init container copied from it.
-- **The registry pull Secret is refused in this mode.** The injector stops with a message and the chart fails to render. The Secret
+- **Original decision, superseded by the update below: the registry pull Secret was refused in this mode.** The injector stops with a message and the chart fails to render. The Secret
   would have to be mounted into the application container, where the application's code can read it; the init container never
   gave it that. Anonymous registries and registries reached through the pod's workload identity work; a pod that needs a
   pull Secret keeps the init-container mode. (The push Secret is the trainer's, unchanged.)
@@ -65,3 +65,9 @@ or `tools.delivery: image-volume` (the Helm chart). The default stays `init-cont
   work the same.
 - Whether this makes pods Ready sooner is a measurement, not a claim: it is checked with the benchmark in
   `benchmarks/README.md` before the documentation says anything about speed.
+
+## Update: pull secrets and cluster support
+
+When an archive pull Secret is configured, retain a fetch init container. It mounts the image volume and the Secret, writes the cache, and exits before the application starts. The application mounts the cache read-only and never mounts the Secret. The trainer still uses the image volume. Without a pull Secret, the application launcher fetches inline as before.
+
+The default remains `init-container`. An offline renderer cannot verify the target cluster or each node runtime. Kubernetes 1.33–1.34 disable the feature gate by default; 1.35 enables it by default, and 1.36 makes it stable. Runtime support remains necessary. Operators must verify the cluster before opting in. See the [Kubernetes feature gates](https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/) and [image volume documentation](https://kubernetes.io/docs/tasks/configure-pod-container/image-volumes/).

@@ -209,6 +209,7 @@ class OfflineInjectorTest {
         assertEquals(6, ManifestStream.parse(first.yaml()).size());
         assertEquals(ManifestStream.parse(first.yaml()), ManifestStream.parse(inject(first.yaml()).yaml()));
         assertTrue(String.join("\n", first.notes()).contains("tools-delivery=image-volume"));
+        assertTrue(String.join("\n", first.notes()).contains("cannot be verified offline"));
     }
     @Test void disablingAnImageVolumeInjectionRestoresTheOriginalDeployment() {
         String injected = inject(IMAGE_VOLUME_INPUT).yaml();
@@ -237,12 +238,27 @@ class OfflineInjectorTest {
         assertEquals(2, ((java.util.List<?>) back.get("initContainers")).size());
         assertEquals(java.util.List.of("/mnemo-tools/bin/mnemo-launcher"), only((java.util.List<?>) back.get("containers")).get("command"));
     }
-    @Test void imageVolumeRefusesAPullSecretBecauseTheApplicationWouldReadIt() {
+    @Test void imageVolumeWithPullSecretUsesAnIsolatedFetchContainer() {
         String input = IMAGE_VOLUME_INPUT.replace("warmup.mnemo.io/exit-mode: spring-refresh", "warmup.mnemo.io/exit-mode: spring-refresh\n        warmup.mnemo.io/pull-secret: read-auth");
-        var e = assertThrows(IllegalArgumentException.class, () -> inject(input));
-        assertTrue(e.getMessage().contains("pull-secret") && e.getMessage().contains("init-container"), e.getMessage());
-        // the push secret belongs to the trainer and is fine
-        assertDoesNotThrow(() -> inject(IMAGE_VOLUME_INPUT.replace("warmup.mnemo.io/exit-mode: spring-refresh", "warmup.mnemo.io/exit-mode: spring-refresh\n        warmup.mnemo.io/push-secret: write-auth")));
+        String output = inject(input).yaml();
+        var pod = podSpec(ManifestStream.parse(output).get(0));
+        var fetch = only((java.util.List<?>) pod.get("initContainers"));
+        assertEquals("mnemo-warmup-fetch", fetch.get("name"));
+        assertEquals(java.util.List.of(LAUNCHER_IV), fetch.get("command"));
+        assertTrue(fetch.toString().contains("mnemo-registry-pull"));
+        var app = only((java.util.List<?>) pod.get("containers"));
+        assertFalse(app.toString().contains("mnemo-registry-pull"));
+        assertFalse(app.toString().contains("MNEMO_WARMUP_REGISTRY_AUTH"));
+        assertEquals(java.util.List.of("exec", "--", "java", "-jar", "/app/app.jar"), app.get("args"));
+        assertEquals(ManifestStream.parse(output), ManifestStream.parse(inject(output).yaml()), "reinjection is stable");
+        String edited = output.replace("name: mnemo-warmup-fetch", "name: user-modified-fetch");
+        assertNotEquals(output, edited);
+        assertThrows(IllegalArgumentException.class, () -> inject(edited), "managed fetch edits must not be silently discarded");
+        String disabled = output.replace("warmup.mnemo.io/enabled: 'true'", "warmup.mnemo.io/enabled: 'false'")
+                .replace("warmup.mnemo.io/enabled: \"true\"", "warmup.mnemo.io/enabled: \"false\"");
+        var restored = podSpec(ManifestStream.parse(inject(disabled).yaml()).get(0));
+        assertNull(restored.get("initContainers"));
+        assertNull(restored.get("volumes"));
     }
     @Test void anUnknownDeliveryModeIsAnError() {
         var e = assertThrows(IllegalArgumentException.class, () -> inject(INPUT.replace("warmup.mnemo.io/exit-mode: spring-refresh", "warmup.mnemo.io/exit-mode: spring-refresh\n        warmup.mnemo.io/tools-delivery: sidecar")));

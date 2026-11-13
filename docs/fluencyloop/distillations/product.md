@@ -1,9 +1,7 @@
 # mnemo-warmup
 
-**Problem.** A JVM application on Kubernetes takes a long time to start because every pod loads and checks the same classes again. The JVM can save this work in a cache file, but teams rarely use it because making and sharing the file is manual.
+Java applications on Kubernetes repeat class-loading work on each start. mnemo-warmup trains an AppCDS or JVM AOT cache for a workload and stores it in an OCI registry. A fingerprint identifies the JDK, application and launch settings that the cache must match.
 
-**Shape.** The product trains a cache once for a given application and JDK, and every replica reuses it. The cache is either an AppCDS archive (JDK 21 to 24) or a Leyden AOT cache (JDK 25 and later). A fingerprint of the JDK, the application and the relevant JVM settings decides if a stored cache fits a pod. A command line tool trains and measures (`bench` prints the saving of each cache against no cache); a Kubernetes init container fetches the matching cache.
+The workload receives the tools through init containers or, on a verified cluster, an image volume. A fetch step retrieves and checks the archive before the application starts. With an image volume, the application launcher fetches inline unless a pull Secret requires a separate fetch init container. [[image-volume-tools-delivery]]
 
-**Safety rule.** The cache is only an optimisation. If it does not fit, the pod starts without it. The product never makes the JVM fail on a bad cache.
-
-**Not done yet.** The Kubernetes delivery (fetch and run) is still to be built.
+The archive is an optimisation. A missing, invalid or unavailable archive results in a normal JVM start. The trainer runs separately from the application; a cache problem must not prevent the application from starting. [[§1]] [[§2]] [[§3]]

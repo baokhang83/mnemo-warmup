@@ -282,14 +282,15 @@ func clearOutput(dir string) error {
 // ---- the registry ----
 
 type registry struct {
-	base    *url.URL
-	repo    string
-	client  *http.Client
-	user    string
-	pass    string
-	hasAuth bool
-	authz   string
-	timeout time.Duration
+	base           *url.URL
+	repo           string
+	client         *http.Client
+	user           string
+	pass           string
+	hasAuth        bool
+	authz          string
+	timeout        time.Duration
+	transferTiming func(int64, time.Duration)
 }
 
 func (l launcher) openRegistry(o fetchOptions, env map[string]string) (*registry, error) {
@@ -306,6 +307,11 @@ func (l launcher) openRegistry(o fetchOptions, env map[string]string) (*registry
 		scheme = "http"
 	}
 	r := &registry{base: &url.URL{Scheme: scheme, Host: host}, repo: repo, timeout: o.timeout}
+	if env["MNEMO_WARMUP_TIMING"] == "1" {
+		r.transferTiming = func(bytes int64, elapsed time.Duration) {
+			fmt.Fprintf(l.stderr, "fetch: timing: archive-transfer-hash-write=%d ms, archive-bytes=%d\n", elapsed.Milliseconds(), bytes)
+		}
+	}
 	auth := o.registryAuth
 	if auth == "" {
 		auth = env["MNEMO_WARMUP_REGISTRY_AUTH"]
@@ -664,6 +670,7 @@ func (r *registry) download(path string, want ociDescriptor, target string) erro
 	}
 	defer os.Remove(tmp.Name())
 	h := sha256.New()
+	started := time.Now()
 	n, err := io.Copy(io.MultiWriter(tmp, h), &limitedIdle{r: resp.Body, left: want.Size + 1, touch: sess.touch})
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
@@ -676,6 +683,9 @@ func (r *registry) download(path string, want ociDescriptor, target string) erro
 	}
 	if n != want.Size || "sha256:"+hex.EncodeToString(h.Sum(nil)) != want.Digest {
 		return registryError{"downloaded archive failed verification (size or digest mismatch)"}
+	}
+	if r.transferTiming != nil {
+		r.transferTiming(n, time.Since(started))
 	}
 	if err := os.Rename(tmp.Name(), target); err != nil {
 		return registryError{"cannot publish the archive: " + err.Error()}

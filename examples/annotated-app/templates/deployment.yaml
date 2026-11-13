@@ -18,6 +18,12 @@ spec:
         warmup.mnemo.io/enabled: "true"
         warmup.mnemo.io/store: {{ required "warmup.store is required when warmup.enabled" .Values.warmup.store | quote }}
         warmup.mnemo.io/exit-mode: {{ .Values.warmup.exitMode | quote }}
+        {{- if .Values.warmup.pullSecret }}
+        warmup.mnemo.io/pull-secret: {{ .Values.warmup.pullSecret | quote }}
+        {{- end }}
+        {{- if .Values.warmup.pushSecret }}
+        warmup.mnemo.io/push-secret: {{ .Values.warmup.pushSecret | quote }}
+        {{- end }}
         {{- if .Values.warmup.toolsDelivery }}
         warmup.mnemo.io/tools-delivery: {{ .Values.warmup.toolsDelivery | quote }}
         {{- end }}
@@ -62,5 +68,6 @@ spec:
               path: {{ .Values.readinessPath }}
               port: {{ .Values.port }}
             {{- end }}
-            periodSeconds: 1
+            initialDelaySeconds: {{ .Values.readinessInitialDelaySeconds }}
+            periodSeconds: {{ .Values.readinessPeriodSeconds }}
             failureThreshold: 120

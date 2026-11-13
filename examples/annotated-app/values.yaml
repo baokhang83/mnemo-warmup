@@ -14,6 +14,8 @@ replicas: 1
 # The readiness probe path of the application, and extra environment variables for the application container
 # (they are copied to the fetch init container and the trainer too).
 readinessPath: /health
+readinessPeriodSeconds: 1
+readinessInitialDelaySeconds: 0
 port: 8080
 # Optional: a command instead of the HTTP path, for an application whose HTTP endpoint answers 200 before it is ready.
 readinessCommand: []
@@ -29,3 +31,5 @@ warmup:
   toolsDelivery: ""    # "" or init-container (default), or image-volume: no init containers, needs image volumes (docs/adr/0012)
   probeUrl: ""         # required with exitMode http-probe, e.g. http://localhost:8080/login
   plainHttp: false     # local registries only
+  pullSecret: ""       # optional Docker config Secret for archive downloads
+  pushSecret: ""       # optional Docker config Secret for the trainer

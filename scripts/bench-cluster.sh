@@ -198,7 +198,7 @@ ARCHIVE_BYTES=$(docker exec "$REG" sh -c 'find /var/lib/registry -path "*blobs*"
 # ---- measurement ----
 measure() { # <arm> <index or warmup>
   local arm=$1 tag=$2
-  k -n "$NS" scale deploy/"$arm" --replicas=1 >/dev/null
+  k -n "$NS" scale deploy/"$arm" --replicas=1 >/dev/null || return 1
   local pod="" i
   for i in $(seq 1 600); do
     pod=$(k -n "$NS" get pods -l app="$arm" -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.deletionTimestamp}{"\t"}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' 2>/dev/null \
@@ -208,12 +208,12 @@ measure() { # <arm> <index or warmup>
   done
   [ -n "$pod" ] || { echo "  no Ready pod for $arm"; return 1; }
   local base="$OUT/raw/$arm-$tag"
-  k -n "$NS" get pod "$pod" -o json >"$base.json"
+  k -n "$NS" get pod "$pod" -o json >"$base.json" || return 1
   k -n "$NS" logs "$pod" -c mnemo-warmup-fetch >"$base.fetch.log" 2>&1 || : >"$base.fetch.log"
-  k -n "$NS" logs "$pod" -c app >"$base.app.log" 2>&1
+  k -n "$NS" logs "$pod" -c app >"$base.app.log" 2>&1 || return 1
   # with tools-delivery=image-volume there is no fetch container: the fetch ran in the application container and logged there
   [ -s "$base.fetch.log" ] || cp "$base.app.log" "$base.fetch.log"
-  k -n "$NS" scale deploy/"$arm" --replicas=0 >/dev/null
+  k -n "$NS" scale deploy/"$arm" --replicas=0 >/dev/null || return 1
   for i in $(seq 1 120); do
     [ -z "$(k -n "$NS" get pods -l app="$arm" -o name 2>/dev/null)" ] && break
     sleep 1

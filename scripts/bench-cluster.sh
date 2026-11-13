@@ -68,6 +68,8 @@ esac
 case "$TOOLS_DELIVERY" in init-container) ;; image-volume) WARMUP_SETS+=(--set warmup.toolsDelivery=image-volume) ;; *) echo "unknown --tools-delivery: $TOOLS_DELIVERY"; exit 2 ;; esac
 APP_ROOT=${APP_ROOT:-/app}; APP_VALUES_YAML=${APP_VALUES_YAML:-}; APP_ENV_YAML=${APP_ENV_YAML:-}; POSTGRES_IMAGE=${POSTGRES_IMAGE:-}
 APP_JAR=${APP_JAR:-/app/app.jar}; APP_JAVA_OPTS=${APP_JAVA_OPTS:-[]}; WARMUP_SETS=("${WARMUP_SETS[@]+"${WARMUP_SETS[@]}"}")
+JDK_ARGUMENT=""
+if [ "$APP" = spring-heavy ] || [ "$APP" = example ]; then JDK_ARGUMENT=" --jdk $JDK"; fi
 
 CLUSTER="mw-bench-$RUN"; CTX="kind-$CLUSTER"; REG="mw-bench-registry-$RUN"
 TOOLS_IMAGE="mnemo-warmup-tools:bench-$RUN"
@@ -257,7 +259,7 @@ python3 scripts/bench_env.py "$CTX" "$NODE" "$OUT/environment.json" \
   "app_kib=$(docker run --rm --entrypoint sh "$APP_IMAGE" -c "du -sk $APP_ROOT | cut -f1" | tr -d ' ')" \
   "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   "tools_delivery=$TOOLS_DELIVERY" \
-  "command=scripts/bench-cluster.sh --app $APP --jdk $JDK --restarts $RESTARTS${APP_CPU:+ --app-cpu $APP_CPU}${APP_MEMORY:+ --app-memory $APP_MEMORY}${TOOLS_DELIVERY:+ --tools-delivery $TOOLS_DELIVERY}"
+  "command=scripts/bench-cluster.sh --app $APP$JDK_ARGUMENT --restarts $RESTARTS${APP_CPU:+ --app-cpu $APP_CPU}${APP_MEMORY:+ --app-memory $APP_MEMORY}${TOOLS_DELIVERY:+ --tools-delivery $TOOLS_DELIVERY}"
 
 python3 scripts/bench_summarize.py "$OUT" | tee "$OUT/summary.md" || exit 1
 echo "results in $OUT"

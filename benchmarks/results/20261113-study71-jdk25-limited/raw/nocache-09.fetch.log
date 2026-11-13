@@ -1,0 +1,5 @@
+fetch: LEYDEN_AOT: no archive stored for sha256:e8f814724cc3d0b790b3a9f9cca196c18177ac78c8852e181c3138e600aea213
+fetch: APP_CDS: no archive stored for sha256:0132f24e4ccb7f68ad8f9cb99fbfe87027e809e6bd55875b60cab7c511dad6d0
+fetch: timing: jdk-detect=16 ms, extract-and-hash-classpath=104 ms, store-lookup-download-verify=71 ms, tool-jvm-uptime=271 ms
+No usable archive; the application will start without one.
+mnemo-launcher: timing: fetch-process=592 ms

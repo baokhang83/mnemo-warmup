@@ -71,7 +71,6 @@ Things to know when comparing with another environment:
 ## Limits of the study
 
 - Four application profiles: a small Spring Boot example, a heavier Spring Boot application, Jenkins LTS and SonarQube. Other frameworks and sizes are not covered (planned for the 0.3.0 beta).
-- The Spring Boot and Jenkins runs use JDK 21 AppCDS. The SonarQube run uses JDK 25; a controlled JDK 21 versus JDK 25 comparison is not included.
 - A local registry; no network cost, no authentication round trips (ECR's token exchange adds some).
 - Image pulls excluded by design (see above).
 - Single node, one pod at a time: no contention between replicas starting together, which is the autoscaling case where the cache could matter more.
@@ -123,6 +122,6 @@ Pod start-to-Ready, medians (range), by delivery mode:
 - **Jenkins.** The archive saves about 0.3 s of a 2.3 s start (85% of its classes already load from the archive; the rest of the start is initialization). Pod readiness is at parity with the `image` volume and 1 s slower with init containers.
 - **SonarQube.** The archive was used in 12 of 12 pods and `cached` minus `nocache` was 0 s: it covers only the small coordinator JVM, and the three JVMs that do the work are started by it ([issue #77](https://github.com/baokhang83/mnemo-warmup/issues/77)). With init containers `cached` is 1 s (range 1 to 3) slower than no mnemo-warmup. One earlier training run did not report `TRAINED` and the cause was not found; the harness now keeps `raw/train.log`.
 
-**What this does not say.** Laptop, local registry, no image pull, one pod at a time. It says nothing about a remote registry (which would make `cached` slower), or about many pods starting together. The 0.3.0 beta plans a scale-out burst against a remote registry, an application-size study and a JDK 21 against JDK 25 comparison.
+**What this does not say.** Laptop, local registry, no image pull, one pod at a time. It says nothing about a remote registry (which would make `cached` slower), or about many pods starting together. The 0.3.0 beta plans a scale-out burst against a remote registry and an application-size study. The separate [JDK 21 AppCDS versus JDK 25 AOT study](jdk21-vs-jdk25.md) compares both on the same Spring workload.
 
 Two earlier runs were discarded because other benchmark runs were active on the same machine. No other benchmark ran alongside the published runs.

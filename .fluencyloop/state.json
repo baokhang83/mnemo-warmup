@@ -3,7 +3,7 @@
   "feature": "76-consolidate-image-volume-tools-delivery-for-the-beta",
   "branch": "feature/76-consolidate-image-volume-tools-delivery-for-the-beta",
   "stage": "build",
-  "last_session": "002-make-cluster-support-explicit-and-exercise-delivery-mode",
+  "last_session": "003-expose-kind-image-load-errors-in-ci",
   "base_ref": "bench/pod-to-ready-breakdown",
   "feature_dir": "",
   "plan": "",

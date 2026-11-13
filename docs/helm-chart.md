@@ -118,10 +118,10 @@ spec:
 The wrapper replaces the container's entrypoint, so whatever `command` and `args` the container had (or the image's `ENTRYPOINT`) must become the
 `java ...` arguments above. Options that do not affect an archive (`-D` properties, logging) can be added after the `jvmArgs` loop.
 
-#### Optional: no init containers (`tools.delivery: image-volume`)
+#### Optional: image-volume delivery (`tools.delivery: image-volume`)
 
 Set `warmup.tools.delivery: image-volume` to mount the tools image as an image volume and fetch in the application container's own entrypoint
-([ADR 0012](adr/0012-tools-as-an-image-volume.md)). The two init container templates then render nothing, `volumes`, `volumeMounts` and `command` change
+([ADR 0012](adr/0012-tools-as-an-image-volume.md)). Without a pull Secret, the two init container templates render nothing. With one, the fetch template renders an isolated init container. In both cases `volumes`, `volumeMounts` and `command` change
 by themselves, and **one line is added to `args`**, before your own command:
 
 ```yaml
@@ -132,8 +132,7 @@ by themselves, and **one line is added to `args`**, before your own command:
 ```
 
 That line is harmless in the default mode, so a Deployment written with it works in both. The mode needs a cluster and runtime with image volume support
-(Kubernetes 1.33+, containerd 2.1+ or CRI-O 1.31+); a pod on a cluster without it does not start. It cannot be used with `store.pullSecret`, because the
-application container would then be able to read the Secret: the chart refuses to render the combination. See the
+(the feature gate and node runtime must support it); a pod on a cluster without it does not start. With `store.pullSecret`, the chart retains one fetch init container that mounts the Secret, while the application does not. See the
 [annotation reference](configuration.md#tools-delivery-init-containers-or-an-image-volume) for the full list of what changes.
 
 ### 6. Deploy, train, then check

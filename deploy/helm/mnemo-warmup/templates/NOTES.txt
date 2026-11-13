@@ -20,6 +20,11 @@ runs {{ include "mnemo-warmup.appImage" .Values }} (use the same image, JVM opti
 
 (with this chart as a dependency aliased "warmup"). The first archive appears after the trainer's first successful run;
 pods that start earlier simply run without it.
+{{- if eq .Values.tools.delivery "image-volume" }}
+
+Verify image-volume support on the target cluster and every eligible node. Rendering cannot check the feature gate
+or node runtime. Use tools.delivery=init-container if support has not been verified.
+{{- end }}
 {{- if not .Values.store.pushSecret }}
 
 NOTE: store.pushSecret is empty, so the trainer pushes anonymously; most registries refuse that.

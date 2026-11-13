@@ -26,7 +26,7 @@ Set these on the Deployment's **pod template** (`spec.template.metadata.annotati
 | `warmup.mnemo.io/pull-secret` | no | Name of a `kubernetes.io/dockerconfigjson` Secret in the workload's namespace with **pull** access to the archive repository. [Details](registry-auth.md#docker-config-secrets). |
 | `warmup.mnemo.io/push-secret` | no | The same with **push** access, used by the trainer. |
 | `warmup.mnemo.io/plain-http` | no | `"true"` talks plain HTTP to the registry. Local registries and tests only. |
-| `warmup.mnemo.io/tools-delivery` | no | How the tools reach the pod: `init-container` (the default, described below) or `image-volume`, which leaves the pod with **no init containers** on the start path. See [Tools delivery](#tools-delivery-init-containers-or-an-image-volume). It cannot be combined with `pull-secret`. |
+| `warmup.mnemo.io/tools-delivery` | no | How the tools reach the pod: `init-container` (the default, described below) or `image-volume`, which normally leaves the pod with **no init containers** on the start path. A pull Secret uses one isolated fetch init container. See [Tools delivery](#tools-delivery-init-containers-or-an-image-volume). |
 
 **Three annotations are required today, not two:** `enabled`, `store` and `exit-mode`. The injector stops with `missing warmup.mnemo.io/exit-mode` otherwise, because it does not guess how your application signals that it has started.
 
@@ -67,7 +67,7 @@ For each opted-in Deployment, by default: two init containers (`mnemo-warmup-ins
 
 By default (`init-container`) two init containers run before every start, one after the other: the first copies the tools out of the tools image, the second fetches the archive. Their own work takes well under a second, but the kubelet starts containers one at a time and each costs a start-up, so on the benchmark clusters they delayed the application's start by about 1.75 s ([ADR 0012](adr/0012-tools-as-an-image-volume.md)).
 
-`warmup.mnemo.io/tools-delivery: "image-volume"` removes both:
+`warmup.mnemo.io/tools-delivery: "image-volume"` normally removes both:
 
 - the tools image is mounted as a read-only **image volume**, so nothing has to copy it, and the tools are at `/mnemo-tools/opt/mnemo-warmup/` in the pod;
 - the launcher does the fetch itself, in your application container's entrypoint, and then replaces itself with `java` as before (`mnemo-launcher exec <fetch options> -- java ...`), so the JVM is still PID 1;
@@ -76,9 +76,10 @@ By default (`init-container`) two init containers run before every start, one af
 
 What it needs and what it costs:
 
-- **A cluster and container runtime that support image volumes** (Kubernetes 1.33 or later, where the feature is beta, and containerd 2.1 or later or CRI-O 1.31 or later; check yours). On a cluster without them a pod with the volume **does not start**. That is a deployment failure, like a missing Secret, not a cache failure, and it is why the mode is opt-in. It was verified on kind with Kubernetes 1.36.1 and containerd 2.3.1.
-- **No `pull-secret`.** The fetch runs in the application container, so the Secret would be readable by the application's code. The injector stops with a message when the two are combined. Anonymous registries and registries reached through workload identity work. `push-secret` belongs to the trainer and is fine.
-- The fetch's log lines appear in the application container's log, not in a container of their own.
+- **A cluster and container runtime that support image volumes.** The feature is disabled by default in Kubernetes 1.33–1.34, enabled by default in 1.35, and stable in 1.36. Check the feature gate and runtime on every eligible node ([Kubernetes feature gates](https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/), [image volumes](https://kubernetes.io/docs/tasks/configure-pod-container/image-volumes/)). On a cluster without them a pod with the volume **does not start**. That is a deployment failure, like a missing Secret, not a cache failure, and it is why the mode is opt-in. It was verified on kind with Kubernetes 1.36.1 and containerd 2.3.1.
+- **Check support before opting in.** Renderers cannot detect the target cluster or verify node runtimes offline. Run a disposable [image-volume test pod](https://kubernetes.io/docs/tasks/configure-pod-container/image-volumes/) on each node pool eligible for the workload. API acceptance or a server version alone does not prove that the volume can mount on every node. Use `init-container` until the test succeeds.
+- **With `pull-secret`, one fetch init container remains.** It mounts the Secret and writes the cache; the application mounts neither the Secret nor its credentials. The tools still come from the image volume. Anonymous registries and workload identity use the inline fetch. `push-secret` belongs to the trainer.
+- Fetch logs appear in the application container for inline fetch, or in `mnemo-warmup-fetch` when a pull Secret is set.
 
 To go back, remove the annotation or set it to `init-container` and render again: the injector records the mode it applied and restores the original Deployment either way.
 

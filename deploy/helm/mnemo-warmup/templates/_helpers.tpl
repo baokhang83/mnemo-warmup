@@ -6,8 +6,8 @@ chart that uses mnemo-warmup as a (possibly aliased) dependency calls, for examp
     {{- include "mnemo-warmup.installInitContainer" .Values.warmup | nindent 8 }}
     {{- include "mnemo-warmup.fetchInitContainer" .Values.warmup | nindent 8 }}
 
-(With tools.delivery=image-volume the two init container templates render nothing, the tools are an image volume and the
-fetch runs in the application container; put {{ include "mnemo-warmup.argsPrefix" ... }} before the application's own command in
+(With tools.delivery=image-volume the tools are an image volume. The fetch runs in the application container unless a pull
+secret requires an isolated fetch init container; put {{ include "mnemo-warmup.argsPrefix" ... }} before the application's own command in
 `args` as well, see docs/adr/0012. The prefix renders nothing in the default mode, so the same Deployment works with both.)
 
 (Named templates of a subchart are visible to its parent.) Templates that need the release (names, RBAC) are
@@ -87,9 +87,6 @@ an image volume holds the whole tools image, and the tools sit under /opt/mnemo-
 {{- fail (printf "tools.delivery must be init-container or image-volume, got %q" .tools.delivery) -}}
 {{- end -}}
 {{- if eq .tools.delivery "image-volume" -}}
-{{- if .store.pullSecret -}}
-{{- fail "tools.delivery=image-volume cannot be used with store.pullSecret: the fetch runs in the application container, which could then read the Secret. Use tools.delivery=init-container" -}}
-{{- end -}}
 true
 {{- end -}}
 {{- end -}}
@@ -140,11 +137,11 @@ true
 
 {{/* Runs IN THE APPLICATION IMAGE, so it sees the JDK and JAR files the app will run with. Exits 0 on every problem. */}}
 {{- define "mnemo-warmup.fetchInitContainer" -}}
-{{- if not (include "mnemo-warmup.imageVolume" .) -}}
+{{- if or (not (include "mnemo-warmup.imageVolume" .)) .store.pullSecret -}}
 - name: mnemo-warmup-fetch
   image: {{ include "mnemo-warmup.appImage" . | quote }}
   imagePullPolicy: {{ .app.image.pullPolicy }}
-  command: ["/mnemo-tools/bin/mnemo-warmup"]
+  command: ["{{ include "mnemo-warmup.toolsRoot" . }}/bin/mnemo-warmup"]
   args:
     - fetch
     - --out
@@ -174,13 +171,13 @@ true
 {{- end }}
 {{- end -}}
 
-{{/* For the application container: mount the tools and the fetched cache. With an image volume this container also does the fetch,
+{{/* For the application container: mount the tools and the fetched cache. With an image volume and no pull secret this container also does the fetch,
 so it writes the cache and has the scratch volume. */}}
 {{- define "mnemo-warmup.volumeMounts" -}}
 - name: mnemo-tools
   mountPath: /mnemo-tools
   readOnly: true
-{{- if include "mnemo-warmup.imageVolume" . }}
+{{- if and (include "mnemo-warmup.imageVolume" .) (not .store.pullSecret) }}
 - name: mnemo-cache
   mountPath: /mnemo-cache
 - name: mnemo-work
@@ -203,10 +200,10 @@ so it writes the cache and has the scratch volume. */}}
 {{- end -}}
 
 {{/* For the application container: the exec wrapper (the launcher, with an image volume). Put the application's real command in
-`args` (java -jar ...), after argsPrefix. */}}
+`args` (java -jar ...), after argsPrefix. With a pull secret, the command includes exec and --. */}}
 {{- define "mnemo-warmup.command" -}}
 {{- if include "mnemo-warmup.imageVolume" . -}}
-["{{ include "mnemo-warmup.toolsRoot" . }}/bin/mnemo-launcher"]
+["{{ include "mnemo-warmup.toolsRoot" . }}/bin/mnemo-launcher"{{ if .store.pullSecret }}, "exec", "--"{{ end }}]
 {{- else -}}
 ["/mnemo-tools/bin/mnemo-warmup-exec"]
 {{- end -}}
@@ -215,7 +212,7 @@ so it writes the cache and has the scratch volume. */}}
 {{/* For the application container's `args`, before the application's own command: with an image volume, the launcher fetches the
 archive and then starts the command that follows. Renders nothing in the default mode. */}}
 {{- define "mnemo-warmup.argsPrefix" -}}
-{{- if include "mnemo-warmup.imageVolume" . }}
+{{- if and (include "mnemo-warmup.imageVolume" .) (not .store.pullSecret) }}
 - exec
 - --out
 - /mnemo-cache

@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><style>
+:root{--paper:#fff;--ink:#222;--muted:#565d64;--box:#f4f6f7;--line:#8a969e;--accent:#3e6a69}
+:root[data-fluencyloop-theme="dark"]{--paper:#1b2023;--ink:#f3f5f5;--muted:#c4cdd0;--box:#2b3438;--line:#93a6ad;--accent:#a1d2c7}
+html,body{margin:0;padding:0;overflow:hidden;background:var(--paper)}svg{display:block;width:100%;max-width:100%;height:auto;min-width:0;font-family:system-ui,sans-serif}.node{fill:var(--box);stroke:var(--line);stroke-width:1.5}.title{fill:var(--ink);font-size:24px;font-weight:650}.label{fill:var(--ink);font-size:18px;font-weight:650}.detail{fill:var(--muted);font-size:14px}.edge{stroke:var(--accent);stroke-width:2;fill:none;marker-end:url(#arrow)}
+</style></head><body><svg viewBox="0 0 1100 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Trainer writes an archive to a registry; tools and archive reach a fetch step, which prepares the JVM">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)"/></marker></defs>
+<text class="title" x="28" y="32">Training and pod startup</text>
+<path class="edge" d="M210 133 H250"/><path class="edge" d="M430 133 H470"/><path class="edge" d="M670 133 H720"/><path class="edge" d="M570 258 V194"/>
+<rect class="node" x="30" y="90" width="180" height="86" rx="7"/><text class="label" x="50" y="123">Trainer</text><text class="detail" x="50" y="148">Creates archive</text>
+<rect class="node" x="250" y="90" width="180" height="86" rx="7"/><text class="label" x="270" y="123">OCI registry</text><text class="detail" x="270" y="148">Stores archive</text>
+<rect class="node" x="470" y="90" width="200" height="104" rx="7"/><text class="label" x="490" y="123">Fetch</text><text class="detail" x="490" y="148">Checks archive</text><text class="detail" x="490" y="171">Inline or init</text>
+<rect class="node" x="720" y="90" width="200" height="86" rx="7"/><text class="label" x="740" y="123">Application JVM</text><text class="detail" x="740" y="148">Uses cache if valid</text>
+<rect class="node" x="470" y="258" width="200" height="54" rx="7"/><text class="label" x="490" y="291">Tools image</text>
+</svg></body></html>

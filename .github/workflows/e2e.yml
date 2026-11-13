@@ -28,7 +28,11 @@ permissions:
 
 jobs:
   kind:
-    name: kind end-to-end (JDK 21 and 25)
+    name: kind end-to-end (JDK 21 and 25, ${{ matrix.delivery }})
+    strategy:
+      fail-fast: false
+      matrix:
+        delivery: [init-container, image-volume]
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -37,19 +41,25 @@ jobs:
       - uses: helm/kind-action@v1
         with:
           install_only: true
+          version: v0.32.0
       - run: scripts/e2e-kind.sh 21 25
+        env:
+          TOOLS_DELIVERY: ${{ matrix.delivery }}
+          KIND_NODE_IMAGE: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
       - name: Collect logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-logs
+          name: e2e-logs-${{ matrix.delivery }}
           path: /tmp/mw-e2e-*
 
   kind-inject:
-    name: annotated adoption path (${{ matrix.arch }})
+    name: annotated adoption path (${{ matrix.arch }}, ${{ matrix.delivery }})
     strategy:
       fail-fast: false
       matrix:
+        arch: [amd64, arm64]
+        delivery: [init-container, image-volume]
         include:
           - arch: amd64
             runner: ubuntu-latest
@@ -70,10 +80,14 @@ jobs:
       - uses: helm/kind-action@v1
         with:
           install_only: true
+          version: v0.32.0
       - run: scripts/e2e-kind-inject.sh
+        env:
+          TOOLS_DELIVERY: ${{ matrix.delivery }}
+          KIND_NODE_IMAGE: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
       - name: Collect logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-inject-logs-${{ matrix.arch }}
+          name: e2e-inject-logs-${{ matrix.arch }}-${{ matrix.delivery }}
           path: /tmp/mw-inj-*

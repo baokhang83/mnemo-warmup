@@ -1,0 +1,29 @@
+fetch: APP_CDS: no archive stored for sha256:e4920ad15b60244ea633917128e9b29be60b91852b47768f28f9934e9b7bbfb4
+No usable archive; the application will start without one.
+fetch: timing: jdk-detect=19 ms, extract-and-hash-classpath=88 ms, store-lookup-download-verify=179 ms, tool-jvm-uptime=382 ms
+mnemo-launcher: timing: fetch-process=734 ms
+run: no archive was fetched into /mnemo-cache; starting without one
+run: timing: , tool-jvm-uptime=0 ms (native planner)
+mnemo-launcher: timing: plan-process=0 ms (native)
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::               (v3.5.16)
+
+2026-11-13T09:55:18.894Z  INFO 1 --- [           main] i.g.b.mnemo.example.DemoApplication      : Starting DemoApplication v0.1.0 using Java 21.0.13 with PID 1 (/app/app.jar started by root in /)
+2026-11-13T09:55:18.895Z  INFO 1 --- [           main] i.g.b.mnemo.example.DemoApplication      : No active profile set, falling back to 1 default profile: "default"
+2026-11-13T09:55:19.416Z  INFO 1 --- [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8080 (http)
+2026-11-13T09:55:19.420Z  INFO 1 --- [           main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-11-13T09:55:19.420Z  INFO 1 --- [           main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.55]
+2026-11-13T09:55:19.501Z  INFO 1 --- [           main] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-11-13T09:55:19.501Z  INFO 1 --- [           main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 594 ms
+2026-11-13T09:55:19.835Z  INFO 1 --- [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8080 (http) with context path '/'
+2026-11-13T09:55:19.838Z  INFO 1 --- [           main] i.g.b.mnemo.example.DemoApplication      : Started DemoApplication in 1.215 seconds (process running for 1.361)
+2026-11-13T09:55:19.908Z  INFO 1 --- [nio-8080-exec-1] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'
+2026-11-13T09:55:19.908Z  INFO 1 --- [nio-8080-exec-1] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'
+2026-11-13T09:55:19.909Z  INFO 1 --- [nio-8080-exec-1] o.s.web.servlet.DispatcherServlet        : Completed initialization in 1 ms

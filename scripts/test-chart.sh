@@ -131,7 +131,18 @@ out=$(helm template rel "$PARENT" -n default)
 absent "$out" "- exec" "parent, default mode: no exec prefix"
 absent "$out" "reference:" "parent, default mode: no image volume"
 check "$out" "name: mnemo-warmup-install" "parent, default mode: still has its init containers"
-if helm template rel "$CHART" "${BASE[@]}" --set tools.delivery=image-volume --set store.pullSecret=pull >/dev/null 2>&1; then fail "image-volume must refuse store.pullSecret"; else ok "image-volume refuses store.pullSecret"; fi
+out=$(helm template rel "$PARENT" -n default --set warmup.tools.delivery=image-volume --set warmup.store.pullSecret=pull)
+validate "image-volume parent with pull secret" "$out"
+check "$out" "name: mnemo-warmup-fetch" "pull secret: isolated fetch init container"
+check "$out" "command: [\"$IV/bin/mnemo-warmup\"]" "pull secret: fetch uses image volume tools"
+absent "$out" "name: mnemo-warmup-install" "pull secret: no install init container"
+check "$out" "command: [\"$IV/bin/mnemo-launcher\", \"exec\", \"--\"]" "pull secret: application skips inline fetch"
+app_part=$(awk '/- name: app$/{inside=1} inside && /^---/{exit} inside' <<<"$out")
+[ -n "$app_part" ] || fail "pull secret: application container missing from rendered manifest"
+absent "$app_part" "mnemo-registry-pull" "pull secret: application does not mount the credential"
+absent "$app_part" "MNEMO_WARMUP_REGISTRY_AUTH" "pull secret: application has no registry auth variable"
+app_cache=$(awk '/mountPath: \/mnemo-cache/{getline n; print n; exit}' <<<"$app_part")
+if [[ "$app_cache" == *"readOnly: true"* ]]; then ok "pull secret: application mounts the cache read-only"; else fail "pull secret: application cache is not read-only"; fi
 if helm template rel "$CHART" "${BASE[@]}" --set tools.delivery=sidecar >/dev/null 2>&1; then fail "an unknown tools.delivery must be refused"; else ok "an unknown tools.delivery is refused"; fi
 
 echo "== example workload chart (examples/helm/example-app)"

@@ -11,7 +11,7 @@ The question is not "does the JVM start faster with an archive" (it does). It is
 | arm | what runs |
 |---|---|
 | `none` | the plain Deployment, no mnemo-warmup |
-| `nocache` | mnemo-warmup on (init containers, launcher, helper JVMs), but the archive repository is empty: the cost of the machinery with no benefit |
+| `nocache` | mnemo-warmup on (delivery mode, launcher, helpers), but the archive repository is empty: the cost of the machinery with no benefit |
 | `cached` | mnemo-warmup on and an archive trained for this image: what a real pod does |
 
 Each **measurement** scales one Deployment from 0 to 1 (a brand-new pod), waits for Ready, records the pod's own timestamps and the tools' timing lines, then scales back to 0. The arms are **interleaved** (round 1: none, nocache, cached; round 2: ...), so slow drift of the machine affects all arms equally. One warm-up round per arm is discarded. The default is 12 measured rounds.
@@ -62,13 +62,13 @@ Recorded by `scripts/bench_env.py` in `environment.json` for every run: host CPU
 Things to know when comparing with another environment:
 
 - **Registry latency is a best case.** The registry is a container one network hop from the node; `registry.txt` records the request time and the archive download speed from the node. A registry in another zone, or ECR, adds its own round trips and a slower download, which falls entirely on the `cached` arm. This study does not measure that; the numbers here are a lower bound on the cache's cost.
-- **No pod limits by default.** The JVM then sees all the CPUs Docker has. With `--app-cpu 1` it sees one, as in many production clusters, and starts much more slowly; that changes the benefit and, because the helper JVMs run in the *application* container's limits only if you set them there, not the cost. The injector does not copy resource limits to the generated `fetch` init container, so `fetch` is unlimited in both modes.
+- **No pod limits by default.** The JVM then sees all the CPUs Docker has. With `--app-cpu 1` it sees one, as in many production clusters, and starts much more slowly; that changes the benefit and, because the helper JVMs run in the *application* container's limits only if you set them there, not the cost. The injector does not copy resource limits to the generated `fetch` init container, so that container is unlimited. Inline image-volume fetch runs under the application container limit.
 - **kind on Docker Desktop is a virtual machine on a laptop.** Timings are noisy and not representative of a production node. The point is the *shape* (which phases exist and how large they are relative to each other) and the paired comparison, not the absolute seconds.
 
 ## Limits of the study
 
-- Three applications: a Spring Boot application, Jenkins LTS and SonarQube. Other frameworks and sizes are not covered (planned for the 0.3.0 beta).
-- One JDK (21, AppCDS). The Leyden AOT cache on JDK 25 is not measured here.
+- Four application profiles: a small Spring Boot example, a heavier Spring Boot application, Jenkins LTS and SonarQube. Other frameworks and sizes are not covered (planned for the 0.3.0 beta).
+- The Spring Boot and Jenkins runs use JDK 21 AppCDS. The SonarQube run uses JDK 25; a controlled JDK 21 versus JDK 25 comparison is not included.
 - A local registry; no network cost, no authentication round trips (ECR's token exchange adds some).
 - Image pulls excluded by design (see above).
 - Single node, one pod at a time: no contention between replicas starting together, which is the autoscaling case where the cache could matter more.
@@ -84,10 +84,13 @@ Runs are committed with their full `summary.md` (the end-to-end breakdown), `res
 | [`20261111-spring-heavy-1cpu-1gi`](results/20261111-spring-heavy-1cpu-1gi/summary.md) | spring-heavy, JDK 21 | 1 CPU, 1 GiB | init containers (Java helpers) |
 | [`20261111-spring-heavy-1cpu-1gi-native`](results/20261111-spring-heavy-1cpu-1gi-native/summary.md) | spring-heavy, JDK 21 | 1 CPU, 1 GiB | init containers (native `fetch` and `run`) |
 | [`20261111-spring-heavy-1cpu-1gi-imagevolume`](results/20261111-spring-heavy-1cpu-1gi-imagevolume/summary.md) | spring-heavy, JDK 21 | 1 CPU, 1 GiB | `image` volume |
+| [`20261113-example-1cpu-1gi-imagevolume`](results/20261113-example-1cpu-1gi-imagevolume/summary.md) | small Spring Boot example (31 JARs, 20 MiB), JDK 21 | 1 CPU, 1 GiB | `image` volume |
 | [`20261111-jenkins-1cpu-1gi`](results/20261111-jenkins-1cpu-1gi/summary.md) | Jenkins 2.492.3, JDK 21 | 1 CPU, 1 GiB | init containers (Java helpers); header says "0 JARs", a harness bug fixed since |
 | [`20261111-jenkins-1cpu-1gi-native`](results/20261111-jenkins-1cpu-1gi-native/summary.md) | Jenkins 2.492.3, JDK 21 | 1 CPU, 1 GiB | init containers (native helpers) |
 | [`20261111-jenkins-1cpu-1gi-imagevolume`](results/20261111-jenkins-1cpu-1gi-imagevolume/summary.md) | Jenkins 2.492.3, JDK 21 | 1 CPU, 1 GiB | `image` volume |
 | [`20261111-sonarqube-2cpu-3gi`](results/20261111-sonarqube-2cpu-3gi/summary.md) | SonarQube 26.11, JDK 25 | 2 CPU, 3 GiB | init containers (native helpers) |
+
+The small example's plain / cache-miss / cached medians were 2.5 / 3 / 2 seconds. The cached and plain ranges both include 2–3 seconds, and pod timestamps have one-second resolution; this is a local data point, not a general speed claim. All 12 cached pods used the archive. Other Docker containers were running on the host during this run. The run records base commit `0b0fecc` and a dirty worktree containing this feature’s implementation.
 
 ### The baseline, and what changed
 
@@ -119,4 +122,4 @@ Pod start-to-Ready, medians (range), by delivery mode:
 
 **What this does not say.** Laptop, local registry, no image pull, one pod at a time. It says nothing about a remote registry (which would make `cached` slower), or about many pods starting together. The 0.3.0 beta plans a scale-out burst against a remote registry, an application-size study and a JDK 21 against JDK 25 comparison.
 
-Two earlier runs were discarded because other benchmark runs were active on the same machine; all published runs ran alone.
+Two earlier runs were discarded because other benchmark runs were active on the same machine. No other benchmark ran alongside the published runs.

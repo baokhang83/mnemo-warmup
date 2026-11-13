@@ -89,10 +89,6 @@ final class WorkloadDiscovery {
         if (delivery == null) delivery = INIT_CONTAINER;
         if (!delivery.equals(INIT_CONTAINER) && !delivery.equals(IMAGE_VOLUME))
             throw new IllegalArgumentException("tools-delivery must be " + INIT_CONTAINER + " or " + IMAGE_VOLUME + ", got: " + delivery);
-        // The fetch would run in the application container, where the application's code could read the Secret (docs/adr/0012).
-        if (delivery.equals(IMAGE_VOLUME) && pullSecret != null)
-            throw new IllegalArgumentException("pull-secret cannot be used with tools-delivery " + IMAGE_VOLUME
-                    + ": the fetch runs in the application container, which would then be able to read the Secret; use " + INIT_CONTAINER);
         return new Workload(name, namespace, containerName, image, store, mode, probe, pullSecret, pushSecret, "true".equals(plainHttp),
                 List.copyOf(command), List.copyOf(jvm), command.get(jarIndex + 1), delivery);
     }

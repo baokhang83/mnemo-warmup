@@ -163,17 +163,18 @@ Details and what is not supported: [configuration](docs/configuration.md#require
 
 ## Measurements
 
-**Will it make my pods start faster?** It depends on what your app does while it starts. We measured three real applications (1 CPU, 1 GiB, 12 restarts each).
+**Will it make my pods start faster?** It depends on what your app does while it starts. We measured four application profiles (12 restarts each; 1 CPU and 1 GiB except SonarQube at 2 CPUs and 3 GiB).
 
 | Workload Profile | Pod start-to-Ready | Verdict |
 |---|---|---|
 | 🟢 **Spring Boot**: start-up is mostly loading classes and creating beans | **5 s → 3 s**<br>40% faster | **Worth it.** The JVM itself starts 41% faster. |
+| 🟡 **Small Spring Boot example**: 31 JARs, 20 MiB | **2.5 s → 2 s** | **Uncertain.** The ranges overlap at the one-second measurement resolution. |
 | 🟡 **Jenkins**: start-up is mostly the application running its own setup code (initializing plugins and configuration) | **4 s → 4 s**<br>no change | **Neutral.** The JVM starts 13% faster, the pod is ready at the same time. |
 | 🔴 **SonarQube**: the container starts a small launcher, which starts three other JVMs that do the real work | **15 s → 17 s**<br>13% slower | **Not a fit yet.** The cache only reaches the launcher ([#77](https://github.com/baokhang83/mnemo-warmup/issues/77)). |
 
 **The rule of thumb:** the more of your start-up is class loading (typical for Spring Boot and similar frameworks), the more you gain. If it is mostly your own initialization code, or a launcher that starts other JVMs, expect little or nothing.
 
-> **Use the `image` volume where your cluster supports it.** The green and yellow rows deliver the tools as a Kubernetes [`image` volume](docs/configuration.md#tools-delivery-init-containers-or-an-image-volume), which needs no init containers. With init containers the Spring Boot pod is ready in 5 s either way (the init containers cost what the cache saves), and Jenkins is 1 s slower. The red row used init containers.
+> **Use the `image` volume where your cluster supports it.** The green and yellow rows deliver the tools as a Kubernetes [`image` volume](docs/configuration.md#tools-delivery-init-containers-or-an-image-volume), which needs no init containers for these runs (no pull Secret). With init containers the Spring Boot pod is ready in 5 s either way (the init containers cost what the cache saves), and Jenkins is 1 s slower. The red row used init containers.
 
 Numbers are medians and pod times have a one-second resolution: read the direction, not the decimals. Measure your own app with `mnemo-warmup bench --jar app.jar` or [the cluster method](docs/operations.md#measure-the-benefit). Method, raw data and limits: [benchmarks](benchmarks/README.md). More studies (JDK 21 vs 25, app size, scale-out, alternatives) are planned for the [0.3.0 beta](https://github.com/baokhang83/mnemo-warmup/milestone/3).
 

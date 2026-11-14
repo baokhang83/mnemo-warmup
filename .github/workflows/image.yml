@@ -8,6 +8,7 @@ on:
     branches: [main]
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+'
   pull_request:
     paths:
       - 'image/**'
@@ -34,6 +35,7 @@ jobs:
     outputs:
       sha: ${{ steps.r.outputs.sha }}
       release: ${{ steps.r.outputs.release }}
+      prerelease: ${{ steps.r.outputs.prerelease }}
       version: ${{ steps.r.outputs.version }}
     steps:
       - uses: actions/checkout@v4
@@ -47,11 +49,16 @@ jobs:
         run: |
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           if [ -n "$RELEASE_TAG" ]; then
-            if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]]; then
               echo "::error::Expected a release tag such as v0.2.0"
               exit 1
             fi
             echo "release=true" >> "$GITHUB_OUTPUT"
+            if [[ "$RELEASE_TAG" == *-beta.* ]]; then
+              echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            fi
             echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
           else
             echo "release=false" >> "$GITHUB_OUTPUT"
@@ -96,4 +103,4 @@ jobs:
           build-args: VERSION=${{ needs.resolve.outputs.version }}
           tags: |
             ghcr.io/baokhang83/mnemo-warmup-tools:${{ needs.resolve.outputs.version }}
-            ghcr.io/baokhang83/mnemo-warmup-tools:latest
+            ${{ needs.resolve.outputs.prerelease != 'true' && 'ghcr.io/baokhang83/mnemo-warmup-tools:latest' || '' }}

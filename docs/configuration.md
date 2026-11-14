@@ -2,6 +2,26 @@
 
 How the annotation path decides what to change, what you can override, and what your application and cluster need. For the command-line options of `build`, `push`, `fetch` and the rest, see the [reference](reference.md). For the generated resources and the preview output, see the [offline injector guide](offline-injector.md).
 
+## CLI installation options
+
+The [installer](../scripts/install.sh) needs Java 21 or newer to run the CLI. It defaults to `v0.3.0-beta.1`, whose release assets will be available when that prerelease is published. Set `MNEMO_VERSION` to a different supported release tag and `MNEMO_INSTALL_PREFIX` to an absolute directory to change where the CLI is installed:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/scripts/install.sh | \
+  MNEMO_VERSION=v0.3.0-beta.1 MNEMO_INSTALL_PREFIX="$HOME/.local" sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+The installer verifies SHA-256 digests for the JAR and wrapper. These checks detect corrupt or mismatched downloads; they do not independently authenticate a compromised release source.
+
+Alternatively, extract the CLI from the tools image:
+
+```bash
+docker run --rm -v "$PWD":/out --entrypoint cp ghcr.io/baokhang83/mnemo-warmup-tools:0.2.5 -r /opt/mnemo-warmup /out/
+export PATH="$PWD/mnemo-warmup/bin:$PATH"
+mnemo-warmup --version
+```
+
 ## Requirements
 
 - **Kubernetes** with `batch/v1` CronJobs (1.21 or newer) and the `coordination.k8s.io/v1` Lease API. The injector handles `Deployment` resources only.

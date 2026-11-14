@@ -4,7 +4,7 @@ How the annotation path decides what to change, what you can override, and what 
 
 ## CLI installation options
 
-The [installer](../scripts/install.sh) needs Java 21 or newer to run the CLI. It defaults to `v0.3.0-beta.2`, whose release assets will be available when that prerelease is published. Set `MNEMO_VERSION` to a different supported release tag and `MNEMO_INSTALL_PREFIX` to an absolute directory to change where the CLI is installed:
+The [installer](../scripts/install.sh) needs Java 21 or newer to run the CLI. It defaults to the published `v0.3.0-beta.2` release. Set `MNEMO_VERSION` to a different supported release tag and `MNEMO_INSTALL_PREFIX` to an absolute directory to change where the CLI is installed:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/scripts/install.sh | \
@@ -17,7 +17,7 @@ The installer verifies SHA-256 digests for the JAR and wrapper. These checks det
 Alternatively, extract the CLI from the tools image:
 
 ```bash
-docker run --rm -v "$PWD":/out --entrypoint cp ghcr.io/baokhang83/mnemo-warmup-tools:0.2.5 -r /opt/mnemo-warmup /out/
+docker run --rm -v "$PWD":/out --entrypoint cp ghcr.io/baokhang83/mnemo-warmup-tools:0.3.0-beta.2 -r /opt/mnemo-warmup /out/
 export PATH="$PWD/mnemo-warmup/bin:$PATH"
 mnemo-warmup --version
 ```

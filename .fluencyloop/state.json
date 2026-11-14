@@ -3,7 +3,7 @@
   "feature": "92-implement-an-optional-secure-node-local-archive-cache-for",
   "branch": "feature/92-implement-an-optional-secure-node-local-archive-cache-for",
   "stage": "build",
-  "last_session": "009-add-a-separate-node-cache-executable",
+  "last_session": "010-package-a-node-local-cache-service-for-kubernetes",
   "base_ref": "design/node-archive-cache",
   "feature_dir": "",
   "plan": "",

@@ -2,7 +2,7 @@
 
 This chart installs the optional `mnemo-nodecache` service as a DaemonSet and a ClusterIP Service. It requires Kubernetes 1.26 or newer. The Service uses `internalTrafficPolicy: Local` so a client pod reaches an endpoint on its own node; a node without an endpoint has no cache endpoint. Verify that the cluster networking implementation honors this policy.
 
-**Development status:** the application fetcher does not yet call the service or fall back from it. The cache has a payload budget but does not yet evict entries or automatically remove corrupt files. Registry redirects and automatic registry-token exchange are not supported. Do not treat this chart as a complete deployment path.
+**Development status:** the native fetcher can try the service and fall back to the registry, but this chart and integration have not yet been verified on a cluster. The cache has a payload budget but does not yet evict entries or automatically remove corrupt files. Registry redirects and automatic registry-token exchange are not supported. The Java fallback path does not use the node cache.
 
 The DaemonSet uses a pod-local `emptyDir`, not a host directory. Restarting or replacing the cache pod loses that node's cache. It runs as a non-root user with a read-only root filesystem. The ServiceAccount can create Kubernetes TokenReviews; it does not receive permissions to read Kubernetes Secrets through the API. The kubelet mounts the configuration Secret into the cache pod.
 
@@ -52,4 +52,14 @@ helm template cache deploy/helm/mnemo-nodecache --namespace cache-system \
 
 The configured listen port must be 8443 to match this chart. The cache reads configuration and TLS certificates at startup; restart the DaemonSet after changing them. Source credential file updates are read on later misses. Set `maxTotalBytes` below `cacheVolumeSize` and the pod's ephemeral-storage limit to allow room for filesystem metadata and other pod storage. The store assumes one process owns its private directory; do not mount it into application pods or share it between cache processes.
 
-Every request needs a projected service-account token with the configured audience and an explicit subject/repository grant. It also needs proof of current registry read access for the requested blob. The cache validates that proof against the registry before serving a hit or miss. The current registry check and download accept direct responses only; they reject redirects and leave recovery to the caller once direct-download fallback is implemented.
+Every request needs a projected service-account token with the configured audience and an explicit subject/repository grant. It also needs proof of current registry read access for the requested blob. The cache validates that proof against the registry before serving a hit or miss. The current registry check and download accept direct responses only; they reject redirects. The native client falls back to a direct registry download when the cache request fails.
+
+To opt a Deployment in through the injector, create a ConfigMap named `nodecache-ca` in its namespace with the service CA under `ca.crt`, then add these pod-template annotations using the actual Service URL and configured audience:
+
+```yaml
+warmup.mnemo.io/node-cache-url: "https://cache-nodecache.cache-system.svc:8443"
+warmup.mnemo.io/node-cache-ca-configmap: "nodecache-ca"
+warmup.mnemo.io/node-cache-audience: "mnemo-nodecache"
+```
+
+The fetch init container receives the projected token and CA; the application and trainer do not. The fetcher sends its registry authorization to the trusted cache service over TLS; a Basic authorization value can contain long-lived credentials. The CA ConfigMap is optional at the Kubernetes volume level so a missing CA file causes direct fallback. If Kubernetes cannot project the service-account token, the pod can remain blocked before the fetcher starts.

@@ -15,7 +15,7 @@ import (
 )
 
 func TestNativeFetchUsesNodeCacheOrFallsBackToRegistry(t *testing.T) {
-	for _, mode := range []string{"hit", "corrupt", "denied", "redirect", "timeout"} {
+	for _, mode := range []string{"hit", "corrupt", "short", "overlong", "denied", "redirect", "timeout", "missing-ca", "missing-token"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newFixture(t)
 			fr := newFakeRegistry(t, f)
@@ -54,6 +54,10 @@ func TestNativeFetchUsesNodeCacheOrFallsBackToRegistry(t *testing.T) {
 					b := append([]byte{}, archive...)
 					b[0] ^= 1
 					_, _ = w.Write(b)
+				case "short":
+					_, _ = w.Write(archive[:len(archive)-1])
+				case "overlong":
+					_, _ = w.Write(append(append([]byte{}, archive...), 'x'))
 				default:
 					_, _ = w.Write(archive)
 				}
@@ -69,9 +73,16 @@ func TestNativeFetchUsesNodeCacheOrFallsBackToRegistry(t *testing.T) {
 			if err := os.WriteFile(f.path("auth.json"), []byte(fmt.Sprintf(`{"auths":{"%s":{"username":"puller","password":"s3cret"}}}`, fr.host())), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			caPath, tokenPath := f.path("cache-ca.pem"), f.path("cache-token")
+			if mode == "missing-ca" {
+				caPath = f.path("absent-ca")
+			}
+			if mode == "missing-token" {
+				tokenPath = f.path("absent-token")
+			}
 			l, args, _, stderr := fetchHarness(t, f, fr,
 				"MNEMO_WARMUP_REGISTRY_AUTH="+f.path("auth.json"), "MNEMO_WARMUP_NODECACHE_URL="+cache.URL,
-				"MNEMO_WARMUP_NODECACHE_CA_FILE="+f.path("cache-ca.pem"), "MNEMO_WARMUP_NODECACHE_TOKEN_FILE="+f.path("cache-token"),
+				"MNEMO_WARMUP_NODECACHE_CA_FILE="+caPath, "MNEMO_WARMUP_NODECACHE_TOKEN_FILE="+tokenPath,
 				"MNEMO_WARMUP_NODECACHE_TIMEOUT_SECONDS=1")
 			code, done := l.nativeFetch(args, false)
 			if !done || code != 0 {
@@ -81,7 +92,11 @@ func TestNativeFetchUsesNodeCacheOrFallsBackToRegistry(t *testing.T) {
 			if err != nil || !bytes.Equal(got, archive) {
 				t.Fatalf("archive not verified: %v", err)
 			}
-			if cacheCalls.Load() != 1 || redirected.Load() != 0 {
+			wantCacheCalls := int32(1)
+			if mode == "missing-ca" || mode == "missing-token" {
+				wantCacheCalls = 0
+			}
+			if cacheCalls.Load() != wantCacheCalls || redirected.Load() != 0 {
 				t.Fatalf("cache calls=%d redirects=%d", cacheCalls.Load(), redirected.Load())
 			}
 			if strings.Contains(stderr.String(), "s3cret") || strings.Contains(stderr.String(), "pod-token") {
@@ -105,8 +120,17 @@ func TestNativeFetchUsesNodeCacheOrFallsBackToRegistry(t *testing.T) {
 			if blobDownloads != want {
 				t.Fatalf("registry blob requests=%d want=%d", blobDownloads, want)
 			}
-			if mode != "hit" && !strings.Contains(stderr.String(), "trying registry directly") {
+			if mode != "hit" && !strings.Contains(stderr.String(), "trying registry directly") && !strings.Contains(stderr.String(), "node cache configuration unavailable") {
 				t.Fatal("fallback not logged")
+			}
+			entries, err := os.ReadDir(f.path("out"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range entries {
+				if strings.HasSuffix(entry.Name(), ".part") {
+					t.Fatal("partial archive left behind")
+				}
 			}
 		})
 	}

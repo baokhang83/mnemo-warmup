@@ -678,7 +678,7 @@ func (r *registry) fetchArchive(fp string, live manifestJSON, out string) (*fetc
 			func(status string) { r.cacheNote("node cache " + status + ": verified archive") }); err == nil {
 			cached = true
 		} else {
-			r.cacheNote("node cache unavailable or invalid; trying registry directly")
+			r.cacheNote("node cache unavailable or invalid: " + err.Error() + "; trying registry directly")
 		}
 	}
 	if !cached {

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -114,11 +116,35 @@ func (c *nodeCacheClient) download(registry, repository, proof string, want ociD
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return errors.New("cache request failed")
+		var certErr x509.UnknownAuthorityError
+		var hostnameErr x509.HostnameError
+		var netErr net.Error
+		switch {
+		case errors.As(err, &certErr):
+			return errors.New("cache TLS certificate is not trusted")
+		case errors.As(err, &hostnameErr):
+			return errors.New("cache TLS certificate hostname mismatch")
+		case errors.As(err, &netErr) && netErr.Timeout():
+			var opErr *net.OpError
+			if errors.As(err, &opErr) {
+				return fmt.Errorf("cache network %s timed out", opErr.Op)
+			}
+			return errors.New("cache request timed out")
+		case errors.Is(err, syscall.ECONNREFUSED):
+			return errors.New("cache connection refused")
+		case errors.Is(err, syscall.ECONNRESET):
+			return errors.New("cache connection reset")
+		default:
+			var opErr *net.OpError
+			if errors.As(err, &opErr) {
+				return fmt.Errorf("cache network %s failed (%T)", opErr.Op, opErr.Err)
+			}
+			return fmt.Errorf("cache request failed: %T", err)
+		}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return errors.New("cache request was rejected")
+		return fmt.Errorf("cache request returned HTTP %d", resp.StatusCode)
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(target), filepath.Base(target)+".*.part")
 	if err != nil {

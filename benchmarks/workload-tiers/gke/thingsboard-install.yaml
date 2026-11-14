@@ -1,0 +1,39 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: thingsboard-install
+  namespace: workload-study
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 900
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: installer
+          image: thingsboard/tb-node@sha256:5e2c180f3c48a9f4efd3e19d2f03c41b510ff1a935f25083657e0cf046a94872
+          imagePullPolicy: IfNotPresent
+          env:
+            - {name: INSTALL_TB, value: "true"}
+            - {name: LOAD_DEMO, value: "false"}
+            - {name: JAVA_OPTS, value: "-Xmx1500m"}
+            - {name: TB_QUEUE_TYPE, value: "in-memory"}
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:postgresql://postgres.workload-study.svc.cluster.local:5432/thingsboard
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: db-auth
+                  key: username
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-auth
+                  key: password
+          resources:
+            requests:
+              cpu: 1
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 3Gi

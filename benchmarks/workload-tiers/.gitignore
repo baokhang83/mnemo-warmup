@@ -1,0 +1,2 @@
+# Locally trained binary archives and JVM logs; regenerate for the target image.
+/artifacts/

@@ -14,6 +14,8 @@ import (
 	"testing"
 )
 
+var testScope = RepositoryScope{Registry: "registry.example", Repository: "team/archive"}
+
 func digestOf(b []byte) string {
 	h := sha256.Sum256(b)
 	return "sha256:" + hex.EncodeToString(h[:])
@@ -44,7 +46,7 @@ func TestConcurrentMissesShareOneVerifiedFill(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			path, err := s.Get(context.Background(), digestOf(data), int64(len(data)), open)
+			path, err := s.Get(context.Background(), testScope, digestOf(data), int64(len(data)), open)
 			if err == nil {
 				var got []byte
 				got, err = os.ReadFile(path)
@@ -80,17 +82,17 @@ func TestInvalidFillIsNotPublishedAndCorruptHitIsReplaced(t *testing.T) {
 	bad := func(context.Context) (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader([]byte("corrupt"))), nil
 	}
-	if _, err := s.Get(context.Background(), digest, int64(len(data)), bad); err == nil {
+	if _, err := s.Get(context.Background(), testScope, digest, int64(len(data)), bad); err == nil {
 		t.Fatal("accepted corrupted fill")
 	}
 	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
 		t.Fatalf("unverified files remain: %v %v", entries, err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, digest[7:]), []byte("corrupt"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, scopedKey(testScope, digest)), []byte("corrupt"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	good := func(context.Context) (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(data)), nil }
-	path, err := s.Get(context.Background(), digest, int64(len(data)), good)
+	path, err := s.Get(context.Background(), testScope, digest, int64(len(data)), good)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,18 +115,44 @@ func TestWaiterCancellationAndBounds(t *testing.T) {
 		return io.NopCloser(bytes.NewReader(data)), nil
 	}
 	done := make(chan error, 1)
-	go func() { _, err := s.Get(context.Background(), digestOf(data), int64(len(data)), open); done <- err }()
+	go func() {
+		_, err := s.Get(context.Background(), testScope, digestOf(data), int64(len(data)), open)
+		done <- err
+	}()
 	<-started
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := s.Get(ctx, digestOf(data), int64(len(data)), open); !errors.Is(err, context.Canceled) {
+	if _, err := s.Get(ctx, testScope, digestOf(data), int64(len(data)), open); !errors.Is(err, context.Canceled) {
 		t.Fatalf("waiter: %v", err)
 	}
-	if _, err := s.Get(context.Background(), digestOf(data), 11, open); err == nil {
+	if _, err := s.Get(context.Background(), testScope, digestOf(data), 11, open); err == nil {
 		t.Fatal("accepted oversized blob")
 	}
 	close(release)
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestBlobCannotBeReusedAcrossRepositoryScopes(t *testing.T) {
+	s, err := NewStore(filepath.Join(t.TempDir(), "cache"), 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("private archive")
+	good := func(context.Context) (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(data)), nil }
+	if _, err := s.Get(context.Background(), testScope, digestOf(data), int64(len(data)), good); err != nil {
+		t.Fatal(err)
+	}
+	denied := func(context.Context) (io.ReadCloser, error) {
+		return nil, errors.New("repository does not contain blob")
+	}
+	for _, scope := range []RepositoryScope{
+		{Registry: testScope.Registry, Repository: "other/archive"},
+		{Registry: "other.example", Repository: testScope.Repository},
+	} {
+		if _, err := s.Get(context.Background(), scope, digestOf(data), int64(len(data)), denied); err == nil {
+			t.Fatalf("cross-repository cache hit: %+v", scope)
+		}
 	}
 }

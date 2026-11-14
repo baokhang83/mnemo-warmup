@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 )
 
@@ -33,6 +34,11 @@ type flight struct {
 	err  error
 }
 
+// RepositoryScope identifies the registry authorization boundary for a blob.
+type RepositoryScope struct {
+	Registry, Repository string
+}
+
 // NewStore opens a private directory. maxBlob limits the size of each fill;
 // total storage limits and eviction are a separate responsibility.
 func NewStore(dir string, maxBlob int64) (*Store, error) {
@@ -49,15 +55,15 @@ func NewStore(dir string, maxBlob int64) (*Store, error) {
 	return &Store{dir: dir, maxBlob: maxBlob, inflight: make(map[string]*flight)}, nil
 }
 
-// Get returns a verified file for digest, fetching it on a miss. Callers must
+// Get returns a verified file for digest in scope, fetching it on a miss. Callers must
 // independently authorize every request, including a hit. Concurrent misses in
 // this process share one fill; cancellation of a waiter does not cancel it.
 // open must honor ctx while opening and reading its response.
-func (s *Store) Get(ctx context.Context, digest string, size int64, open func(context.Context) (io.ReadCloser, error)) (string, error) {
-	if !digestPattern.MatchString(digest) || size < 0 || size == math.MaxInt64 || size > s.maxBlob || open == nil {
+func (s *Store) Get(ctx context.Context, scope RepositoryScope, digest string, size int64, open func(context.Context) (io.ReadCloser, error)) (string, error) {
+	if scope.Registry == "" || scope.Repository == "" || len(scope.Registry) > 255 || len(scope.Repository) > 1024 || strings.ContainsRune(scope.Registry+scope.Repository, '\x00') || !digestPattern.MatchString(digest) || size < 0 || size == math.MaxInt64 || size > s.maxBlob || open == nil {
 		return "", errors.New("invalid digest, size, or source")
 	}
-	key := digest[7:]
+	key := scopedKey(scope, digest)
 	s.mu.Lock()
 	if f := s.inflight[key]; f != nil {
 		s.mu.Unlock()
@@ -85,6 +91,11 @@ func (s *Store) Get(ctx context.Context, digest string, size int64, open func(co
 	close(f.done)
 	s.mu.Unlock()
 	return f.path, f.err
+}
+
+func scopedKey(scope RepositoryScope, digest string) string {
+	h := sha256.Sum256([]byte(scope.Registry + "\x00" + scope.Repository + "\x00" + digest))
+	return hex.EncodeToString(h[:])
 }
 
 func (s *Store) get(ctx context.Context, key, digest string, size int64, open func(context.Context) (io.ReadCloser, error)) (string, error) {

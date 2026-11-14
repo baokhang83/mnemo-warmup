@@ -33,7 +33,7 @@ printf '%s\n' "$@" > "$JAVA_LOG"
 EOF
 chmod +x "$tmp/mock-bin/curl" "$tmp/mock-bin/java"
 export FIXTURE_DIR="$tmp/release" JAVA_LOG="$tmp/java-args" HOME="$tmp/home"
-export PATH="$tmp/mock-bin:$PATH" MNEMO_VERSION=v0.3.0-beta.1
+export PATH="$tmp/mock-bin:$PATH" MNEMO_VERSION=v0.3.0-beta.2
 export MNEMO_INSTALL_PREFIX="$tmp/install path"
 sh "$root/scripts/install.sh"
 "$MNEMO_INSTALL_PREFIX/bin/mnemo-warmup" --version
@@ -42,6 +42,8 @@ grep -Fx -- "$MNEMO_INSTALL_PREFIX/bin/../lib/mnemo-warmup/mnemo-warmup.jar" "$J
     grep -F '/lib/mnemo-warmup/bin/../mnemo-warmup.jar' "$JAVA_LOG" >/dev/null
 grep -Fx -- '--version' "$JAVA_LOG" >/dev/null
 sh "$root/scripts/install.sh" >/dev/null
+default_output=$(unset MNEMO_VERSION; sh "$root/scripts/install.sh")
+printf '%s\n' "$default_output" | grep -F 'Installed mnemo-warmup v0.3.0-beta.2 ' >/dev/null
 cp "$MNEMO_INSTALL_PREFIX/lib/mnemo-warmup/mnemo-warmup.jar" "$tmp/original-jar"
 printf 'corrupt\n' >> "$tmp/release/mnemo-warmup.jar"
 if sh "$root/scripts/install.sh" >/dev/null 2>&1; then

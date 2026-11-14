@@ -4,11 +4,11 @@ How the annotation path decides what to change, what you can override, and what 
 
 ## CLI installation options
 
-The [installer](../scripts/install.sh) needs Java 21 or newer to run the CLI. It defaults to `v0.3.0-beta.1`, whose release assets will be available when that prerelease is published. Set `MNEMO_VERSION` to a different supported release tag and `MNEMO_INSTALL_PREFIX` to an absolute directory to change where the CLI is installed:
+The [installer](../scripts/install.sh) needs Java 21 or newer to run the CLI. It defaults to `v0.3.0-beta.2`, whose release assets will be available when that prerelease is published. Set `MNEMO_VERSION` to a different supported release tag and `MNEMO_INSTALL_PREFIX` to an absolute directory to change where the CLI is installed:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/scripts/install.sh | \
-  MNEMO_VERSION=v0.3.0-beta.1 MNEMO_INSTALL_PREFIX="$HOME/.local" sh
+  MNEMO_VERSION=v0.3.0-beta.2 MNEMO_INSTALL_PREFIX="$HOME/.local" sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
 

@@ -3,7 +3,7 @@
   "feature": "92-implement-an-optional-secure-node-local-archive-cache-for",
   "branch": "feature/92-implement-an-optional-secure-node-local-archive-cache-for",
   "stage": "build",
-  "last_session": "007-bound-node-cache-payload-and-concurrent-fills",
+  "last_session": "008-configure-the-authenticated-tls-node-cache-service",
   "base_ref": "design/node-archive-cache",
   "feature_dir": "",
   "plan": "",

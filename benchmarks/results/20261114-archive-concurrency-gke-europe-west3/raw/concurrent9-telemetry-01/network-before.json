@@ -1,0 +1,28 @@
+{
+  "node": {
+    "network": {
+      "time": "2026-11-14T04:50:27Z",
+      "name": "eth0",
+      "rxBytes": 4104255993,
+      "rxErrors": 0,
+      "txBytes": 139490799,
+      "txErrors": 0,
+      "interfaces": [
+        {
+          "name": "eth0",
+          "rxBytes": 4104255993,
+          "rxErrors": 0,
+          "txBytes": 139490799,
+          "txErrors": 0
+        },
+        {
+          "name": "nodelocaldns",
+          "rxBytes": 0,
+          "rxErrors": 0,
+          "txBytes": 0,
+          "txErrors": 0
+        }
+      ]
+    }
+  }
+}

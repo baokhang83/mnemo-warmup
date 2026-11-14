@@ -1,0 +1,47 @@
+{
+  "date_utc": "2026-11-14",
+  "source_commit": "59c0c3c3040d0826d6300b2985546626f4823898",
+  "cloud": "Google Cloud GKE Standard",
+  "project_id": "redacted; replace PROJECT_ID in OCI references to reproduce",
+  "cluster": "mw-study92",
+  "cluster_scope": "zonal, one node, no autoscaler",
+  "region": "europe-west3",
+  "zone": "europe-west3-b",
+  "gke_version": "1.36.4-gke.2377000",
+  "node_machine_type": "e2-standard-8",
+  "node_count": 1,
+  "node_cpu": "8 vCPU",
+  "node_memory": "32 GiB",
+  "node_disk": "50 GB",
+  "node_os": "Container-Optimized OS from Google",
+  "container_runtime": "containerd 2.2.7",
+  "node_architecture": "amd64",
+  "network": "default VPC and subnet in europe-west3; IPv4; Premium network tier",
+  "registry": "Artifact Registry Docker repository in europe-west3 (same region as the node)",
+  "app_image": "europe-west3-docker.pkg.dev/PROJECT_ID/mnemo-warmup-bench/app:study92",
+  "app_image_digest": "sha256:0b132ba896bf1fc8928a05cc18c22cbdeb057a4eb6489d1ca5f2432acd0f9232",
+  "tools_image": "europe-west3-docker.pkg.dev/PROJECT_ID/mnemo-warmup-bench/tools:study92",
+  "tools_image_digest": "sha256:4d7c9e2fd06e8e5c69a25f1a11b24e8d65ab5917bf30e5a9dcd7c392b43a52b1",
+  "images_preloaded_before_measurement": true,
+  "archive_bytes": 87191552,
+  "archive_mib": 83.15234,
+  "archive_fingerprint": "sha256:80dfc27dae8311ba2981f78c432ff1bb7fea3331782fce907ebcd8333852b8ba",
+  "app_resources": {
+    "requests": {
+      "cpu": "100m",
+      "memory": "256Mi"
+    },
+    "limits": {
+      "cpu": "1",
+      "memory": "512Mi"
+    }
+  },
+  "fetch_container_resources": "no explicit requests or limits",
+  "readiness_probe": {
+    "initialDelaySeconds": 0,
+    "periodSeconds": 1,
+    "path": "/actuator/health/readiness"
+  },
+  "network_counter": "GKE kubelet stats/summary node rxBytes; the counter refreshed in coarse ~10-second jumps during the extra polling run, so it supports total node bytes but not a precise subsecond aggregate bandwidth estimate",
+  "registry_and_archive_cleanup": "temporary Artifact Registry repository and GKE cluster deleted after capture"
+}

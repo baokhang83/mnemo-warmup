@@ -1,0 +1,5 @@
+fetch: timing: archive-transfer-hash-write=357 ms, archive-bytes=87191552
+fetch: timing: cgroup-cpu-usage=479412 usec
+fetch: timing: jdk-detect=0 ms, extract-and-hash-classpath=45 ms, store-lookup-download-verify=923 ms, tool-jvm-uptime=0 ms (native fetch)
+Archive: /mnemo-cache/app.jsa (APP_CDS), fingerprint sha256:80dfc27dae8311ba2981f78c432ff1bb7fea3331782fce907ebcd8333852b8ba
+Flags: /mnemo-cache/mnemo-warmup.flags

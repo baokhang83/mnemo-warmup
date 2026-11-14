@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -129,7 +130,13 @@ func (l launcher) nativeFetch(args []string, strict bool) (int, bool) {
 	}
 	env := envMap(l.environ)
 	t := newTimer(env["MNEMO_WARMUP_TIMING"] == "1", "native fetch")
+	cpuBefore, cpuMeasured := cgroupCPUUsageUsec()
 	hit, err := l.nativeLookup(o, env, t)
+	if cpuMeasured && env["MNEMO_WARMUP_TIMING"] == "1" {
+		if cpuAfter, ok := cgroupCPUUsageUsec(); ok && cpuAfter >= cpuBefore {
+			fmt.Fprintf(l.stderr, "fetch: timing: cgroup-cpu-usage=%d usec\n", cpuAfter-cpuBefore)
+		}
+	}
 	var nj needJava
 	switch {
 	case errors.As(err, &nj):
@@ -157,6 +164,28 @@ func (l launcher) nativeFetch(args []string, strict bool) (int, bool) {
 	fmt.Fprintf(l.stdout, "Archive: %s (%s), fingerprint %s\n", hit.archive, hit.cacheType, hit.fingerprint)
 	fmt.Fprintf(l.stdout, "Flags: %s\n", hit.flags)
 	return 0, true
+}
+
+// cgroupCPUUsageUsec reads this container's cumulative CPU time from cgroup v2. The fetch init
+// container has its own cgroup, so the delta measures CPU used while native fetch is running.
+func cgroupCPUUsageUsec() (uint64, bool) {
+	b, err := os.ReadFile("/sys/fs/cgroup/cpu.stat")
+	if err != nil {
+		return 0, false
+	}
+	return parseCgroupCPUUsageUsec(b)
+}
+
+func parseCgroupCPUUsageUsec(data []byte) (uint64, bool) {
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, ok := strings.Cut(line, " ")
+		if !ok || key != "usage_usec" {
+			continue
+		}
+		usage, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
+		return usage, err == nil
+	}
+	return 0, false
 }
 
 func slicesContains(list []string, s string) bool {

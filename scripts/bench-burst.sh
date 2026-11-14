@@ -36,6 +36,8 @@ mkdir -p "$OUT/raw"; OUT=$(cd "$OUT" && pwd)
 TMP=$(mktemp -d)
 export KUBECONFIG="$TMP/kubeconfig"
 k() { kubectl --context "$CTX" "$@"; }
+node_rx_bytes() { docker exec "$CLUSTER-control-plane" cat /sys/class/net/eth0/statistics/rx_bytes; }
+now_ns() { python3 -c 'import time; print(time.time_ns())'; }
 cleanup() {
   if [ "${KEEP:-}" = 1 ]; then echo "Kept $CLUSTER and kubeconfig $KUBECONFIG; clean them up after inspection"; return; fi
   kind delete cluster --name "$CLUSTER" --kubeconfig "$KUBECONFIG" >/dev/null 2>&1 || true
@@ -132,17 +134,39 @@ k -n "$NS" scale deploy/cached --replicas=1 >/dev/null
 for arm in none cached fault; do k -n "$NS" rollout status deploy/"$arm" --timeout=600s >/dev/null; done
 
 burst() {
-  local arm=$1 round=$2 dir="$OUT/raw/$1-$2" baseline pod
+  local arm=$1 round=$2 dir="$OUT/raw/$1-$2" baseline pod rx_before rx_after start_ns end_ns
   mkdir -p "$dir"
+  if [ "$arm" = cached ]; then
+    # Recreate the single cached pod so each round measures one fresh fetch before the concurrent burst.
+    k -n "$NS" scale deploy/cached --replicas=0 >/dev/null
+    k -n "$NS" wait --for=delete pod -l app=cached --timeout=180s >/dev/null
+    rx_before=$(node_rx_bytes); start_ns=$(now_ns)
+  fi
   k -n "$NS" scale deploy/"$arm" --replicas=1 >/dev/null
   k -n "$NS" rollout status deploy/"$arm" --timeout=600s >/dev/null
+  if [ "$arm" = cached ]; then
+    rx_after=$(node_rx_bytes); end_ns=$(now_ns)
+    printf 'mode,rx_bytes_before,rx_bytes_after,elapsed_ns\nsingle,%s,%s,%s\n' "$rx_before" "$rx_after" "$((end_ns-start_ns))" >"$dir/network.csv"
+  fi
   baseline=$(k -n "$NS" get pods -l "app=$arm" -o jsonpath='{.items[0].metadata.name}')
   printf '%s\n' "$baseline" >"$dir/baseline.txt"
+  if [ "$arm" = cached ]; then
+    k -n "$NS" get pod "$baseline" -o json >"$dir/single-pod.json"
+    k -n "$NS" logs "$baseline" -c mnemo-warmup-fetch >"$dir/single.fetch.log" 2>&1 || true
+    k -n "$NS" logs "$baseline" -c app >"$dir/single.app.log" 2>&1 || true
+  fi
   python3 -c 'import datetime; print(datetime.datetime.now(datetime.timezone.utc).isoformat())' >"$dir/scale-requested-at.txt"
+  if [ "$arm" = cached ]; then
+    rx_before=$(node_rx_bytes); start_ns=$(now_ns)
+  fi
   k -n "$NS" scale deploy/"$arm" --replicas=10 >/dev/null
   if ! k -n "$NS" rollout status deploy/"$arm" --timeout=900s >"$dir/rollout.log" 2>&1; then
     k -n "$NS" get pods -l "app=$arm" -o json >"$dir/failure-pods.json" || true
     echo "Burst failed; see $dir" >&2; return 1
+  fi
+  if [ "$arm" = cached ]; then
+    rx_after=$(node_rx_bytes); end_ns=$(now_ns)
+    printf 'concurrent-9,%s,%s,%s\n' "$rx_before" "$rx_after" "$((end_ns-start_ns))" >>"$dir/network.csv"
   fi
   k -n "$NS" get pods -l "app=$arm" -o json >"$dir/pods.json"
   for pod in $(k -n "$NS" get pods -l "app=$arm" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do

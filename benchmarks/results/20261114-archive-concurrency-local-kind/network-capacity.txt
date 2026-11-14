@@ -1,0 +1,4 @@
+networkQuality measured after the benchmark runs (2026-11-14):
+Uplink capacity: 15.950 Mbps
+Downlink capacity: 65.176 Mbps
+Idle latency: 63.964 milliseconds

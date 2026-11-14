@@ -39,7 +39,7 @@ unchanged JVM application. A pod starts from the cache when it fits its launch e
 
 ## Key benefits
 
-- **Shorter JVM start-up, no rewrite.** Keep your JDK, your frameworks and your JAR. Pods start from a ready-made class cache instead of loading every class from scratch. Pod readiness improves where class loading dominates the start (Spring Boot: [-40%](#measurements)); [measure](docs/operations.md#measure-the-benefit) yours.
+- **Shorter JVM start-up, no rewrite.** Keep your JDK, your frameworks and your JAR. Pods start from a ready-made class cache instead of loading every class from scratch. In our [GKE study](#measurements), Spring Boot workloads reached Ready 31%–58% faster after application start in single-pod trials; [measure](docs/operations.md#measure-the-benefit) yours.
 - **Three annotations, no source changes.** An injector adds the init containers, the launcher and the trainer to a plain Deployment, and you can preview every change first.
 - **A cache problem never stops a pod.** A missing, outdated, damaged or unreachable cache means an ordinary start, and the log says why.
 - **Set it up once.** When the image or JVM options change, the trainer builds a new cache by itself.
@@ -72,13 +72,15 @@ It previews and installs an annotated Deployment, shows it starting without a ca
 
 ## Quick start in three steps
 
-**Before you start:** the CLI runs on your machine for the preview and as the Helm post-renderer. It needs Java 21 or newer and comes in the tools image (the same one the injected init containers use):
+Install the CLI on macOS or Linux (requires Java 21+):
 
 ```bash
-docker run --rm -v "$PWD":/out --entrypoint cp ghcr.io/baokhang83/mnemo-warmup-tools:0.2.5 -r /opt/mnemo-warmup /out/
-export PATH="$PWD/mnemo-warmup/bin:$PATH"
+curl -fsSL https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/scripts/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 mnemo-warmup --version
 ```
+
+See the [installer source](scripts/install.sh) and [installation options](docs/configuration.md#cli-installation-options).
 
 Helm 3 calls an executable as the post-renderer. Save this as `mnemo-warmup-inject` and `chmod +x` it:
 
@@ -172,19 +174,26 @@ Details and what is not supported: [configuration](docs/configuration.md#require
 
 ## Measurements
 
-**Will it make my pods start faster?** It depends on what your app does while it starts. We measured three real applications (1 CPU, 1 GiB, 12 restarts each).
+**Will it make my pods start faster?** Startup gains depend on your application's architecture.
 
-| Workload Profile | Pod start-to-Ready | Verdict |
-|---|---|---|
-| 🟢 **Spring Boot**: start-up is mostly loading classes and creating beans | **5 s → 3 s**<br>40% faster | **Worth it.** The JVM itself starts 41% faster. |
-| 🟡 **Jenkins**: start-up is mostly the application running its own setup code (initializing plugins and configuration) | **4 s → 4 s**<br>no change | **Neutral.** The JVM starts 13% faster, the pod is ready at the same time. |
-| 🔴 **SonarQube**: the container starts a small launcher, which starts three other JVMs that do the real work | **15 s → 17 s**<br>13% slower | **Not a fit yet.** The cache only reaches the launcher ([#77](https://github.com/baokhang83/mnemo-warmup/issues/77)). |
+In our [GKE JDK 25 Leyden AOT workload-tier study](benchmarks/workload-tiers/results/gke-repaired.md), cached single-pod trials reached Ready **31%–58% faster after application start** across four Spring Boot tiers:
 
-**The rule of thumb:** the more of your start-up is class loading (typical for Spring Boot and similar frameworks), the more you gain. If it is mostly your own initialization code, or a launcher that starts other JVMs, expect little or nothing.
+| Workload | Archive size | Uncached app-start to Ready | Cached app-start to Ready | Improvement |
+| :--- | ---: | ---: | ---: | ---: |
+| **Minimal service** (37 JARs) | 54.3 MiB | 4.5 s | 2.0–2.1 s | **53%–56%** |
+| **Standard service** (70 JARs) | 103.9 MiB | 7.4 s | 3.1–4.2 s | **44%–58%** |
+| **Larger service** (98 JARs) | 116.0 MiB | 8.7 s | 3.9–5.0 s | **42%–55%** |
+| **ThingsBoard CE** (458 JARs) | 223.5 MiB | 30.8 s | 21.2–21.4 s | **~31%** |
 
-> **Use the `image` volume where your cluster supports it.** The green and yellow rows deliver the tools as a Kubernetes [`image` volume](docs/configuration.md#tools-delivery-init-containers-or-an-image-volume), which needs no init containers. With init containers the Spring Boot pod is ready in 5 s either way (the init containers cost what the cache saves), and Jenkins is 1 s slower. The red row used init containers.
+These are reductions in app-start-to-Ready time; scheduling and archive fetch are excluded. Each cell was measured once, and the original watch observations have limitations described in the report.
 
-Numbers are medians and pod times have a one-second resolution: read the direction, not the decimals. Measure your own app with `mnemo-warmup bench --jar app.jar` or [the cluster method](docs/operations.md#measure-the-benefit). Method, raw data and limits: [benchmarks](benchmarks/README.md). More studies (JDK 21 vs 25, app size, scale-out, alternatives) are planned for the [0.3.0 beta](https://github.com/baokhang83/mnemo-warmup/milestone/3).
+**Key takeaways:**
+
+- **Framework-heavy apps can benefit:** In local `kind` tests, Spring Boot had a **1 s (~20%) median paired readiness improvement** with [image volumes](docs/configuration.md#tools-delivery-init-containers-or-an-image-volume); its reported application startup was **3.18 s → 1.90 s**. Init-container overhead eliminated the readiness savings.
+- **Other startup work can dominate:** Jenkins reached Ready at about the same time, while SonarQube slowed down in the test because its child JVMs did not use the cache ([#77](https://github.com/baokhang83/mnemo-warmup/issues/77)).
+- **Image volumes avoid init-container overhead:** Use them where the cluster supports them.
+
+Run `mnemo-warmup bench --jar app.jar` or use the [cluster method](docs/operations.md#measure-the-benefit). See [benchmarks](benchmarks/README.md) for methodology and limitations; the alternatives comparison is planned in [#74](https://github.com/baokhang83/mnemo-warmup/issues/74).
 
 ## Disable or remove it
 
@@ -227,7 +236,9 @@ now.
 
 ## Articles
 
-[Faster Java Pod Startups Without GraalVM: Why AppCDS Needs Kubernetes Image Volumes](https://baokhang.hashnode.dev/faster-java-pod-startups-without-graalvm-appcds-kubernetes-image-volumes)
+* [Faster Java Pod Startups Without GraalVM: Why AppCDS Needs Kubernetes Image Volumes](https://hashnode.dev)
+* [Can JVM caches speed up Spring Boot on Kubernetes? A JDK 21 and JDK 25 study](https://hashnode.dev)
+* [31% to 58% Faster Java Pods on Kubernetes: Benchmarking JDK 25 Leyden AOT from Microservices to a 458-JAR Monolith](https://hashnode.dev)
 
 ## License
 
@@ -241,6 +252,26 @@ Apache License 2.0. See [LICENSE](LICENSE).
 # Configuration and requirements
 
 How the annotation path decides what to change, what you can override, and what your application and cluster need. For the command-line options of `build`, `push`, `fetch` and the rest, see the [reference](reference.md). For the generated resources and the preview output, see the [offline injector guide](offline-injector.md).
+
+## CLI installation options
+
+The [installer](../scripts/install.sh) needs Java 21 or newer to run the CLI. It defaults to `v0.3.0-beta.1`, whose release assets will be available when that prerelease is published. Set `MNEMO_VERSION` to a different supported release tag and `MNEMO_INSTALL_PREFIX` to an absolute directory to change where the CLI is installed:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/scripts/install.sh | \
+  MNEMO_VERSION=v0.3.0-beta.1 MNEMO_INSTALL_PREFIX="$HOME/.local" sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+The installer verifies SHA-256 digests for the JAR and wrapper. These checks detect corrupt or mismatched downloads; they do not independently authenticate a compromised release source.
+
+Alternatively, extract the CLI from the tools image:
+
+```bash
+docker run --rm -v "$PWD":/out --entrypoint cp ghcr.io/baokhang83/mnemo-warmup-tools:0.2.5 -r /opt/mnemo-warmup /out/
+export PATH="$PWD/mnemo-warmup/bin:$PATH"
+mnemo-warmup --version
+```
 
 ## Requirements
 

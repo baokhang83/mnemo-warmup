@@ -230,7 +230,7 @@ now.
 
 * [Faster Java Pod Startups Without GraalVM: Why AppCDS Needs Kubernetes Image Volumes](https://hashnode.dev)
 * [Can JVM caches speed up Spring Boot on Kubernetes? A JDK 21 and JDK 25 study](https://hashnode.dev)
-* [31% to 58% Faster Java Pods on Kubernetes: Benchmarking JDK 25 Leyden AOT from Microservices to a 458-JAR Monolith](https://hashnode.dev)
+* [31% to 58% Faster Java Pods on Kubernetes: Benchmarking JDK 25 Leyden AOT from Microservices to a 458-JAR Monolith](https://baokhang.hashnode.dev/31-to-58-faster-java-pods-on-kubernetes-benchmarking-jdk-25-leyden-aot-from-microservices-to-a-458-jar-monolith)
 
 ## License
 

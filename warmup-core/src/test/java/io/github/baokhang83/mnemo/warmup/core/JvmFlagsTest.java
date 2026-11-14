@@ -22,9 +22,16 @@ class JvmFlagsTest {
     void recognisesTheLayoutAndSizingOptions() {
         List<String> all = List.of(
                 "-Xms64m", "-Xmx1g", "-XX:+UseZGC", "-XX:+UseSerialGC", "-XX:-UseCompressedOops",
-                "-XX:+UseCompactObjectHeaders", "-XX:ObjectAlignmentInBytes=16", "-XX:SoftMaxHeapSize=2g",
+                "-XX:+UseCompactObjectHeaders", "-XX:ObjectAlignmentInBytes=16",
                 "-XX:InitialRAMPercentage=50", "-XX:MaxHeapSize=1g");
         assertEquals(all.size(), JvmFlags.relevant(all, Map.of()).size());
+    }
+
+    @Test
+    void softMaximumIsNotPartOfTheFingerprint() {
+        assertEquals(JvmFlags.relevant(List.of("-Xmx512m", "-XX:SoftMaxHeapSize=128m"), Map.of()),
+                JvmFlags.relevant(List.of("-Xmx512m", "-XX:SoftMaxHeapSize=256m"),
+                        Map.of("JAVA_TOOL_OPTIONS", "-XX:SoftMaxHeapSize=192m")));
     }
 
     @Test

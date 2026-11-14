@@ -6,15 +6,83 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.regex.Pattern;
+import io.github.baokhang83.mnemo.warmup.core.AwsRegistryAuth;
+import io.github.baokhang83.mnemo.warmup.core.OciImageConfigReader;
+import io.github.baokhang83.mnemo.warmup.core.RegistryAuth;
+import io.github.baokhang83.mnemo.warmup.core.RegistryCredentials;
 
 /** Offline manifest transformation; all input is validated before output is returned. */
 final class OfflineInjector {
+    private static final Pattern CACHE_OPTION = Pattern.compile("(?:^|\\s)-XX:(?:SharedArchiveFile|AOTCache|AOTCacheOutput)(?:=|\\s|$)");
     private static final String MARKER = WorkloadDiscovery.PREFIX + "injected-v1";
     private static final String OWNER = WorkloadDiscovery.PREFIX + "owner";
     private static final String CHECKSUM = WorkloadDiscovery.PREFIX + "generated-checksum";
     private static final String TOOLS_REPOSITORY = "ghcr.io/baokhang83/mnemo-warmup-tools";
 
     record Result(String yaml, List<String> notes) {}
+
+    /** Preview-only registry inspection. Errors are deliberately reduced to a generic note. */
+    static List<String> previewImageWarnings(String input, java.util.Map<String, String> env) {
+        return previewImageWarnings(input, image -> OciImageConfigReader.read(image, previewAuth(OciImageConfigReader.registryHost(image), env), Duration.ofSeconds(5)));
+    }
+
+    @FunctionalInterface
+    interface ImageConfigInspector {
+        List<OciImageConfigReader.ImageConfig> inspect(String image);
+    }
+
+    static List<String> previewImageWarnings(String input, ImageConfigInspector inspector) {
+        List<String> warnings = new ArrayList<>();
+        for (Map<String, Object> doc : ManifestStream.parse(input)) {
+            if (!"Deployment".equals(doc.get("kind")) || !"apps/v1".equals(doc.get("apiVersion"))) continue;
+            String workloadName = "opted-in workload";
+            try {
+                Map<String, Object> template = map(map(doc.get("spec"), "spec").get("template"), "template");
+                if (!(template.get("metadata") instanceof Map<?, ?> metadata)
+                        || !(metadata.get("annotations") instanceof Map<?, ?> annotations)
+                        || !"true".equals(annotations.get(WorkloadDiscovery.PREFIX + "enabled"))) continue;
+                WorkloadDiscovery.Workload workload = WorkloadDiscovery.discover(doc);
+                if (workload == null) continue;
+                workloadName = workload.namespace() + "/" + workload.name();
+                List<OciImageConfigReader.ImageConfig> configs = inspector.inspect(workload.image());
+                boolean marker = workload.command().stream().anyMatch(OfflineInjector::hasCacheOption);
+                for (OciImageConfigReader.ImageConfig config : configs) {
+                    marker |= config.entrypoint().stream().anyMatch(OfflineInjector::hasCacheOption);
+                    marker |= config.cmd().stream().anyMatch(OfflineInjector::hasCacheOption);
+                    marker |= config.env().values().stream().anyMatch(OfflineInjector::hasCacheOption);
+                    marker |= "true".equalsIgnoreCase(config.env().get("BP_JVM_AOTCACHE_ENABLED"));
+                    marker |= config.labels().keySet().stream().anyMatch(key -> key.toLowerCase(java.util.Locale.ROOT).contains("aotcache"));
+                }
+                if (marker) warnings.add(workload.namespace() + "/" + workload.name()
+                        + ": image appears to carry a build-time JVM cache; check its JVM cache flags for compatibility with the cluster-trained archive");
+            } catch (RuntimeException e) {
+                // A preview must remain useful when an image is private, missing, malformed, or unreachable.
+                warnings.add(workloadName + ": image metadata could not be inspected; cache presence is unknown");
+            }
+        }
+        return List.copyOf(warnings);
+    }
+
+    private static boolean hasCacheOption(String value) { return CACHE_OPTION.matcher(value).find(); }
+
+    private static RegistryAuth previewAuth(String host, java.util.Map<String, String> env) {
+        String configured = env.get("DOCKER_CONFIG");
+        Path config = configured == null || configured.isBlank()
+                ? Path.of(System.getProperty("user.home"), ".docker", "config.json")
+                : Path.of(configured).resolve("config.json");
+        RegistryCredentials credentials = null;
+        if (Files.isRegularFile(config)) {
+            credentials = RegistryCredentials.fromDockerConfig(config, host).orElse(null);
+            if (credentials == null && host.equals("registry-1.docker.io"))
+                credentials = RegistryCredentials.fromDockerConfig(config, "index.docker.io").orElse(null);
+        }
+        return credentials != null ? RegistryAuth.fixed(credentials)
+                : AwsRegistryAuth.fromEnvironment(host, env).orElse(RegistryAuth.anonymous());
+    }
 
     /**
      * The tools image that matches this CLI: the CLI runs from that image, so its release version is the image tag. A development
@@ -60,24 +128,27 @@ final class OfflineInjector {
             Map<String, Object> app = selected(pod, w.container());
             List<String> managedVolumes = new ArrayList<>(List.of("mnemo-tools", "mnemo-cache", "mnemo-work"));
             if (w.pullSecret() != null) managedVolumes.add("mnemo-registry-pull");
+            if (w.nodeCacheUrl() != null) managedVolumes.addAll(List.of("mnemo-nodecache-identity", "mnemo-nodecache-ca"));
             requireFree(pod, "volumes", managedVolumes);
             requireFree(pod, "initContainers", List.of("mnemo-warmup-install", "mnemo-warmup-fetch"));
             boolean imageVolume = w.imageVolume();
+            boolean inline = imageVolume && w.pullSecret() == null && w.nodeCacheUrl() == null;
             String launcher = launcherPath(imageVolume);
-            List<String> appMounts = appMountNames(imageVolume);
+            List<String> appMounts = appMountNames(inline);
             requireFree(app, "volumeMounts", appMounts);
             requireFree(app, "env", List.of("MNEMO_WARMUP_CACHE_DIR"));
             requireFree(app, "env", List.of("POD_NAMESPACE"));
             requireFreePaths(app, List.of("/mnemo-tools", "/mnemo-cache", "/tmp/mnemo-warmup", "/var/run/mnemo-warmup/registry"));
+            if (w.nodeCacheUrl() != null) requireFreePaths(app, List.of("/var/run/mnemo-warmup/nodecache/identity", "/var/run/mnemo-warmup/nodecache/ca"));
             String copies = describeCopies(pod, app, w);
             Map<String, Object> saved = new LinkedHashMap<>();
             saved.put("container", w.container());
             saved.put("commandPresent", app.containsKey("command")); saved.put("command", app.get("command"));
             saved.put("argsPresent", app.containsKey("args")); saved.put("args", app.get("args"));
             List<Object> commonArgs = commonArgs(w);
-            // In image-volume mode the fetch runs in the application container's own entrypoint: its options go before the "--".
+            // Without a pull secret, image-volume mode fetches in the application entrypoint before the "--".
             List<Object> inlineFetch = new ArrayList<>();
-            if (imageVolume) { inlineFetch.addAll(List.of("--out", "/mnemo-cache")); inlineFetch.addAll(commonArgs); }
+            if (inline) { inlineFetch.addAll(List.of("--out", "/mnemo-cache")); inlineFetch.addAll(commonArgs); }
             saved.put("delivery", w.toolsDelivery());
             saved.put("launcher", launcher);
             saved.put("injectedArgs", launcherExecArgs(w.command(), inlineFetch));
@@ -87,7 +158,13 @@ final class OfflineInjector {
             saved.put("envPresent", app.containsKey("env"));
             append(pod, "volumes", toolsVolume(imageVolume, tools), obj("name", "mnemo-cache", "emptyDir", obj()), obj("name", "mnemo-work", "emptyDir", obj()));
             if (w.pullSecret() != null) append(pod, "volumes", secretVolume("mnemo-registry-pull", w.pullSecret()));
-            if (!imageVolume) {
+            if (w.nodeCacheUrl() != null) {
+                append(pod, "volumes", obj("name", "mnemo-nodecache-identity", "projected", obj("sources", List.of(
+                    obj("serviceAccountToken", obj("audience", w.nodeCacheAudience(), "expirationSeconds", 600, "path", "token"))))),
+                    obj("name", "mnemo-nodecache-ca", "configMap", obj("name", w.nodeCacheCAConfigMap(), "optional", true,
+                        "items", List.of(obj("key", "ca.crt", "path", "ca.crt")))));
+            }
+            if (!inline) {
                 List<Object> fetchArgs = new ArrayList<>(List.of("fetch", "--out", "/mnemo-cache")); fetchArgs.addAll(commonArgs);
                 Map<String, Object> fetch = obj("name", "mnemo-warmup-fetch", "image", w.image(), "command", List.of(launcher), "args", fetchArgs,
                     "volumeMounts", new ArrayList<>(List.of(mount("mnemo-tools", "/mnemo-tools", true), mount("mnemo-cache", "/mnemo-cache", false), mount("mnemo-work", "/tmp/mnemo-warmup", false))));
@@ -98,17 +175,26 @@ final class OfflineInjector {
                     append(fetch, "env", obj("name", "MNEMO_WARMUP_REGISTRY_AUTH", "value", "/var/run/mnemo-warmup/registry/config.json"));
                     append(fetch, "volumeMounts", mount("mnemo-registry-pull", "/var/run/mnemo-warmup/registry", true));
                 }
-                append(pod, "initContainers", install(tools), fetch);
+                if (w.nodeCacheUrl() != null) {
+                    requireFree(fetch, "env", List.of("MNEMO_WARMUP_NODECACHE_URL", "MNEMO_WARMUP_NODECACHE_CA_FILE", "MNEMO_WARMUP_NODECACHE_TOKEN_FILE"));
+                    append(fetch, "env", obj("name", "MNEMO_WARMUP_NODECACHE_URL", "value", w.nodeCacheUrl()),
+                        obj("name", "MNEMO_WARMUP_NODECACHE_CA_FILE", "value", "/var/run/mnemo-warmup/nodecache/ca/ca.crt"),
+                        obj("name", "MNEMO_WARMUP_NODECACHE_TOKEN_FILE", "value", "/var/run/mnemo-warmup/nodecache/identity/token"));
+                    append(fetch, "volumeMounts", mount("mnemo-nodecache-identity", "/var/run/mnemo-warmup/nodecache/identity", true),
+                        mount("mnemo-nodecache-ca", "/var/run/mnemo-warmup/nodecache/ca", true));
+                }
+                if (!imageVolume) append(pod, "initContainers", install(tools));
+                append(pod, "initContainers", fetch);
                 append(app, "volumeMounts", mount("mnemo-tools", "/mnemo-tools", true), mount("mnemo-cache", "/mnemo-cache", true));
             } else {
-                // No init containers: the tools are an image volume, and the cache and scratch volumes are the application container's own.
+                // Inline fetch writes the application container's cache and scratch volumes.
                 append(app, "volumeMounts", mount("mnemo-tools", "/mnemo-tools", true), mount("mnemo-cache", "/mnemo-cache", false), mount("mnemo-work", "/tmp/mnemo-warmup", false));
             }
             append(app, "env", obj("name", "MNEMO_WARMUP_CACHE_DIR", "value", "/mnemo-cache"));
             app.put("command", List.of(launcher)); app.put("args", launcherExecArgs(w.command(), inlineFetch));
             saved.put("volumeNames", managedVolumes);
             saved.put("volumesManaged", managed(pod, "volumes", managedVolumes));
-            if (!imageVolume) saved.put("initContainersManaged", managed(pod, "initContainers", List.of("mnemo-warmup-install", "mnemo-warmup-fetch")));
+            if (!inline) saved.put("initContainersManaged", managed(pod, "initContainers", imageVolume ? List.of("mnemo-warmup-fetch") : List.of("mnemo-warmup-install", "mnemo-warmup-fetch")));
             saved.put("volumeMountsManaged", managed(app, "volumeMounts", appMounts));
             saved.put("envManaged", managed(app, "env", List.of("MNEMO_WARMUP_CACHE_DIR")));
             String savedYaml = ManifestStream.render(List.of(saved));
@@ -117,6 +203,8 @@ final class OfflineInjector {
             generated.addAll(trainer(w, pod, app, commonArgs, tools));
             notes.add(w.namespace() + "/" + w.name() + ": container=" + w.container() + ", image=" + w.image() + ", jar=" + w.jar() + ", store=" + w.store() + ", trainer=" + w.exitMode() + ", tools=" + tools
                     + ", tools-delivery=" + w.toolsDelivery());
+            if (imageVolume) notes.add("  image-volume support cannot be verified offline; check the feature gate and runtime on every eligible node, or use init-container");
+            if (w.nodeCacheUrl() != null) notes.add("  node cache uses a projected service-account token in the fetch init container; cache failure falls back to the registry");
             notes.add("  trainer " + trainerName(w.name()) + " (CronJob, ServiceAccount, Role: leases only) copies from the workload, names only: " + copies);
         }
         output.addAll(generated);
@@ -165,7 +253,7 @@ final class OfflineInjector {
             "containers", List.of(trainer), "volumes", new ArrayList<>(List.of(toolsVolume(w.imageVolume(), tools), obj("name", "mnemo-work", "emptyDir", obj()))));
         if (!w.imageVolume()) trainerPod.put("initContainers", List.of(install(tools)));
         if (pod.get("volumes") instanceof List<?> volumes) for (Object volume : volumes) {
-            if (volume instanceof Map<?, ?> v && !List.of("mnemo-tools", "mnemo-work", "mnemo-cache", "mnemo-registry-pull").contains(v.get("name"))) append(trainerPod, "volumes", volume);
+            if (volume instanceof Map<?, ?> v && !List.of("mnemo-tools", "mnemo-work", "mnemo-cache", "mnemo-registry-pull", "mnemo-nodecache-identity", "mnemo-nodecache-ca").contains(v.get("name"))) append(trainerPod, "volumes", volume);
         }
         if (w.pushSecret() != null) append(trainerPod, "volumes", secretVolume("mnemo-registry-push", w.pushSecret()));
         copyIfPresent(pod, trainerPod, "imagePullSecrets", "nodeSelector", "tolerations", "affinity", "securityContext");
@@ -197,7 +285,7 @@ final class OfflineInjector {
     private static final String LAUNCHER_IMAGE_VOLUME = "/mnemo-tools/opt/mnemo-warmup/bin/mnemo-launcher";
     private static String launcherPath(boolean imageVolume) { return imageVolume ? LAUNCHER_IMAGE_VOLUME : LAUNCHER; }
     /** The application container's volume mounts that this tool owns. */
-    private static List<String> appMountNames(boolean imageVolume) { return imageVolume ? List.of("mnemo-tools", "mnemo-cache", "mnemo-work") : List.of("mnemo-tools", "mnemo-cache"); }
+    private static List<String> appMountNames(boolean inlineFetch) { return inlineFetch ? List.of("mnemo-tools", "mnemo-cache", "mnemo-work") : List.of("mnemo-tools", "mnemo-cache"); }
     private static Map<String, Object> toolsVolume(boolean imageVolume, String tools) {
         return imageVolume ? obj("name", "mnemo-tools", "image", obj("reference", tools, "pullPolicy", "IfNotPresent")) : obj("name", "mnemo-tools", "emptyDir", obj());
     }
@@ -255,17 +343,19 @@ final class OfflineInjector {
         catch (RuntimeException e) { throw new IllegalArgumentException("invalid injector marker", e); }
         Map<String, Object> pod = map(template.get("spec"), "pod spec"); Map<String, Object> app = selected(pod, String.valueOf(saved.get("container")));
         boolean imageVolume = WorkloadDiscovery.IMAGE_VOLUME.equals(saved.get("delivery"));
-        List<String> appMounts = appMountNames(imageVolume);
+        boolean inline = imageVolume && !saved.containsKey("initContainersManaged");
+        List<String> appMounts = appMountNames(inline);
+        List<String> initNames = imageVolume ? List.of("mnemo-warmup-fetch") : List.of("mnemo-warmup-install", "mnemo-warmup-fetch");
         if (!List.of(launcherPath(imageVolume)).equals(app.get("command"))) throw new IllegalArgumentException("managed command was changed");
         if (!java.util.Objects.equals(saved.get("injectedArgs"), app.get("args"))) throw new IllegalArgumentException("managed arguments were changed");
         List<String> volumeNames = WorkloadDiscovery.strings(saved.get("volumeNames"), "managed volume names");
         verifyManaged(pod, saved, "volumes", volumeNames);
-        if (!imageVolume) verifyManaged(pod, saved, "initContainers", List.of("mnemo-warmup-install", "mnemo-warmup-fetch"));
+        if (!inline) verifyManaged(pod, saved, "initContainers", initNames);
         verifyManaged(app, saved, "volumeMounts", appMounts);
         verifyManaged(app, saved, "env", List.of("MNEMO_WARMUP_CACHE_DIR"));
         restoreField(app, saved, "command"); restoreField(app, saved, "args");
         removeNamed(pod, "volumes", volumeNames, Boolean.TRUE.equals(saved.get("volumesPresent")));
-        if (!imageVolume) removeNamed(pod, "initContainers", List.of("mnemo-warmup-install", "mnemo-warmup-fetch"), Boolean.TRUE.equals(saved.get("initContainersPresent")));
+        if (!inline) removeNamed(pod, "initContainers", initNames, Boolean.TRUE.equals(saved.get("initContainersPresent")));
         removeNamed(app, "volumeMounts", appMounts, Boolean.TRUE.equals(saved.get("volumeMountsPresent")));
         removeNamed(app, "env", List.of("MNEMO_WARMUP_CACHE_DIR"), Boolean.TRUE.equals(saved.get("envPresent")));
     }

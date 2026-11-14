@@ -443,7 +443,7 @@ var relevantFlag = []*regexp.Regexp{
 	regexp.MustCompile(`^-Xm[sx]\S+$`),
 	regexp.MustCompile(`^-XX:[+-]Use\w*GC$`),
 	regexp.MustCompile(`^-XX:(Max|Min|Initial)RAMPercentage=\S+$`),
-	regexp.MustCompile(`^-XX:(MaxHeapSize|MinHeapSize|InitialHeapSize|SoftMaxHeapSize)=\S+$`),
+	regexp.MustCompile(`^-XX:(MaxHeapSize|MinHeapSize|InitialHeapSize)=\S+$`),
 	regexp.MustCompile(`^-XX:(ObjectAlignmentInBytes|CompressedClassSpaceSize)=\S+$`),
 	regexp.MustCompile(`^-XX:[+-]UseCompressed(Oops|ClassPointers)$`),
 	regexp.MustCompile(`^-XX:[+-]UseCompactObjectHeaders$`),

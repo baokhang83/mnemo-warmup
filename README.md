@@ -33,6 +33,7 @@ unchanged JVM application. A pod starts from the cache when it fits its launch e
 - **Shorter JVM start-up, no rewrite.** Keep your JDK, your frameworks and your JAR. Pods start from a ready-made class cache instead of loading every class from scratch. In our [GKE study](#measurements), Spring Boot workloads reached Ready 31%–58% faster after application start in single-pod trials; [measure](docs/operations.md#measure-the-benefit) yours.
 - **Three annotations, no source changes.** An injector adds the init containers, the launcher and the trainer to a plain Deployment, and you can preview every change first.
 - **A cache problem never stops a pod.** A missing, outdated, damaged or unreachable cache means an ordinary start, and the log says why.
+- **Optional node-local archive cache.** Reuse verified archive bytes across pods on the same node; if the cache is unavailable, fetch directly from the registry. [Setup and trust requirements](deploy/helm/mnemo-nodecache/README.md).
 - **Set it up once.** When the image or JVM options change, the trainer builds a new cache by itself.
 - **Fits what you already run.** An OCI registry you already have, Helm, and `java` stays PID 1. No controller, webhook or CRD. Works on distroless images.
 - **AppCDS or the AOT cache**, chosen from your image's JDK (AppCDS on 21 and later, Leyden AOT on 25).

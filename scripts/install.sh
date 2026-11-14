@@ -2,10 +2,10 @@
 # Install the platform-independent CLI from a GitHub release. Java 21+ is required to run it.
 set -eu
 
-version=${MNEMO_VERSION:-v0.3.0-beta.1}
+version=${MNEMO_VERSION:-v0.3.0-beta.2}
 prefix=${MNEMO_INSTALL_PREFIX:-"${HOME:?HOME is required}/.local"}
 printf '%s\n' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$' || {
-    echo "Invalid MNEMO_VERSION: expected a tag such as v0.3.0-beta.1" >&2; exit 1;
+    echo "Invalid MNEMO_VERSION: expected a tag such as v0.3.0-beta.2" >&2; exit 1;
 }
 case "$prefix" in /*) ;; *) echo "MNEMO_INSTALL_PREFIX must be an absolute path" >&2; exit 1 ;; esac
 command -v curl >/dev/null 2>&1 || { echo "curl is required" >&2; exit 1; }

@@ -1,6 +1,9 @@
 package io.github.baokhang83.mnemo.warmup.cli;
 
 import static org.junit.jupiter.api.Assertions.*;
+import io.github.baokhang83.mnemo.warmup.core.OciImageConfigReader;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class OfflineInjectorTest {
@@ -28,6 +31,31 @@ class OfflineInjectorTest {
         kind: Service
         metadata: {name: service, namespace: test}
         """;
+    @Test void previewWarnsOnImageCacheOptionsWithoutPrintingTheirValues() {
+        var warnings = OfflineInjector.previewImageWarnings(INPUT, image -> {
+            assertEquals("example/demo:1", image);
+            return List.of(new OciImageConfigReader.ImageConfig(
+                    List.of("java", "-XX:SharedArchiveFile=/sensitive/app.jsa"), List.of(),
+                    Map.of("JAVA_TOOL_OPTIONS", "-XX:AOTCache=/private/cache", "TOKEN", "secret-value"), Map.of()));
+        });
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("image appears to carry a build-time JVM cache"));
+        assertFalse(warnings.toString().contains("sensitive"));
+        assertFalse(warnings.toString().contains("private"));
+        assertFalse(warnings.toString().contains("secret-value"));
+    }
+
+    @Test void previewInspectionFailureIsNonBlockingAndSanitized() {
+        var warnings = OfflineInjector.previewImageWarnings(INPUT, image -> { throw new RuntimeException("secret-token"); });
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("cache presence is unknown"));
+        assertFalse(warnings.toString().contains("secret-token"));
+    }
+
+    @Test void previewSkipsRegistryInspectionForUnoptedWorkloads() {
+        String unrelated = INPUT.replace("warmup.mnemo.io/enabled: \"true\"", "warmup.mnemo.io/enabled: \"false\"");
+        assertTrue(OfflineInjector.previewImageWarnings(unrelated, image -> { fail("unexpected registry read"); return List.of(); }).isEmpty());
+    }
     @Test void emitsWorkloadAndTrainerAndIsStableOnReinjection() {
         var first = inject(INPUT);
         assertEquals(6, ManifestStream.parse(first.yaml()).size());
@@ -209,6 +237,7 @@ class OfflineInjectorTest {
         assertEquals(6, ManifestStream.parse(first.yaml()).size());
         assertEquals(ManifestStream.parse(first.yaml()), ManifestStream.parse(inject(first.yaml()).yaml()));
         assertTrue(String.join("\n", first.notes()).contains("tools-delivery=image-volume"));
+        assertTrue(String.join("\n", first.notes()).contains("cannot be verified offline"));
     }
     @Test void disablingAnImageVolumeInjectionRestoresTheOriginalDeployment() {
         String injected = inject(IMAGE_VOLUME_INPUT).yaml();
@@ -237,12 +266,27 @@ class OfflineInjectorTest {
         assertEquals(2, ((java.util.List<?>) back.get("initContainers")).size());
         assertEquals(java.util.List.of("/mnemo-tools/bin/mnemo-launcher"), only((java.util.List<?>) back.get("containers")).get("command"));
     }
-    @Test void imageVolumeRefusesAPullSecretBecauseTheApplicationWouldReadIt() {
+    @Test void imageVolumeWithPullSecretUsesAnIsolatedFetchContainer() {
         String input = IMAGE_VOLUME_INPUT.replace("warmup.mnemo.io/exit-mode: spring-refresh", "warmup.mnemo.io/exit-mode: spring-refresh\n        warmup.mnemo.io/pull-secret: read-auth");
-        var e = assertThrows(IllegalArgumentException.class, () -> inject(input));
-        assertTrue(e.getMessage().contains("pull-secret") && e.getMessage().contains("init-container"), e.getMessage());
-        // the push secret belongs to the trainer and is fine
-        assertDoesNotThrow(() -> inject(IMAGE_VOLUME_INPUT.replace("warmup.mnemo.io/exit-mode: spring-refresh", "warmup.mnemo.io/exit-mode: spring-refresh\n        warmup.mnemo.io/push-secret: write-auth")));
+        String output = inject(input).yaml();
+        var pod = podSpec(ManifestStream.parse(output).get(0));
+        var fetch = only((java.util.List<?>) pod.get("initContainers"));
+        assertEquals("mnemo-warmup-fetch", fetch.get("name"));
+        assertEquals(java.util.List.of(LAUNCHER_IV), fetch.get("command"));
+        assertTrue(fetch.toString().contains("mnemo-registry-pull"));
+        var app = only((java.util.List<?>) pod.get("containers"));
+        assertFalse(app.toString().contains("mnemo-registry-pull"));
+        assertFalse(app.toString().contains("MNEMO_WARMUP_REGISTRY_AUTH"));
+        assertEquals(java.util.List.of("exec", "--", "java", "-jar", "/app/app.jar"), app.get("args"));
+        assertEquals(ManifestStream.parse(output), ManifestStream.parse(inject(output).yaml()), "reinjection is stable");
+        String edited = output.replace("name: mnemo-warmup-fetch", "name: user-modified-fetch");
+        assertNotEquals(output, edited);
+        assertThrows(IllegalArgumentException.class, () -> inject(edited), "managed fetch edits must not be silently discarded");
+        String disabled = output.replace("warmup.mnemo.io/enabled: 'true'", "warmup.mnemo.io/enabled: 'false'")
+                .replace("warmup.mnemo.io/enabled: \"true\"", "warmup.mnemo.io/enabled: \"false\"");
+        var restored = podSpec(ManifestStream.parse(inject(disabled).yaml()).get(0));
+        assertNull(restored.get("initContainers"));
+        assertNull(restored.get("volumes"));
     }
     @Test void anUnknownDeliveryModeIsAnError() {
         var e = assertThrows(IllegalArgumentException.class, () -> inject(INPUT.replace("warmup.mnemo.io/exit-mode: spring-refresh", "warmup.mnemo.io/exit-mode: spring-refresh\n        warmup.mnemo.io/tools-delivery: sidecar")));
@@ -256,5 +300,71 @@ class OfflineInjectorTest {
     @Test void editedImageVolumeCommandIsRejected() {
         String edited = inject(IMAGE_VOLUME_INPUT).yaml().replace(LAUNCHER_IV, "/usr/bin/other");
         assertThrows(IllegalArgumentException.class, () -> inject(edited));
+    }
+
+    private static String withNodeCache(String input) {
+        return input.replace("warmup.mnemo.io/exit-mode: spring-refresh", "warmup.mnemo.io/exit-mode: spring-refresh\n"
+                + "        warmup.mnemo.io/node-cache-url: https://cache-nodecache.cache-system.svc:8443\n"
+                + "        warmup.mnemo.io/node-cache-ca-configmap: cache-ca\n"
+                + "        warmup.mnemo.io/node-cache-audience: mnemo-nodecache");
+    }
+
+    @Test void nodeCacheCredentialsAreMountedOnlyInFetchAndReinjectionIsStable() {
+        for (String input : List.of(INPUT, IMAGE_VOLUME_INPUT)) {
+            String output = inject(withNodeCache(input)).yaml();
+            var docs = ManifestStream.parse(output);
+            var pod = podSpec(docs.get(0));
+            @SuppressWarnings("unchecked")
+            var init = (List<Map<String, Object>>) pod.get("initContainers");
+            var fetch = init.stream().filter(c -> "mnemo-warmup-fetch".equals(c.get("name"))).findFirst().orElseThrow();
+            var app = only((List<?>) pod.get("containers"));
+            assertTrue(fetch.toString().contains("mnemo-nodecache-identity"));
+            assertTrue(fetch.toString().contains("mnemo-nodecache-ca"));
+            assertTrue(fetch.toString().contains("MNEMO_WARMUP_NODECACHE_TOKEN_FILE"));
+            assertFalse(app.toString().contains("mnemo-nodecache"));
+            assertFalse(app.toString().contains("MNEMO_WARMUP_NODECACHE"));
+            assertTrue(pod.get("volumes").toString().contains("serviceAccountToken"));
+            assertTrue(pod.get("volumes").toString().contains("mnemo-nodecache"));
+            assertTrue(pod.get("volumes").toString().contains("optional=true"));
+            var cron = docs.stream().filter(d -> "CronJob".equals(d.get("kind"))).findFirst().orElseThrow();
+            assertFalse(cron.toString().contains("mnemo-nodecache-identity"), "trainer must not receive the cache token");
+            assertEquals(docs, ManifestStream.parse(inject(output).yaml()), "reinjection must be stable");
+            String disabled = output.replace("warmup.mnemo.io/enabled: 'true'", "warmup.mnemo.io/enabled: 'false'")
+                    .replace("warmup.mnemo.io/enabled: \"true\"", "warmup.mnemo.io/enabled: \"false\"");
+            var restored = podSpec(ManifestStream.parse(inject(disabled).yaml()).get(0));
+            assertNull(restored.get("volumes"));
+            assertNull(restored.get("initContainers"));
+        }
+    }
+
+    @Test void nodeCacheRequiresAllAnnotationsAndAnHttpsOrigin() {
+        String full = withNodeCache(INPUT);
+        for (String bad : List.of(
+                full.replace("        warmup.mnemo.io/node-cache-audience: mnemo-nodecache\n", ""),
+                full.replace("https://cache-nodecache.cache-system.svc:8443", "http://cache-nodecache.cache-system.svc:8443"),
+                full.replace("https://cache-nodecache.cache-system.svc:8443", "https://cache-nodecache.cache-system.svc:8443/path"))) {
+            assertThrows(IllegalArgumentException.class, () -> inject(bad));
+        }
+    }
+
+    @Test void removingNodeCacheAnnotationsRestoresTheOriginalDeliveryMode() {
+        for (String input : List.of(INPUT, IMAGE_VOLUME_INPUT)) {
+            String injected = inject(withNodeCache(input)).yaml();
+            String withoutCache = injected.replaceAll("(?m)^[ \\t]*warmup\\.mnemo\\.io/node-cache-(url|ca-configmap|audience):.*\\n", "");
+            assertNotEquals(injected, withoutCache);
+            var pod = podSpec(ManifestStream.parse(inject(withoutCache).yaml()).get(0));
+            assertFalse(pod.toString().contains("mnemo-nodecache"));
+            assertFalse(pod.toString().contains("MNEMO_WARMUP_NODECACHE"));
+            if (input.equals(IMAGE_VOLUME_INPUT)) assertNull(pod.get("initContainers"));
+            else assertEquals(2, ((List<?>) pod.get("initContainers")).size());
+        }
+    }
+
+    @Test void nodeCacheRejectsInjectedEnvironmentAndVolumeCollisions() {
+        String envCollision = withNodeCache(INPUT).replace("command: [java, -jar, /app/app.jar]",
+                "command: [java, -jar, /app/app.jar]\n          env: [{name: MNEMO_WARMUP_NODECACHE_URL, value: https://other}]");
+        assertThrows(IllegalArgumentException.class, () -> inject(envCollision));
+        String volumeCollision = withNodeCache(INPUT).replace("      containers:\n", "      volumes: [{name: mnemo-nodecache-ca, emptyDir: {}}]\n      containers:\n");
+        assertThrows(IllegalArgumentException.class, () -> inject(volumeCollision));
     }
 }

@@ -2,6 +2,8 @@
 
 Status: accepted (v0.2.6), opt-in
 
+Update: the injector now permits a pull Secret or node cache with image-volume delivery by using a fetch init container. The original inline-only restriction below describes the earlier decision; see the [current configuration guide](../configuration.md#tools-delivery-init-containers-or-an-image-volume).
+
 ## Context
 
 Two init containers run before every application start: `mnemo-warmup-install` copies the tools out of the tools image into a

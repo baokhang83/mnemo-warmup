@@ -10,7 +10,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -198,15 +197,35 @@ class RunCommandTest {
         assertTrue(child.waitFor(10, TimeUnit.SECONDS), "the child must be killed");
     }
 
-    /**
-     * The real thing: SIGTERM to a running `run --spawn` JVM must not end before its child has.
-     *
-     * <p>DISABLED: unstable on CI (Linux amd64, JDK 21, dash). The diagnostics show the wrapper exiting about 10 ms after the
-     * signal with exit 143 while the child never logs "trap-fired", i.e. the child was never sent SIGTERM. Whether that is a test
-     * artefact or a remaining gap in the shutdown hook is not settled, so this must be re-enabled once it is understood.
-     * The deterministic checks of {@code stop()} above still run.
-     */
-    @Disabled("unstable on CI (linux/amd64, JDK 21): wrapper exits ~10 ms after SIGTERM without signalling its child; see #52")
+    @Test
+    void shutdownWaitsForChildPublicationBeforeForwarding() throws Exception {
+        assumeTrue(Files.isExecutable(Path.of("/bin/sh")));
+        Path ready = dir.resolve("handoff-ready");
+        Path marker = dir.resolve("handoff-done");
+        Process child = new ProcessBuilder("/bin/sh", "-c",
+                "trap 'echo done > \"$2\"; exit 0' TERM; echo ready > \"$1\"; while :; do sleep 0.1; done",
+                "sh", ready.toString(), marker.toString()).start();
+        var publication = new java.util.concurrent.CompletableFuture<Process>();
+        Thread hook = new Thread(() -> Main.Run.stopWhenPublished(publication, java.time.Duration.ofSeconds(5)));
+        try {
+            awaitFile(ready);
+            hook.start();
+            // The child is already running, but the start thread has not published it yet.
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (hook.getState() != Thread.State.TIMED_WAITING && System.nanoTime() < deadline) {
+                Thread.sleep(1);
+            }
+            assertEquals(Thread.State.TIMED_WAITING, hook.getState(), "hook must wait for publication");
+            publication.complete(child);
+            hook.join(10000);
+            assertTrue(!hook.isAlive(), "shutdown hook must finish");
+            assertTrue(Files.exists(marker), "child must receive SIGTERM and finish its trap");
+        } finally {
+            child.destroyForcibly();
+        }
+    }
+
+    /** SIGTERM to the wrapper must wait for its child to finish. */
     @Test
     void sigtermToTheSpawningJvmWaitsForTheChildToFinishItsShutdown() throws Exception {
         assumeTrue(Files.isExecutable(Path.of("/bin/sh")));

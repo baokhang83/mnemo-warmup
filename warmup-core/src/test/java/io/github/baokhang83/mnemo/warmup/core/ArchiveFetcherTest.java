@@ -97,6 +97,30 @@ class ArchiveFetcherTest {
     }
 
     @Test
+    void selectsStoredHeapProfilesAndFallsBackForAnUntrainedProfile() throws Exception {
+        var base = live(CacheStrategy.APP_CDS);
+        var small = new ArchiveManifest(base.schemaVersion(), base.cacheType(), base.jdk(), null,
+                List.of("-Xmx256m"), base.classpath(), null);
+        var large = new ArchiveManifest(base.schemaVersion(), base.cacheType(), base.jdk(), null,
+                List.of("-Xmx1g"), base.classpath(), null);
+        var missing = new ArchiveManifest(base.schemaVersion(), base.cacheType(), base.jdk(), null,
+                List.of("-Xmx2g"), base.classpath(), null);
+        var store = new MemoryStore();
+        for (var entry : Map.of(small, "small", large, "large").entrySet()) {
+            var archived = entry.getKey().withArchive(Files.writeString(tmp.resolve(entry.getValue()), entry.getValue()));
+            store.manifests.put(archived.fingerprint(), archived);
+            store.contents.put(archived.fingerprint(), entry.getValue());
+        }
+        Path out = tmp.resolve("profiles");
+        assertEquals(ArchiveFetcher.Outcome.HIT, new ArchiveFetcher().fetch(store, List.of(small), out).outcome());
+        assertEquals("small", Files.readString(out.resolve("app.bin")));
+        assertEquals(ArchiveFetcher.Outcome.HIT, new ArchiveFetcher().fetch(store, List.of(large), out).outcome());
+        assertEquals("large", Files.readString(out.resolve("app.bin")));
+        assertEquals(ArchiveFetcher.Outcome.MISS, new ArchiveFetcher().fetch(store, List.of(missing), out).outcome());
+        assertFalse(Files.exists(out.resolve(ArchiveFetcher.FLAGS_FILE)), "a missing profile must not retain stale flags");
+    }
+
+    @Test
     void prefersTheFirstCandidateAndDoesNotAskForTheRest() throws Exception {
         var store = new MemoryStore();
         for (CacheStrategy type : CacheStrategy.values()) {

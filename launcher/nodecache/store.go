@@ -17,13 +17,20 @@ import (
 	"sync"
 )
 
-var digestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+var (
+	digestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	keyPattern    = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	ErrCapacity   = errors.New("node cache storage capacity exhausted")
+)
 
 // Store holds verified blobs in a private, service-owned directory. It is not a
 // security boundary and must not be mounted by untrusted workloads.
 type Store struct {
 	dir      string
 	maxBlob  int64
+	maxTotal int64
+	used     int64
+	reserved int64
 	mu       sync.Mutex
 	inflight map[string]*flight
 }
@@ -39,11 +46,12 @@ type RepositoryScope struct {
 	Registry, Repository string
 }
 
-// NewStore opens a private directory. maxBlob limits the size of each fill;
-// total storage limits and eviction are a separate responsibility.
-func NewStore(dir string, maxBlob int64) (*Store, error) {
-	if dir == "" || maxBlob <= 0 {
-		return nil, errors.New("cache directory and positive blob limit are required")
+// NewStore opens a private directory owned by exactly one store process.
+// Limits count blob payload and in-progress fills, not filesystem metadata.
+// This store does not evict entries; a full cache rejects new fills.
+func NewStore(dir string, maxBlob, maxTotal int64) (*Store, error) {
+	if dir == "" || maxBlob <= 0 || maxTotal < maxBlob {
+		return nil, errors.New("cache directory and valid blob and total limits are required")
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
@@ -52,7 +60,28 @@ func NewStore(dir string, maxBlob int64) (*Store, error) {
 	if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
 		return nil, errors.New("cache directory must be a private directory")
 	}
-	return &Store{dir: dir, maxBlob: maxBlob, inflight: make(map[string]*flight)}, nil
+	s := &Store{dir: dir, maxBlob: maxBlob, maxTotal: maxTotal, inflight: make(map[string]*flight)}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return nil, errors.New("cache contains an invalid entry")
+		}
+		if strings.HasPrefix(entry.Name(), ".fill-") {
+			if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
+				return nil, errors.New("cannot remove interrupted cache fill")
+			}
+			continue
+		}
+		if !keyPattern.MatchString(entry.Name()) || info.Size() > maxTotal-s.used {
+			return nil, errors.New("cache contains an invalid entry or exceeds its limit")
+		}
+		s.used += info.Size()
+	}
+	return s, nil
 }
 
 // Get returns a verified file for digest in scope, fetching it on a miss. Callers must
@@ -100,12 +129,38 @@ func scopedKey(scope RepositoryScope, digest string) string {
 
 func (s *Store) get(ctx context.Context, key, digest string, size int64, open func(context.Context) (io.ReadCloser, error)) (string, error) {
 	path := filepath.Join(s.dir, key)
-	if verifyFile(path, digest, size) == nil {
-		return path, nil
+	info, statErr := os.Lstat(path)
+	if statErr == nil {
+		if !info.Mode().IsRegular() {
+			return "", errors.New("cache entry is not a regular file")
+		}
+		if verifyFile(path, digest, info.Size()) == nil {
+			if info.Size() != size {
+				return "", errors.New("cache blob size differs from requested size")
+			}
+			return path, nil
+		}
+		// Keep the corrupt entry until safe removal is implemented. Unlinking a
+		// file still held by a reader can consume disk after accounting frees it.
+		return "", errors.New("cache blob failed verification")
+	} else if !os.IsNotExist(statErr) {
+		return "", statErr
 	}
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	s.mu.Lock()
+	if size > s.maxTotal-s.used-s.reserved {
+		s.mu.Unlock()
+		return "", ErrCapacity
+	}
+	s.reserved += size
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.reserved -= size
+		s.mu.Unlock()
+	}()
 	src, err := open(ctx)
 	if err != nil {
 		return "", err
@@ -117,7 +172,15 @@ func (s *Store) get(ctx context.Context, key, digest string, size int64, open fu
 	}
 	defer os.Remove(tmp.Name())
 	h := sha256.New()
-	n, copyErr := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(src, size+1))
+	n, copyErr := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(src, size))
+	if copyErr == nil && n == size {
+		var extra [1]byte
+		if count, err := io.ReadFull(src, extra[:]); count != 0 {
+			copyErr = errors.New("cache fill exceeds declared size")
+		} else if err != io.EOF {
+			copyErr = err
+		}
+	}
 	if closeErr := tmp.Close(); copyErr == nil {
 		copyErr = closeErr
 	}
@@ -133,6 +196,9 @@ func (s *Store) get(ctx context.Context, key, digest string, size int64, open fu
 	if err := os.Rename(tmp.Name(), path); err != nil {
 		return "", fmt.Errorf("publish cache blob: %w", err)
 	}
+	s.mu.Lock()
+	s.used += size
+	s.mu.Unlock()
 	return path, nil
 }
 

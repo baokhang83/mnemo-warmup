@@ -22,7 +22,7 @@ func digestOf(b []byte) string {
 }
 
 func TestConcurrentMissesShareOneVerifiedFill(t *testing.T) {
-	s, err := NewStore(filepath.Join(t.TempDir(), "cache"), 1024)
+	s, err := NewStore(filepath.Join(t.TempDir(), "cache"), 1024, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,9 +71,9 @@ func TestConcurrentMissesShareOneVerifiedFill(t *testing.T) {
 	}
 }
 
-func TestInvalidFillIsNotPublishedAndCorruptHitIsReplaced(t *testing.T) {
+func TestInvalidFillIsNotPublishedAndCorruptHitIsRejected(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "cache")
-	s, err := NewStore(dir, 1024)
+	s, err := NewStore(dir, 1024, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,22 +88,21 @@ func TestInvalidFillIsNotPublishedAndCorruptHitIsReplaced(t *testing.T) {
 	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
 		t.Fatalf("unverified files remain: %v %v", entries, err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, scopedKey(testScope, digest)), []byte("corrupt"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	good := func(context.Context) (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(data)), nil }
 	path, err := s.Get(context.Background(), testScope, digest, int64(len(data)), good)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(got, data) {
-		t.Fatalf("got %q: %v", got, err)
+	if err := os.WriteFile(path, []byte("corrupt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Get(context.Background(), testScope, digest, int64(len(data)), good); err == nil {
+		t.Fatal("accepted corrupt cache hit")
 	}
 }
 
 func TestWaiterCancellationAndBounds(t *testing.T) {
-	s, err := NewStore(filepath.Join(t.TempDir(), "cache"), 10)
+	s, err := NewStore(filepath.Join(t.TempDir(), "cache"), 10, 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +134,7 @@ func TestWaiterCancellationAndBounds(t *testing.T) {
 }
 
 func TestBlobCannotBeReusedAcrossRepositoryScopes(t *testing.T) {
-	s, err := NewStore(filepath.Join(t.TempDir(), "cache"), 1024)
+	s, err := NewStore(filepath.Join(t.TempDir(), "cache"), 1024, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,5 +153,69 @@ func TestBlobCannotBeReusedAcrossRepositoryScopes(t *testing.T) {
 		if _, err := s.Get(context.Background(), scope, digestOf(data), int64(len(data)), denied); err == nil {
 			t.Fatalf("cross-repository cache hit: %+v", scope)
 		}
+	}
+}
+
+func TestCapacityReservesConcurrentFillsAndRecountsOnRestart(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "cache")
+	s, err := NewStore(dir, 8, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, second := []byte("first!!"), []byte("second")
+	started, release := make(chan struct{}), make(chan struct{})
+	blocked := func(context.Context) (io.ReadCloser, error) {
+		close(started)
+		<-release
+		return io.NopCloser(bytes.NewReader([]byte("corrupt"))), nil
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.Get(context.Background(), testScope, digestOf(first), int64(len(first)), blocked)
+		done <- err
+	}()
+	<-started
+	called := false
+	good := func(context.Context) (io.ReadCloser, error) {
+		called = true
+		return io.NopCloser(bytes.NewReader(second)), nil
+	}
+	if _, err := s.Get(context.Background(), testScope, digestOf(second), int64(len(second)), good); !errors.Is(err, ErrCapacity) || called {
+		t.Fatalf("concurrent reservation: %v, source called %v", err, called)
+	}
+	close(release)
+	if err := <-done; err == nil {
+		t.Fatal("accepted invalid first fill")
+	}
+	if _, err := s.Get(context.Background(), testScope, digestOf(second), int64(len(second)), good); err != nil {
+		t.Fatal(err)
+	}
+	// A restarted single owner must count the existing file before accepting fills.
+	restarted, err := NewStore(dir, 8, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restarted.Get(context.Background(), testScope, digestOf(first), int64(len(first)), good); !errors.Is(err, ErrCapacity) {
+		t.Fatalf("restart capacity: %v", err)
+	}
+}
+
+func TestIncorrectDescriptorDoesNotRemoveVerifiedBlob(t *testing.T) {
+	s, err := NewStore(filepath.Join(t.TempDir(), "cache"), 10, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("archive")
+	open := func(context.Context) (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(data)), nil }
+	path, err := s.Get(context.Background(), testScope, digestOf(data), int64(len(data)), open)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Get(context.Background(), testScope, digestOf(data), int64(len(data)-1), open); err == nil {
+		t.Fatal("accepted wrong descriptor size")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("verified entry removed: %v", err)
 	}
 }

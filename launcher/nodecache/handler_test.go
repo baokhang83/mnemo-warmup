@@ -58,7 +58,7 @@ func TestHandlerReauthorizesCacheHits(t *testing.T) {
 		}
 		return io.NopCloser(bytes.NewReader(data)), nil
 	})
-	store, err := NewStore(filepath.Join(t.TempDir(), "cache"), 1024)
+	store, err := NewStore(filepath.Join(t.TempDir(), "cache"), 1024, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestHandlerReauthorizesCacheHits(t *testing.T) {
 }
 
 func TestHandlerRequiresTLS(t *testing.T) {
-	store, err := NewStore(filepath.Join(t.TempDir(), "cache"), 1024)
+	store, err := NewStore(filepath.Join(t.TempDir(), "cache"), 1024, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestRegistryRevocationDeniesAnExistingCacheHit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := NewStore(filepath.Join(t.TempDir(), "cache"), 1024)
+	store, err := NewStore(filepath.Join(t.TempDir(), "cache"), 1024, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}

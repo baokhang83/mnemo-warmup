@@ -128,7 +128,7 @@ func TestHandlerSeparatesCallerAndSourceCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := NewStore(filepath.Join(t.TempDir(), "cache"), 1024)
+	store, err := NewStore(filepath.Join(t.TempDir(), "cache"), 1024, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}

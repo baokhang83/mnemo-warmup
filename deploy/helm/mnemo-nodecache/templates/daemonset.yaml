@@ -1,0 +1,72 @@
+{{- $tag := required "image.tag must identify a tools image containing mnemo-nodecache" .Values.image.tag -}}
+{{- $secret := required "configurationSecret must name an existing node cache configuration Secret" .Values.configurationSecret -}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "mnemo-nodecache.name" . }}
+  labels:
+    {{- include "mnemo-nodecache.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "mnemo-nodecache.labels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mnemo-nodecache.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "mnemo-nodecache.name" . }}
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 20
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: nodecache
+          image: {{ printf "%s:%s" .Values.image.repository $tag | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/opt/mnemo-warmup/bin/mnemo-nodecache", "--config", "/etc/mnemo-nodecache/config.json"]
+          ports:
+            - name: https
+              containerPort: 8443
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            tcpSocket: {port: https}
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: https}
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/mnemo-nodecache
+              readOnly: true
+            - name: cache
+              mountPath: /var/cache/mnemo
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ $secret | quote }}
+            defaultMode: 0440
+        - name: cache
+          emptyDir:
+            sizeLimit: {{ .Values.cacheVolumeSize | quote }}

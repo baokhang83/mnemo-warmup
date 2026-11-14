@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -129,7 +130,13 @@ func (l launcher) nativeFetch(args []string, strict bool) (int, bool) {
 	}
 	env := envMap(l.environ)
 	t := newTimer(env["MNEMO_WARMUP_TIMING"] == "1", "native fetch")
+	cpuBefore, cpuMeasured := cgroupCPUUsageUsec()
 	hit, err := l.nativeLookup(o, env, t)
+	if cpuMeasured && env["MNEMO_WARMUP_TIMING"] == "1" {
+		if cpuAfter, ok := cgroupCPUUsageUsec(); ok && cpuAfter >= cpuBefore {
+			fmt.Fprintf(l.stderr, "fetch: timing: cgroup-cpu-usage=%d usec\n", cpuAfter-cpuBefore)
+		}
+	}
 	var nj needJava
 	switch {
 	case errors.As(err, &nj):
@@ -157,6 +164,28 @@ func (l launcher) nativeFetch(args []string, strict bool) (int, bool) {
 	fmt.Fprintf(l.stdout, "Archive: %s (%s), fingerprint %s\n", hit.archive, hit.cacheType, hit.fingerprint)
 	fmt.Fprintf(l.stdout, "Flags: %s\n", hit.flags)
 	return 0, true
+}
+
+// cgroupCPUUsageUsec reads this container's cumulative CPU time from cgroup v2. The fetch init
+// container has its own cgroup, so the delta measures CPU used while native fetch is running.
+func cgroupCPUUsageUsec() (uint64, bool) {
+	b, err := os.ReadFile("/sys/fs/cgroup/cpu.stat")
+	if err != nil {
+		return 0, false
+	}
+	return parseCgroupCPUUsageUsec(b)
+}
+
+func parseCgroupCPUUsageUsec(data []byte) (uint64, bool) {
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, ok := strings.Cut(line, " ")
+		if !ok || key != "usage_usec" {
+			continue
+		}
+		usage, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
+		return usage, err == nil
+	}
+	return 0, false
 }
 
 func slicesContains(list []string, s string) bool {
@@ -282,14 +311,17 @@ func clearOutput(dir string) error {
 // ---- the registry ----
 
 type registry struct {
-	base    *url.URL
-	repo    string
-	client  *http.Client
-	user    string
-	pass    string
-	hasAuth bool
-	authz   string
-	timeout time.Duration
+	base           *url.URL
+	repo           string
+	client         *http.Client
+	user           string
+	pass           string
+	hasAuth        bool
+	authz          string
+	timeout        time.Duration
+	transferTiming func(int64, time.Duration)
+	nodeCache      *nodeCacheClient
+	cacheNote      func(string)
 }
 
 func (l launcher) openRegistry(o fetchOptions, env map[string]string) (*registry, error) {
@@ -306,6 +338,18 @@ func (l launcher) openRegistry(o fetchOptions, env map[string]string) (*registry
 		scheme = "http"
 	}
 	r := &registry{base: &url.URL{Scheme: scheme, Host: host}, repo: repo, timeout: o.timeout}
+	cache, cacheErr := newNodeCacheClient(env)
+	if cacheErr != nil {
+		l.note("node cache configuration unavailable; using registry")
+	} else {
+		r.nodeCache = cache
+	}
+	r.cacheNote = func(message string) { l.note("%s", message) }
+	if env["MNEMO_WARMUP_TIMING"] == "1" {
+		r.transferTiming = func(bytes int64, elapsed time.Duration) {
+			fmt.Fprintf(l.stderr, "fetch: timing: archive-transfer-hash-write=%d ms, archive-bytes=%d\n", elapsed.Milliseconds(), bytes)
+		}
+	}
 	auth := o.registryAuth
 	if auth == "" {
 		auth = env["MNEMO_WARMUP_REGISTRY_AUTH"]
@@ -628,8 +672,19 @@ func (r *registry) fetchArchive(fp string, live manifestJSON, out string) (*fetc
 		return nil, registryError{"the stored manifest names an archive file outside the output directory"}
 	}
 	target := filepath.Join(out, name)
-	if err := r.download("/v2/"+r.repo+"/blobs/"+layer.Digest, layer, target); err != nil {
-		return nil, err
+	cached := false
+	if r.nodeCache != nil {
+		if err := r.nodeCache.download(r.base.Host, r.repo, r.authz, layer, target, r.transferTiming,
+			func(status string) { r.cacheNote("node cache " + status + ": verified archive") }); err == nil {
+			cached = true
+		} else {
+			r.cacheNote("node cache unavailable or invalid: " + err.Error() + "; trying registry directly")
+		}
+	}
+	if !cached {
+		if err := r.download("/v2/"+r.repo+"/blobs/"+layer.Digest, layer, target); err != nil {
+			return nil, err
+		}
 	}
 	abs, err := filepath.Abs(target)
 	if err != nil {
@@ -664,6 +719,7 @@ func (r *registry) download(path string, want ociDescriptor, target string) erro
 	}
 	defer os.Remove(tmp.Name())
 	h := sha256.New()
+	started := time.Now()
 	n, err := io.Copy(io.MultiWriter(tmp, h), &limitedIdle{r: resp.Body, left: want.Size + 1, touch: sess.touch})
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
@@ -676,6 +732,9 @@ func (r *registry) download(path string, want ociDescriptor, target string) erro
 	}
 	if n != want.Size || "sha256:"+hex.EncodeToString(h.Sum(nil)) != want.Digest {
 		return registryError{"downloaded archive failed verification (size or digest mismatch)"}
+	}
+	if r.transferTiming != nil {
+		r.transferTiming(n, time.Since(started))
 	}
 	if err := os.Rename(tmp.Name(), target); err != nil {
 		return registryError{"cannot publish the archive: " + err.Error()}

@@ -10,9 +10,9 @@ import java.util.regex.Pattern;
  * Picks the JVM options that can make an archive unusable (heap size, GC, pointer layout) out of
  * everything passed to the JVM.
  *
- * <p>This is a <em>conservative</em> set: it errs towards including a flag. Which flags really
- * invalidate an archive is being measured in issue #20; flags will be dropped from here only
- * once that is shown.
+ * <p>This is a <em>conservative</em> set: it errs towards including a flag. SoftMaxHeapSize is
+ * excluded: the compatibility study found that changing this soft target preserves archive reuse.
+ * Heap and GC settings remain because they can change the effective pointer layout.
  */
 final class JvmFlags {
 
@@ -20,7 +20,7 @@ final class JvmFlags {
             Pattern.compile("-Xm[sx]\\S+"),
             Pattern.compile("-XX:[+-]Use\\w*GC"),
             Pattern.compile("-XX:(Max|Min|Initial)RAMPercentage=\\S+"),
-            Pattern.compile("-XX:(MaxHeapSize|MinHeapSize|InitialHeapSize|SoftMaxHeapSize)=\\S+"),
+            Pattern.compile("-XX:(MaxHeapSize|MinHeapSize|InitialHeapSize)=\\S+"),
             Pattern.compile("-XX:(ObjectAlignmentInBytes|CompressedClassSpaceSize)=\\S+"),
             Pattern.compile("-XX:[+-]UseCompressed(Oops|ClassPointers)"),
             Pattern.compile("-XX:[+-]UseCompactObjectHeaders"));

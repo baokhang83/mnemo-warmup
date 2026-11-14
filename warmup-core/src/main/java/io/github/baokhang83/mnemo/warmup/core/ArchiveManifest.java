@@ -21,9 +21,9 @@ import java.util.jar.JarFile;
 
 /**
  * Describes what an archive was trained against, and derives a {@linkplain #fingerprint()
- * fingerprint} from it. An archive is only valid for the same JDK build, the same classpath
- * (content and order) and the same heap/GC options, so a later step recomputes the manifest of the
- * environment it is in and compares.
+ * fingerprint} from it. A later step compares the JDK build, classpath and a conservative set of
+ * JVM options that can affect archive compatibility. Some changes to heap/GC settings can reuse an
+ * archive; others change the effective pointer layout and cannot.
  *
  * <p>The fingerprint covers: format version, cache type, JDK vendor and full build, optional
  * image digest, the relevant JVM options (see {@link JvmFlags}), and each classpath entry's name,
@@ -121,7 +121,7 @@ public record ArchiveManifest(
 
     // ---- fingerprint and comparison ----
 
-    /** {@code sha256:<hex>} over the canonical form of everything that decides archive validity. */
+    /** {@code sha256:<hex>} over the canonical form of the recorded compatibility inputs. */
     public String fingerprint() {
         Map<String, Object> canonical = new LinkedHashMap<>();
         canonical.put("schema", (long) schemaVersion);

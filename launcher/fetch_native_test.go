@@ -140,11 +140,24 @@ func TestNativeFetchDownloadsVerifiesAndPublishes(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Archive: "+archive+" (APP_CDS), fingerprint sha256:") || !strings.Contains(stderr.String(), "fetch: timing: jdk-detect=") {
 		t.Fatalf("stdout %q stderr %q", stdout, stderr)
 	}
+	if !strings.Contains(stderr.String(), "archive-transfer-hash-write=") || !strings.Contains(stderr.String(), "archive-bytes=") {
+		t.Fatalf("missing archive transfer timing: %s", stderr)
+	}
 	entries, _ := os.ReadDir(f.path("out"))
 	for _, e := range entries {
 		if strings.HasSuffix(e.Name(), ".part") {
 			t.Fatalf("temporary file left behind: %s", e.Name())
 		}
+	}
+}
+
+func TestParseCgroupCPUUsageUsec(t *testing.T) {
+	got, ok := parseCgroupCPUUsageUsec([]byte("usage_usec 12345\nuser_usec 9000\nsystem_usec 3345\n"))
+	if !ok || got != 12345 {
+		t.Fatalf("got %d, %v; want 12345, true", got, ok)
+	}
+	if _, ok := parseCgroupCPUUsageUsec([]byte("user_usec 12\n")); ok {
+		t.Fatal("expected missing usage_usec to be unavailable")
 	}
 }
 

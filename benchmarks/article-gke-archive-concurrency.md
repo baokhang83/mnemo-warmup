@@ -53,4 +53,4 @@ That is evidence for this one same-region setup, not a general promise about reg
 
 The next useful comparison is several archive sizes and, once available, per-pod downloads against a shared or node-local archive cache. A separate cold-node test should include application-image pulls and node scale-up. Those scenarios can tell us whether the observed transfer cost changes with archive size or with the way a rollout delivers data to pods.
 
-For the full methodology and raw pod records, see the [GKE study report](https://github.com/baokhang83/mnemo-warmup/blob/study/92-gke-archive-concurrency/benchmarks/results/20261114-archive-concurrency-gke-europe-west3/summary.md) and [PR #94](https://github.com/baokhang83/mnemo-warmup/pull/94).
+For the full methodology and raw pod records, see the [GKE experiment report](https://github.com/baokhang83/mnemo-warmup/blob/bench/pod-to-ready-breakdown/benchmarks/results/20261114-archive-concurrency-gke-europe-west3/summary.md).

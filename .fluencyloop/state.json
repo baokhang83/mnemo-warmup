@@ -3,7 +3,7 @@
   "feature": "92-implement-an-optional-secure-node-local-archive-cache-for",
   "branch": "feature/92-implement-an-optional-secure-node-local-archive-cache-for",
   "stage": "build",
-  "last_session": "001-build-verified-content-storage-and-concurrent-fill-coord",
+  "last_session": "002-authorize-node-cache-requests-using-kubernetes-identitie",
   "base_ref": "design/node-archive-cache",
   "feature_dir": "",
   "plan": "",

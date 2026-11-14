@@ -124,4 +124,8 @@ Pod start-to-Ready, medians (range), by delivery mode:
 
 **What this does not say.** Laptop, local registry, no image pull, one pod at a time. It says nothing about a remote registry (which would make `cached` slower), or about many pods starting together. The 0.3.0 beta plans a scale-out burst against a remote registry and an application-size study. The separate [JDK 21 AppCDS versus JDK 25 AOT study](jdk21-vs-jdk25.md) compares both on the same Spring workload.
 
+The [remote-registry burst study](remote-registry-bursts.md) describes the new one-to-ten replica harness and its current evidence status.
+
+The remote study completed three one-to-ten bursts against GHCR and Docker Hub for each JDK/probe combination. Archives were 83.3 MiB (JDK 21) and about 104.3 MiB (JDK 25); successful per-pod downloads took roughly 190–301 s median on this laptop. Two five-second-probe bursts hit the fetcher's 120-second idle timeout and still started uncached, demonstrating fail-open behavior. These timings are environment-specific; see the [study report and raw records](remote-registry-bursts.md).
+
 Two earlier runs were discarded because other benchmark runs were active on the same machine. No other benchmark ran alongside the published runs.

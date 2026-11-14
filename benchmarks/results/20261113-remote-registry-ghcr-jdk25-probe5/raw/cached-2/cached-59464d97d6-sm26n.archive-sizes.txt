@@ -1,0 +1,4 @@
+109379584 /mnemo-cache/app.aot
+       34 /mnemo-cache/mnemo-warmup.flags
+    15751 /mnemo-cache/mnemo-warmup.manifest.json
+109395369 total

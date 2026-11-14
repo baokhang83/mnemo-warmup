@@ -1,0 +1,3 @@
+No usable archive; the application will start without one.
+fetch: cannot reach registry 127.0.0.1:9: Get "http://127.0.0.1:9/v2/bench/unavailable/manifests/fp-897eb72694510bbc2978547637ad21770b632b7432ad5222db81ca4d766ea200": dial tcp 127.0.0.1:9: connect: connection refused
+fetch: timing: jdk-detect=0 ms, extract-and-hash-classpath=43 ms, tool-jvm-uptime=0 ms (native fetch)

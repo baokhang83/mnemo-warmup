@@ -1,0 +1,4 @@
+87359488 /mnemo-cache/app.jsa
+      43 /mnemo-cache/mnemo-warmup.flags
+   15749 /mnemo-cache/mnemo-warmup.manifest.json
+87375280 total

@@ -1,0 +1,3 @@
+fetch: download stalled: no data for 120 s
+fetch: timing: jdk-detect=0 ms, extract-and-hash-classpath=37 ms, tool-jvm-uptime=0 ms (native fetch)
+No usable archive; the application will start without one.

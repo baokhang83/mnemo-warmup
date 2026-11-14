@@ -140,6 +140,9 @@ func TestNativeFetchDownloadsVerifiesAndPublishes(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Archive: "+archive+" (APP_CDS), fingerprint sha256:") || !strings.Contains(stderr.String(), "fetch: timing: jdk-detect=") {
 		t.Fatalf("stdout %q stderr %q", stdout, stderr)
 	}
+	if !strings.Contains(stderr.String(), "archive-transfer-hash-write=") || !strings.Contains(stderr.String(), "archive-bytes=") {
+		t.Fatalf("missing archive transfer timing: %s", stderr)
+	}
 	entries, _ := os.ReadDir(f.path("out"))
 	for _, e := range entries {
 		if strings.HasSuffix(e.Name(), ".part") {

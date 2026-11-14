@@ -59,6 +59,7 @@ func TestNativeFetchUsesNodeCacheOrFallsBackToRegistry(t *testing.T) {
 				case "overlong":
 					_, _ = w.Write(append(append([]byte{}, archive...), 'x'))
 				default:
+					w.Header().Set("X-Mnemo-Cache-Outcome", "hit")
 					_, _ = w.Write(archive)
 				}
 			}))
@@ -122,6 +123,9 @@ func TestNativeFetchUsesNodeCacheOrFallsBackToRegistry(t *testing.T) {
 			}
 			if mode != "hit" && !strings.Contains(stderr.String(), "trying registry directly") && !strings.Contains(stderr.String(), "node cache configuration unavailable") {
 				t.Fatal("fallback not logged")
+			}
+			if mode == "hit" && !strings.Contains(stderr.String(), "node cache hit: verified archive") {
+				t.Fatal("cache outcome not logged")
 			}
 			entries, err := os.ReadDir(f.path("out"))
 			if err != nil {

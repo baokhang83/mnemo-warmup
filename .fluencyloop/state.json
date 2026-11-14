@@ -3,7 +3,7 @@
   "feature": "92-implement-an-optional-secure-node-local-archive-cache-for",
   "branch": "feature/92-implement-an-optional-secure-node-local-archive-cache-for",
   "stage": "build",
-  "last_session": "012-inject-an-isolated-node-cache-identity-and-exercise-the",
+  "last_session": "013-evict-inactive-archives-and-report-cache-outcomes",
   "base_ref": "design/node-archive-cache",
   "feature_dir": "",
   "plan": "",

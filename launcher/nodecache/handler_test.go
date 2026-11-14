@@ -84,10 +84,18 @@ func TestHandlerReauthorizesCacheHits(t *testing.T) {
 	}
 	for i := 0; i < 2; i++ {
 		resp := request("caller", "registry-proof")
+		outcome := resp.Header.Get("X-Mnemo-Cache-Outcome")
 		got, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil || resp.StatusCode != http.StatusOK || !bytes.Equal(got, data) {
 			t.Fatalf("fetch: %d %q %v", resp.StatusCode, got, err)
+		}
+		want := "miss"
+		if i == 1 {
+			want = "hit"
+		}
+		if outcome != want {
+			t.Fatalf("outcome %q, want %q", outcome, want)
 		}
 	}
 	resp := request("caller", "revoked")

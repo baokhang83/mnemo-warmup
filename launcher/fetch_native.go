@@ -674,9 +674,9 @@ func (r *registry) fetchArchive(fp string, live manifestJSON, out string) (*fetc
 	target := filepath.Join(out, name)
 	cached := false
 	if r.nodeCache != nil {
-		if err := r.nodeCache.download(r.base.Host, r.repo, r.authz, layer, target, r.transferTiming); err == nil {
+		if err := r.nodeCache.download(r.base.Host, r.repo, r.authz, layer, target, r.transferTiming,
+			func(status string) { r.cacheNote("node cache " + status + ": verified archive") }); err == nil {
 			cached = true
-			r.cacheNote("node cache supplied a verified archive")
 		} else {
 			r.cacheNote("node cache unavailable or invalid; trying registry directly")
 		}

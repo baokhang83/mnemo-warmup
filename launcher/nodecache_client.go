@@ -86,7 +86,7 @@ func readBoundedFile(path string, limit int64) ([]byte, error) {
 
 // download verifies cache bytes independently before atomically publishing
 // them to the pod-local directory. A failed cache request leaves no output.
-func (c *nodeCacheClient) download(registry, repository, proof string, want ociDescriptor, target string, timing func(int64, time.Duration)) error {
+func (c *nodeCacheClient) download(registry, repository, proof string, want ociDescriptor, target string, timing func(int64, time.Duration), outcome func(string)) error {
 	if !digestRe.MatchString(want.Digest) || want.Size < 0 {
 		return errors.New("invalid cache blob descriptor")
 	}
@@ -147,6 +147,14 @@ func (c *nodeCacheClient) download(registry, repository, proof string, want ociD
 	}
 	if timing != nil {
 		timing(n, time.Since(started))
+	}
+	if outcome != nil {
+		switch status := resp.Header.Get("X-Mnemo-Cache-Outcome"); status {
+		case "hit", "miss", "shared":
+			outcome(status)
+		default:
+			outcome("served")
+		}
 	}
 	return nil
 }

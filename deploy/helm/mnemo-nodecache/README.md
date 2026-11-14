@@ -2,7 +2,7 @@
 
 This chart installs the optional `mnemo-nodecache` service as a DaemonSet and a ClusterIP Service. It requires Kubernetes 1.26 or newer. The Service uses `internalTrafficPolicy: Local` so a client pod reaches an endpoint on its own node; a node without an endpoint has no cache endpoint. Verify that the cluster networking implementation honors this policy.
 
-**Development status:** the native fetcher can try the service and fall back to the registry, but this chart and integration have not yet been verified on a cluster. The cache has a payload budget but does not yet evict entries or automatically remove corrupt files. Registry redirects and automatic registry-token exchange are not supported. The Java fallback path does not use the node cache.
+**Development status:** the native fetcher can try the service and fall back to the registry, but this chart and integration have not yet been verified on a cluster. Registry redirects and automatic registry-token exchange are not supported. The Java fallback path does not use the node cache.
 
 The DaemonSet uses a pod-local `emptyDir`, not a host directory. Restarting or replacing the cache pod loses that node's cache. It runs as a non-root user with a read-only root filesystem. The ServiceAccount can create Kubernetes TokenReviews; it does not receive permissions to read Kubernetes Secrets through the API. The kubelet mounts the configuration Secret into the cache pod.
 
@@ -50,7 +50,7 @@ helm template cache deploy/helm/mnemo-nodecache --namespace cache-system \
   --set image.tag=YOUR_TEST_TAG --set configurationSecret=nodecache-config
 ```
 
-The configured listen port must be 8443 to match this chart. The cache reads configuration and TLS certificates at startup; restart the DaemonSet after changing them. Source credential file updates are read on later misses. Set `maxTotalBytes` below `cacheVolumeSize` and the pod's ephemeral-storage limit to allow room for filesystem metadata and other pod storage. The store assumes one process owns its private directory; do not mount it into application pods or share it between cache processes.
+The configured listen port must be 8443 to match this chart. The cache reads configuration and TLS certificates at startup; restart the DaemonSet after changing them. Source credential file updates are read on later misses. Set `maxTotalBytes` below `cacheVolumeSize` and the pod's ephemeral-storage limit to allow room for filesystem metadata and other pod storage. The service evicts least-recently-used entries only when no request is reading them. Its in-memory access order is reset to file modification order after a process restart. The store assumes one process owns its private directory; do not mount it into application pods or share it between cache processes.
 
 Every request needs a projected service-account token with the configured audience and an explicit subject/repository grant. It also needs proof of current registry read access for the requested blob. The cache validates that proof against the registry before serving a hit or miss. The current registry check and download accept direct responses only; they reject redirects. The native client falls back to a direct registry download when the cache request fails.
 

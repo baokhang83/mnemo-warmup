@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
@@ -84,20 +83,16 @@ func (h *cacheHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "registry access unavailable", http.StatusForbidden)
 		return
 	}
-	path, err := h.store.Get(ctx, scope, request.Digest, request.Size, func(ctx context.Context) (io.ReadCloser, error) {
+	lease, outcome, err := h.store.Acquire(ctx, scope, request.Digest, request.Size, func(ctx context.Context) (io.ReadCloser, error) {
 		return h.source.Open(ctx, scope, request.Digest)
 	})
 	if err != nil {
 		http.Error(w, "archive cache unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		http.Error(w, "archive cache unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	defer f.Close()
+	defer lease.Close()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = io.Copy(w, f)
+	w.Header().Set("X-Mnemo-Cache-Outcome", outcome)
+	_, _ = io.Copy(w, lease)
 }

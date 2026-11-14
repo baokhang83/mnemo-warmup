@@ -63,7 +63,17 @@ It previews and installs an annotated Deployment, shows it starting without a ca
 
 ## Quick start in three steps
 
-**Before you start:** the CLI runs on your machine for the preview and as the Helm post-renderer. It needs Java 21 or newer and comes in the tools image (the same one the injected init containers use):
+**Before you start:** the CLI runs on your machine for the preview and as the Helm post-renderer. It needs Java 21 or newer. Starting with the `v0.3.0-beta.1` release, install it on macOS or Linux with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/scripts/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+mnemo-warmup --version
+```
+
+The installer downloads the CLI JAR and wrapper from the named GitHub release, checks their SHA-256 digests, and installs them under `~/.local`. The [installer source](scripts/install.sh) is available to review before running it. Set `MNEMO_VERSION` when running `sh` to select a different release tag, or `MNEMO_INSTALL_PREFIX` to select a different absolute installation prefix. Checksums detect corrupt or mismatched downloads; they do not independently authenticate a compromised release source.
+
+The `v0.3.0-beta.1` assets will be available once that prerelease is published. Until then, or as an alternative, extract the CLI from the tools image (the same one the injected init containers use):
 
 ```bash
 docker run --rm -v "$PWD":/out --entrypoint cp ghcr.io/baokhang83/mnemo-warmup-tools:0.2.5 -r /opt/mnemo-warmup /out/

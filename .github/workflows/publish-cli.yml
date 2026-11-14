@@ -1,0 +1,83 @@
+name: publish-cli
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+'
+  pull_request:
+    paths:
+      - 'scripts/install.sh'
+      - 'scripts/test-install.sh'
+      - 'image/mnemo-warmup'
+      - '.github/workflows/publish-cli.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test installer (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/test-install.sh
+
+  publish:
+    name: publish CLI release assets
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Build and checksum CLI assets
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]] || exit 1
+          mvn -B -ntp versions:set -DnewVersion="${RELEASE_TAG#v}" -DgenerateBackupPoms=false
+          mvn -B -ntp -pl warmup-cli -am -DskipTests -Djacoco.skip=true package
+          mkdir -p release-cli
+          cp warmup-cli/target/mnemo-warmup.jar release-cli/mnemo-warmup.jar
+          cp image/mnemo-warmup release-cli/mnemo-warmup
+          (cd release-cli && sha256sum mnemo-warmup.jar mnemo-warmup > SHA256SUMS)
+      - name: Publish release and assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            if [[ "$RELEASE_TAG" == *-beta.* ]]; then
+              gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --notes "CLI release $RELEASE_TAG" --prerelease
+            else
+              gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --notes "CLI release $RELEASE_TAG"
+            fi
+          fi
+          if [[ "$RELEASE_TAG" == *-beta.* ]] && [[ "$(gh release view "$RELEASE_TAG" --json isPrerelease --jq '.isPrerelease')" != true ]]; then
+            echo "::error::The existing beta release must be marked as a prerelease"
+            exit 1
+          fi
+          # A retry must not silently replace assets from an existing release.
+          mkdir -p existing-assets
+          for file in mnemo-warmup.jar mnemo-warmup SHA256SUMS; do
+            if gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -Fxq "$file"; then
+              gh release download "$RELEASE_TAG" --pattern "$file" --dir existing-assets
+              cmp "release-cli/$file" "existing-assets/$file" || {
+                echo "::error::Existing release asset $file differs from this build"
+                exit 1
+              }
+            else
+              gh release upload "$RELEASE_TAG" "release-cli/$file"
+            fi
+          done

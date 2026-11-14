@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>OciRegistryHttp.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">OciRegistryHttp.java</span></div><h1>OciRegistryHttp.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpRequest.BodyPublisher;
+import java.net.http.HttpRequest.BodyPublishers;
+import java.net.http.HttpResponse;
+import java.net.http.HttpResponse.BodyHandler;
+import java.net.http.HttpResponse.BodyHandlers;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/** Shared, dependency-free OCI registry HTTP transport with challenge auth and safe redirects. */
+final class OciRegistryHttp {
+<span class="fc" id="L26">    private static final Pattern PARAM = Pattern.compile(&quot;(\\w+)=\&quot;([^\&quot;]*)\&quot;&quot;);</span>
+    private static final int MAX_REDIRECTS = 5;
+
+    private final URI base;
+    private final String repository;
+    private final RegistryAuth auth;
+    private final Duration timeout;
+    private final HttpClient http;
+    private volatile String authorization;
+
+<span class="fc" id="L36">    OciRegistryHttp(URI base, String repository, RegistryAuth auth, Duration timeout) {</span>
+<span class="fc" id="L37">        this.base = base;</span>
+<span class="fc" id="L38">        this.repository = repository;</span>
+<span class="fc" id="L39">        this.auth = auth;</span>
+<span class="fc" id="L40">        this.timeout = timeout;</span>
+<span class="fc" id="L41">        this.http = HttpClient.newBuilder()</span>
+<span class="fc" id="L42">                .connectTimeout(Duration.ofSeconds(10))</span>
+<span class="fc" id="L43">                .followRedirects(HttpClient.Redirect.NEVER)</span>
+<span class="fc" id="L44">                .build();</span>
+<span class="fc" id="L45">    }</span>
+
+    &lt;T&gt; HttpResponse&lt;T&gt; call(
+            String method,
+            URI uri,
+            Map&lt;String, String&gt; headers,
+            Supplier&lt;BodyPublisher&gt; body,
+            BodyHandler&lt;T&gt; handler,
+            String actions) {
+<span class="fc" id="L54">        URI current = uri;</span>
+<span class="fc" id="L55">        boolean authenticated = false;</span>
+<span class="fc" id="L56">        boolean refreshed = false;</span>
+<span class="pc bpc" id="L57" title="1 of 2 branches missed.">        for (int hops = 0; hops &lt;= MAX_REDIRECTS; hops++) {</span>
+<span class="fc" id="L58">            checkTransport(base, current);</span>
+<span class="fc" id="L59">            boolean sameHost = sameOrigin(base, current);</span>
+<span class="fc" id="L60">            HttpResponse&lt;T&gt; response = send(method, current, headers, body, handler, sameHost);</span>
+<span class="fc" id="L61">            int status = response.statusCode();</span>
+<span class="pc bpc" id="L62" title="2 of 8 branches missed.">            if (status == 401 &amp;&amp; sameHost &amp;&amp; authenticated &amp;&amp; !refreshed) {</span>
+<span class="fc" id="L63">                String previous = authorization;</span>
+<span class="fc" id="L64">                auth.invalidate();</span>
+<span class="fc" id="L65">                authorize(response.headers().firstValue(&quot;WWW-Authenticate&quot;).orElse(&quot;&quot;), actions);</span>
+<span class="fc" id="L66">                refreshed = true;</span>
+<span class="pc bpc" id="L67" title="1 of 4 branches missed.">                if (authorization != null &amp;&amp; !authorization.equals(previous)) {</span>
+<span class="fc" id="L68">                    closeQuietly(response.body());</span>
+<span class="fc" id="L69">                    hops--;</span>
+<span class="fc" id="L70">                    continue;</span>
+                }
+<span class="fc" id="L72">                return response;</span>
+            }
+<span class="pc bpc" id="L74" title="2 of 6 branches missed.">            if (status == 401 &amp;&amp; sameHost &amp;&amp; !authenticated) {</span>
+<span class="fc" id="L75">                String challenge = response.headers().firstValue(&quot;WWW-Authenticate&quot;).orElse(&quot;&quot;);</span>
+<span class="fc" id="L76">                closeQuietly(response.body());</span>
+<span class="fc" id="L77">                authorize(challenge, actions);</span>
+<span class="pc bpc" id="L78" title="1 of 2 branches missed.">                if (authorization == null) {</span>
+<span class="nc" id="L79">                    throw new StoreException(&quot;Registry &quot; + base.getAuthority() + &quot; requires authentication and no credentials were provided&quot;);</span>
+                }
+<span class="fc" id="L81">                authenticated = true;</span>
+<span class="fc" id="L82">                hops--;</span>
+<span class="fc" id="L83">                continue;</span>
+            }
+<span class="pc bpc" id="L85" title="4 of 10 branches missed.">            boolean redirect = status == 301 || status == 302 || status == 303 || status == 307 || status == 308;</span>
+<span class="pc bpc" id="L86" title="3 of 6 branches missed.">            if (redirect &amp;&amp; (method.equals(&quot;GET&quot;) || method.equals(&quot;HEAD&quot;))) {</span>
+<span class="fc" id="L87">                String location = response.headers().firstValue(&quot;Location&quot;).orElse(null);</span>
+<span class="fc" id="L88">                closeQuietly(response.body());</span>
+<span class="pc bpc" id="L89" title="1 of 2 branches missed.">                if (location == null) throw new StoreException(&quot;Registry redirected without a Location&quot;);</span>
+<span class="fc" id="L90">                current = current.resolve(location);</span>
+<span class="fc" id="L91">                continue;</span>
+            }
+<span class="fc" id="L93">            return response;</span>
+        }
+<span class="nc" id="L95">        throw new StoreException(&quot;Too many redirects from &quot; + base.getAuthority());</span>
+    }
+
+    static boolean sameOrigin(URI registry, URI other) {
+<span class="fc bfc" id="L99" title="All 2 branches covered.">        return registry.getScheme().equalsIgnoreCase(other.getScheme())</span>
+<span class="fc bfc" id="L100" title="All 2 branches covered.">                &amp;&amp; registry.getAuthority().equalsIgnoreCase(other.getAuthority());</span>
+    }
+
+    static void checkTransport(URI registry, URI target) {
+<span class="fc bfc" id="L104" title="All 4 branches covered.">        if (&quot;https&quot;.equalsIgnoreCase(registry.getScheme()) &amp;&amp; !&quot;https&quot;.equalsIgnoreCase(target.getScheme())) {</span>
+<span class="fc" id="L105">            throw new StoreException(&quot;Refusing to follow &quot; + registry.getAuthority() + &quot; to a non-https URL&quot;);</span>
+        }
+<span class="fc" id="L107">    }</span>
+
+    private &lt;T&gt; HttpResponse&lt;T&gt; send(
+            String method, URI uri, Map&lt;String, String&gt; headers, Supplier&lt;BodyPublisher&gt; body, BodyHandler&lt;T&gt; handler, boolean sendAuth) {
+<span class="fc" id="L111">        HttpRequest.Builder request = HttpRequest.newBuilder(uri).timeout(timeout);</span>
+<span class="fc" id="L112">        headers.forEach(request::header);</span>
+<span class="fc" id="L113">        String value = authorization;</span>
+<span class="pc bpc" id="L114" title="1 of 4 branches missed.">        if (sendAuth &amp;&amp; value != null) request.header(&quot;Authorization&quot;, value);</span>
+<span class="fc bfc" id="L115" title="All 2 branches covered.">        request.method(method, body == null ? BodyPublishers.noBody() : body.get());</span>
+<span class="fc" id="L116">        return await(http.sendAsync(request.build(), handler), uri);</span>
+    }
+
+    private &lt;T&gt; HttpResponse&lt;T&gt; await(CompletableFuture&lt;HttpResponse&lt;T&gt;&gt; future, URI uri) {
+        try {
+<span class="fc" id="L121">            return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);</span>
+<span class="nc" id="L122">        } catch (TimeoutException e) {</span>
+<span class="nc" id="L123">            future.cancel(true);</span>
+<span class="nc" id="L124">            throw new StoreException(&quot;Registry &quot; + uri.getAuthority() + &quot; did not answer within &quot; + timeout.toSeconds() + &quot; s&quot;, e);</span>
+<span class="fc" id="L125">        } catch (ExecutionException e) {</span>
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">            Throwable cause = e.getCause() == null ? e : e.getCause();</span>
+<span class="fc" id="L127">            throw new StoreException(&quot;Cannot reach registry &quot; + uri.getAuthority() + &quot;: &quot; + cause.getMessage(), cause);</span>
+<span class="nc" id="L128">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L129">            future.cancel(true);</span>
+<span class="nc" id="L130">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L131">            throw new StoreException(&quot;Interrupted while talking to registry &quot; + uri.getAuthority(), e);</span>
+        }
+    }
+
+    private void authorize(String challenge, String actions) {
+<span class="fc" id="L136">        RegistryCredentials credentials = auth.credentials().orElse(null);</span>
+<span class="fc bfc" id="L137" title="All 2 branches covered.">        if (challenge.regionMatches(true, 0, &quot;Bearer&quot;, 0, 6)) {</span>
+<span class="fc" id="L138">            Map&lt;String, String&gt; params = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L139">            Matcher matcher = PARAM.matcher(challenge);</span>
+<span class="fc bfc" id="L140" title="All 2 branches covered.">            while (matcher.find()) params.put(matcher.group(1).toLowerCase(), matcher.group(2));</span>
+<span class="fc" id="L141">            String realm = params.get(&quot;realm&quot;);</span>
+<span class="pc bpc" id="L142" title="1 of 2 branches missed.">            if (realm == null) throw new StoreException(&quot;Registry sent a Bearer challenge without a realm&quot;);</span>
+<span class="fc" id="L143">            checkTransport(base, URI.create(realm));</span>
+<span class="fc" id="L144">            String scope = params.getOrDefault(&quot;scope&quot;, &quot;repository:&quot; + repository + &quot;:&quot; + actions);</span>
+<span class="pc bpc" id="L145" title="1 of 2 branches missed.">            StringBuilder target = new StringBuilder(realm).append(realm.contains(&quot;?&quot;) ? '&amp;' : '?');</span>
+<span class="pc bpc" id="L146" title="1 of 2 branches missed.">            if (params.containsKey(&quot;service&quot;)) {</span>
+<span class="fc" id="L147">                target.append(&quot;service=&quot;).append(URLEncoder.encode(params.get(&quot;service&quot;), StandardCharsets.UTF_8)).append('&amp;');</span>
+            }
+<span class="fc" id="L149">            target.append(&quot;scope=&quot;).append(URLEncoder.encode(scope, StandardCharsets.UTF_8));</span>
+<span class="fc" id="L150">            URI tokenUri = URI.create(target.toString());</span>
+<span class="fc" id="L151">            HttpRequest.Builder request = HttpRequest.newBuilder(tokenUri).timeout(timeout);</span>
+<span class="fc bfc" id="L152" title="All 2 branches covered.">            if (credentials != null) request.header(&quot;Authorization&quot;, credentials.basicHeader());</span>
+<span class="fc" id="L153">            HttpResponse&lt;byte[]&gt; response = await(http.sendAsync(request.GET().build(), BodyHandlers.ofByteArray()), tokenUri);</span>
+<span class="fc bfc" id="L154" title="All 2 branches covered.">            if (response.statusCode() != 200) {</span>
+<span class="fc" id="L155">                auth.invalidate();</span>
+<span class="fc" id="L156">                throw new StoreException(&quot;Registry token service refused the request (HTTP &quot; + response.statusCode() + &quot;)&quot;</span>
+<span class="fc bfc" id="L157" title="All 2 branches covered.">                        + (credentials == null ? &quot;; no credentials were provided&quot; : &quot;&quot;));</span>
+            }
+            Object parsed;
+            try {
+<span class="fc" id="L161">                parsed = Json.parse(new String(response.body(), StandardCharsets.UTF_8));</span>
+<span class="nc" id="L162">            } catch (RuntimeException e) {</span>
+<span class="nc" id="L163">                throw new StoreException(&quot;Registry token response is not valid JSON&quot;, e);</span>
+<span class="fc" id="L164">            }</span>
+<span class="pc bpc" id="L165" title="2 of 4 branches missed.">            Object token = parsed instanceof Map&lt;?, ?&gt; map ? (map.get(&quot;token&quot;) != null ? map.get(&quot;token&quot;) : map.get(&quot;access_token&quot;)) : null;</span>
+<span class="pc bpc" id="L166" title="2 of 4 branches missed.">            if (!(token instanceof String value) || value.isBlank()) throw new StoreException(&quot;Registry token response has no token&quot;);</span>
+<span class="fc" id="L167">            authorization = &quot;Bearer &quot; + value;</span>
+<span class="pc bpc" id="L168" title="2 of 4 branches missed.">        } else if (challenge.regionMatches(true, 0, &quot;Basic&quot;, 0, 5) &amp;&amp; credentials != null) {</span>
+<span class="fc" id="L169">            authorization = credentials.basicHeader();</span>
+        } else {
+<span class="nc" id="L171">            authorization = null;</span>
+        }
+<span class="fc" id="L173">    }</span>
+
+    private static void closeQuietly(Object body) {
+<span class="fc bfc" id="L176" title="All 2 branches covered.">        if (body instanceof AutoCloseable closeable) {</span>
+<span class="pc" id="L177">            try { closeable.close(); } catch (Exception ignored) { /* nothing to close */ }</span>
+        }
+<span class="fc" id="L179">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

@@ -1,0 +1,227 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>OciImageConfigReader.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">OciImageConfigReader.java</span></div><h1>OciImageConfigReader.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.net.http.HttpResponse;
+import java.net.http.HttpResponse.BodyHandlers;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Pattern;
+
+/** Reads the small runtime config blob from an OCI image without downloading its layers. */
+public final class OciImageConfigReader {
+    private static final String OCI_MANIFEST = &quot;application/vnd.oci.image.manifest.v1+json&quot;;
+    private static final String DOCKER_MANIFEST = &quot;application/vnd.docker.distribution.manifest.v2+json&quot;;
+    private static final String OCI_INDEX = &quot;application/vnd.oci.image.index.v1+json&quot;;
+    private static final String DOCKER_INDEX = &quot;application/vnd.docker.distribution.manifest.list.v2+json&quot;;
+    private static final String OCI_CONFIG = &quot;application/vnd.oci.image.config.v1+json&quot;;
+    private static final String DOCKER_CONFIG = &quot;application/vnd.docker.container.image.v1+json&quot;;
+<span class="fc" id="L28">    private static final Pattern REPOSITORY = Pattern.compile(&quot;[a-z0-9]+([._/-][a-z0-9]+)*&quot;);</span>
+<span class="fc" id="L29">    private static final Pattern TAG = Pattern.compile(&quot;[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}&quot;);</span>
+<span class="fc" id="L30">    private static final Pattern DIGEST = Pattern.compile(&quot;sha256:[0-9a-f]{64}&quot;);</span>
+    private static final int MAX_JSON_BYTES = 4 * 1024 * 1024;
+    private static final int MAX_PLATFORMS = 32;
+
+    private OciImageConfigReader() {}
+
+    /** Registry metadata lookup. The call reads manifests and config blobs, never image layers. */
+    public static List&lt;ImageConfig&gt; read(String image, RegistryAuth auth, Duration timeout) {
+<span class="nc" id="L38">        return read(image, auth, timeout, false);</span>
+    }
+
+    /** Registry authority for auth lookup; no credentials are included in an image reference. */
+<span class="nc" id="L42">    public static String registryHost(String image) { return Reference.parse(image).host(); }</span>
+
+    static List&lt;ImageConfig&gt; read(String image, RegistryAuth auth, Duration timeout, boolean plainHttp) {
+<span class="fc" id="L45">        Reference reference = Reference.parse(image);</span>
+<span class="pc bpc" id="L46" title="1 of 2 branches missed.">        URI base = URI.create((plainHttp ? &quot;http://&quot; : &quot;https://&quot;) + reference.host());</span>
+<span class="fc" id="L47">        OciRegistryHttp registry = new OciRegistryHttp(base, reference.repository(), auth, timeout);</span>
+<span class="fc" id="L48">        byte[] manifest = get(registry, base, reference, reference.selector(), manifestAccept(), false);</span>
+<span class="fc" id="L49">        Object parsed = parseJson(manifest, &quot;image manifest&quot;);</span>
+<span class="pc bpc" id="L50" title="1 of 2 branches missed.">        if (!(parsed instanceof Map&lt;?, ?&gt; object)) throw new StoreException(&quot;Registry returned a malformed image manifest&quot;);</span>
+
+<span class="fc" id="L52">        List&lt;String&gt; manifests = manifestDigests(object);</span>
+<span class="fc bfc" id="L53" title="All 2 branches covered.">        if (manifests.isEmpty()) return List.of(readConfig(registry, base, reference, object));</span>
+<span class="pc bpc" id="L54" title="1 of 2 branches missed.">        if (manifests.size() &gt; MAX_PLATFORMS) throw new StoreException(&quot;Image index has too many platform manifests to inspect&quot;);</span>
+<span class="fc" id="L55">        List&lt;ImageConfig&gt; configs = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L56" title="All 2 branches covered.">        for (String digest : manifests) {</span>
+<span class="fc" id="L57">            Object child = parseJson(get(registry, base, reference, digest, manifestAccept(), false), &quot;platform manifest&quot;);</span>
+<span class="pc bpc" id="L58" title="1 of 2 branches missed.">            if (!(child instanceof Map&lt;?, ?&gt; childManifest)) throw new StoreException(&quot;Registry returned a malformed platform manifest&quot;);</span>
+<span class="fc" id="L59">            configs.add(readConfig(registry, base, reference, childManifest));</span>
+<span class="fc" id="L60">        }</span>
+<span class="pc bpc" id="L61" title="1 of 2 branches missed.">        if (configs.isEmpty()) throw new StoreException(&quot;Image index has no platform manifests to inspect&quot;);</span>
+<span class="fc" id="L62">        return List.copyOf(configs);</span>
+    }
+
+    private static String manifestAccept() {
+<span class="fc" id="L66">        return String.join(&quot;, &quot;, OCI_MANIFEST, DOCKER_MANIFEST, OCI_INDEX, DOCKER_INDEX);</span>
+    }
+
+    private static List&lt;String&gt; manifestDigests(Map&lt;?, ?&gt; manifest) {
+<span class="fc" id="L70">        Object descriptors = manifest.get(&quot;manifests&quot;);</span>
+<span class="fc bfc" id="L71" title="All 2 branches covered.">        if (!(descriptors instanceof List&lt;?&gt; list)) return List.of();</span>
+<span class="fc" id="L72">        List&lt;String&gt; result = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L73" title="All 2 branches covered.">        for (Object item : list) {</span>
+<span class="pc bpc" id="L74" title="1 of 2 branches missed.">            if (!(item instanceof Map&lt;?, ?&gt; descriptor)) throw new StoreException(&quot;Image index contains a malformed descriptor&quot;);</span>
+            // Indexes can include non-image artifacts such as attestations. They have no platform config.
+<span class="pc bpc" id="L76" title="1 of 2 branches missed.">            if (!(descriptor.get(&quot;platform&quot;) instanceof Map&lt;?, ?&gt; platform)</span>
+<span class="pc bpc" id="L77" title="1 of 2 branches missed.">                    || !(platform.get(&quot;os&quot;) instanceof String)</span>
+<span class="pc bpc" id="L78" title="1 of 2 branches missed.">                    || !(platform.get(&quot;architecture&quot;) instanceof String)) continue;</span>
+<span class="fc" id="L79">            String digest = String.valueOf(descriptor.get(&quot;digest&quot;));</span>
+<span class="pc bpc" id="L80" title="1 of 2 branches missed.">            if (!DIGEST.matcher(digest).matches()) throw new StoreException(&quot;Image index contains an unsupported manifest digest&quot;);</span>
+<span class="fc" id="L81">            result.add(digest);</span>
+<span class="fc" id="L82">        }</span>
+<span class="fc" id="L83">        return result;</span>
+    }
+
+    private static ImageConfig readConfig(OciRegistryHttp registry, URI base, Reference reference, Map&lt;?, ?&gt; manifest) {
+<span class="fc" id="L87">        Object descriptorValue = manifest.get(&quot;config&quot;);</span>
+<span class="pc bpc" id="L88" title="1 of 2 branches missed.">        if (!(descriptorValue instanceof Map&lt;?, ?&gt; descriptor)) throw new StoreException(&quot;Image manifest has no config descriptor&quot;);</span>
+<span class="fc" id="L89">        Object mediaType = descriptor.get(&quot;mediaType&quot;);</span>
+<span class="pc bpc" id="L90" title="3 of 4 branches missed.">        if (!OCI_CONFIG.equals(mediaType) &amp;&amp; !DOCKER_CONFIG.equals(mediaType)) {</span>
+<span class="nc" id="L91">            throw new StoreException(&quot;Image manifest has an unsupported config media type&quot;);</span>
+        }
+<span class="fc" id="L93">        String digest = String.valueOf(descriptor.get(&quot;digest&quot;));</span>
+<span class="pc bpc" id="L94" title="1 of 2 branches missed.">        if (!DIGEST.matcher(digest).matches()) throw new StoreException(&quot;Image config has an unsupported digest&quot;);</span>
+<span class="fc" id="L95">        byte[] config = get(registry, base, reference, digest, null, true);</span>
+<span class="fc bfc" id="L96" title="All 2 branches covered.">        if (!digest.equals(&quot;sha256:&quot; + sha256(config))) throw new StoreException(&quot;Image config digest does not match its descriptor&quot;);</span>
+<span class="fc" id="L97">        Object parsed = parseJson(config, &quot;image config&quot;);</span>
+<span class="pc bpc" id="L98" title="2 of 4 branches missed.">        if (!(parsed instanceof Map&lt;?, ?&gt; image) || !(image.get(&quot;config&quot;) instanceof Map&lt;?, ?&gt; runtime)) {</span>
+<span class="nc" id="L99">            throw new StoreException(&quot;Image config has no runtime settings&quot;);</span>
+        }
+<span class="fc" id="L101">        return new ImageConfig(strings(runtime.get(&quot;Entrypoint&quot;)), strings(runtime.get(&quot;Cmd&quot;)), environment(runtime.get(&quot;Env&quot;)), labels(runtime.get(&quot;Labels&quot;)));</span>
+    }
+
+    private static List&lt;String&gt; strings(Object value) {
+<span class="pc bpc" id="L105" title="1 of 2 branches missed.">        if (value == null) return List.of();</span>
+<span class="pc bpc" id="L106" title="1 of 2 branches missed.">        if (!(value instanceof List&lt;?&gt; list)) throw new StoreException(&quot;Image config contains a non-array command field&quot;);</span>
+<span class="fc" id="L107">        List&lt;String&gt; result = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L108" title="All 2 branches covered.">        for (Object item : list) {</span>
+<span class="pc bpc" id="L109" title="1 of 2 branches missed.">            if (!(item instanceof String text)) throw new StoreException(&quot;Image config contains a non-string command value&quot;);</span>
+<span class="fc" id="L110">            result.add(text);</span>
+<span class="fc" id="L111">        }</span>
+<span class="fc" id="L112">        return List.copyOf(result);</span>
+    }
+
+    private static Map&lt;String, String&gt; environment(Object value) {
+<span class="pc bpc" id="L116" title="1 of 2 branches missed.">        if (value == null) return Map.of();</span>
+<span class="pc bpc" id="L117" title="1 of 2 branches missed.">        if (!(value instanceof List&lt;?&gt; list)) throw new StoreException(&quot;Image config contains a non-array Env field&quot;);</span>
+<span class="fc" id="L118">        Map&lt;String, String&gt; result = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L119" title="All 2 branches covered.">        for (Object item : list) {</span>
+<span class="pc bpc" id="L120" title="1 of 2 branches missed.">            if (!(item instanceof String entry)) throw new StoreException(&quot;Image config contains a non-string Env value&quot;);</span>
+<span class="fc" id="L121">            int equals = entry.indexOf('=');</span>
+<span class="pc bpc" id="L122" title="1 of 2 branches missed.">            if (equals &gt; 0) result.put(entry.substring(0, equals), entry.substring(equals + 1));</span>
+<span class="fc" id="L123">        }</span>
+<span class="fc" id="L124">        return Map.copyOf(result);</span>
+    }
+
+    private static Map&lt;String, String&gt; labels(Object value) {
+<span class="pc bpc" id="L128" title="1 of 2 branches missed.">        if (value == null) return Map.of();</span>
+<span class="pc bpc" id="L129" title="1 of 2 branches missed.">        if (!(value instanceof Map&lt;?, ?&gt; map)) throw new StoreException(&quot;Image config contains a non-object Labels field&quot;);</span>
+<span class="fc" id="L130">        Map&lt;String, String&gt; result = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L131">        map.forEach((key, item) -&gt; {</span>
+<span class="pc bpc" id="L132" title="2 of 4 branches missed.">            if (key instanceof String name &amp;&amp; item instanceof String text) result.put(name, text);</span>
+<span class="fc" id="L133">        });</span>
+<span class="fc" id="L134">        return Map.copyOf(result);</span>
+    }
+
+    private static byte[] get(OciRegistryHttp registry, URI base, Reference reference, String selector, String accept, boolean blob) {
+<span class="fc bfc" id="L138" title="All 2 branches covered.">        URI uri = base.resolve(&quot;/v2/&quot; + reference.repository() + &quot;/&quot; + (blob ? &quot;blobs/&quot; : &quot;manifests/&quot;) + selector);</span>
+<span class="fc bfc" id="L139" title="All 2 branches covered.">        Map&lt;String, String&gt; headers = accept == null ? Map.of() : Map.of(&quot;Accept&quot;, accept);</span>
+<span class="fc" id="L140">        HttpResponse&lt;InputStream&gt; response = registry.call(&quot;GET&quot;, uri, headers, null, BodyHandlers.ofInputStream(), &quot;pull&quot;);</span>
+<span class="pc bpc" id="L141" title="1 of 2 branches missed.">        if (response.statusCode() != 200) {</span>
+<span class="nc" id="L142">            close(response.body());</span>
+<span class="nc" id="L143">            throw new StoreException(&quot;Registry &quot; + reference.host() + &quot; could not read image metadata (HTTP &quot; + response.statusCode() + &quot;)&quot;);</span>
+        }
+<span class="fc" id="L145">        return readBounded(response.body());</span>
+    }
+
+    private static byte[] readBounded(InputStream input) {
+<span class="fc" id="L149">        try (InputStream in = input; ByteArrayOutputStream out = new ByteArrayOutputStream()) {</span>
+<span class="fc" id="L150">            byte[] buffer = new byte[8192];</span>
+<span class="fc bfc" id="L151" title="All 2 branches covered.">            for (int read; (read = in.read(buffer)) != -1;) {</span>
+<span class="pc bpc" id="L152" title="1 of 2 branches missed.">                if (out.size() + read &gt; MAX_JSON_BYTES) throw new StoreException(&quot;Image metadata exceeds the 4 MiB safety limit&quot;);</span>
+<span class="fc" id="L153">                out.write(buffer, 0, read);</span>
+            }
+<span class="fc" id="L155">            return out.toByteArray();</span>
+<span class="nc" id="L156">        } catch (IOException e) {</span>
+<span class="nc" id="L157">            throw new StoreException(&quot;Cannot read image metadata: &quot; + e.getMessage(), e);</span>
+        }
+    }
+
+    private static Object parseJson(byte[] bytes, String what) {
+        try {
+<span class="fc" id="L163">            return Json.parse(new String(bytes, StandardCharsets.UTF_8));</span>
+<span class="nc" id="L164">        } catch (RuntimeException e) {</span>
+<span class="nc" id="L165">            throw new StoreException(&quot;Registry returned invalid &quot; + what + &quot; JSON&quot;, e);</span>
+        }
+    }
+
+    private static String sha256(byte[] bytes) {
+        try {
+<span class="fc" id="L171">            return HexFormat.of().formatHex(MessageDigest.getInstance(&quot;SHA-256&quot;).digest(bytes));</span>
+<span class="nc" id="L172">        } catch (NoSuchAlgorithmException e) {</span>
+<span class="nc" id="L173">            throw new IllegalStateException(&quot;SHA-256 is not available&quot;, e);</span>
+        }
+    }
+
+    private static void close(InputStream input) {
+<span class="nc" id="L178">        try { input.close(); } catch (IOException ignored) { /* no content to retain */ }</span>
+<span class="nc" id="L179">    }</span>
+
+<span class="fc" id="L181">    private record Reference(String host, String repository, String selector) {</span>
+        static Reference parse(String image) {
+<span class="pc bpc" id="L183" title="4 of 8 branches missed.">            if (image == null || image.isBlank() || image.contains(&quot;://&quot;) || image.chars().anyMatch(Character::isWhitespace)) {</span>
+<span class="nc" id="L184">                throw new StoreException(&quot;Image must be a registry reference without a URL scheme&quot;);</span>
+            }
+<span class="fc" id="L186">            String name = image;</span>
+<span class="fc" id="L187">            String selector = &quot;latest&quot;;</span>
+<span class="fc" id="L188">            int at = name.lastIndexOf('@');</span>
+<span class="pc bpc" id="L189" title="1 of 2 branches missed.">            if (at &gt;= 0) {</span>
+<span class="nc" id="L190">                selector = name.substring(at + 1);</span>
+<span class="nc" id="L191">                name = name.substring(0, at);</span>
+<span class="nc bnc" id="L192" title="All 2 branches missed.">                if (!DIGEST.matcher(selector).matches()) throw new StoreException(&quot;Image digest must use sha256:&lt;64 lowercase hex&gt;&quot;);</span>
+            } else {
+<span class="fc" id="L194">                int slash = name.lastIndexOf('/');</span>
+<span class="fc" id="L195">                int colon = name.lastIndexOf(':');</span>
+<span class="pc bpc" id="L196" title="1 of 2 branches missed.">                if (colon &gt; slash) {</span>
+<span class="fc" id="L197">                    selector = name.substring(colon + 1);</span>
+<span class="fc" id="L198">                    name = name.substring(0, colon);</span>
+<span class="pc bpc" id="L199" title="1 of 2 branches missed.">                    if (!TAG.matcher(selector).matches()) throw new StoreException(&quot;Image tag is invalid&quot;);</span>
+                }
+            }
+<span class="fc" id="L202">            int slash = name.indexOf('/');</span>
+<span class="pc bpc" id="L203" title="1 of 2 branches missed.">            String first = slash &lt; 0 ? name : name.substring(0, slash);</span>
+<span class="pc bpc" id="L204" title="5 of 6 branches missed.">            boolean includesHost = first.contains(&quot;.&quot;) || first.contains(&quot;:&quot;) || first.equals(&quot;localhost&quot;);</span>
+<span class="pc bpc" id="L205" title="1 of 2 branches missed.">            String host = includesHost ? first : &quot;registry-1.docker.io&quot;;</span>
+<span class="pc bpc" id="L206" title="2 of 4 branches missed.">            String repository = includesHost ? (slash &lt; 0 ? &quot;&quot; : name.substring(slash + 1)) : name;</span>
+<span class="pc bpc" id="L207" title="3 of 4 branches missed.">            if (!includesHost &amp;&amp; !repository.contains(&quot;/&quot;)) repository = &quot;library/&quot; + repository;</span>
+<span class="pc bpc" id="L208" title="2 of 4 branches missed.">            if (!host.matches(&quot;[A-Za-z0-9.-]+(:[0-9]{1,5})?&quot;) || !REPOSITORY.matcher(repository).matches()) {</span>
+<span class="nc" id="L209">                throw new StoreException(&quot;Image reference must contain a valid registry and repository&quot;);</span>
+            }
+<span class="fc" id="L211">            return new Reference(host, repository, selector);</span>
+        }
+    }
+
+    /** Runtime defaults from one platform-specific OCI image config. Never print these values. */
+    public record ImageConfig(List&lt;String&gt; entrypoint, List&lt;String&gt; cmd, Map&lt;String, String&gt; env, Map&lt;String, String&gt; labels) {
+<span class="fc" id="L217">        public ImageConfig {</span>
+<span class="fc" id="L218">            entrypoint = List.copyOf(entrypoint);</span>
+<span class="fc" id="L219">            cmd = List.copyOf(cmd);</span>
+<span class="fc" id="L220">            env = Map.copyOf(env);</span>
+<span class="fc" id="L221">            labels = Map.copyOf(labels);</span>
+<span class="fc" id="L222">        }</span>
+
+<span class="fc" id="L224">        @Override public String toString() { return &quot;ImageConfig[entrypoint=&lt;redacted&gt;, cmd=&lt;redacted&gt;, env=&lt;redacted&gt;, labels=&lt;redacted&gt;]&quot;; }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

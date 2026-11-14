@@ -24,6 +24,11 @@ spec:
         {{- if .Values.warmup.pushSecret }}
         warmup.mnemo.io/push-secret: {{ .Values.warmup.pushSecret | quote }}
         {{- end }}
+        {{- if or .Values.warmup.nodeCache.url .Values.warmup.nodeCache.caConfigMap .Values.warmup.nodeCache.audience }}
+        warmup.mnemo.io/node-cache-url: {{ required "warmup.nodeCache.url is required" .Values.warmup.nodeCache.url | quote }}
+        warmup.mnemo.io/node-cache-ca-configmap: {{ required "warmup.nodeCache.caConfigMap is required" .Values.warmup.nodeCache.caConfigMap | quote }}
+        warmup.mnemo.io/node-cache-audience: {{ required "warmup.nodeCache.audience is required" .Values.warmup.nodeCache.audience | quote }}
+        {{- end }}
         {{- if .Values.warmup.toolsDelivery }}
         warmup.mnemo.io/tools-delivery: {{ .Values.warmup.toolsDelivery | quote }}
         {{- end }}

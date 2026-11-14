@@ -128,16 +128,18 @@ final class OfflineInjector {
             Map<String, Object> app = selected(pod, w.container());
             List<String> managedVolumes = new ArrayList<>(List.of("mnemo-tools", "mnemo-cache", "mnemo-work"));
             if (w.pullSecret() != null) managedVolumes.add("mnemo-registry-pull");
+            if (w.nodeCacheUrl() != null) managedVolumes.addAll(List.of("mnemo-nodecache-identity", "mnemo-nodecache-ca"));
             requireFree(pod, "volumes", managedVolumes);
             requireFree(pod, "initContainers", List.of("mnemo-warmup-install", "mnemo-warmup-fetch"));
             boolean imageVolume = w.imageVolume();
-            boolean inline = imageVolume && w.pullSecret() == null;
+            boolean inline = imageVolume && w.pullSecret() == null && w.nodeCacheUrl() == null;
             String launcher = launcherPath(imageVolume);
             List<String> appMounts = appMountNames(inline);
             requireFree(app, "volumeMounts", appMounts);
             requireFree(app, "env", List.of("MNEMO_WARMUP_CACHE_DIR"));
             requireFree(app, "env", List.of("POD_NAMESPACE"));
             requireFreePaths(app, List.of("/mnemo-tools", "/mnemo-cache", "/tmp/mnemo-warmup", "/var/run/mnemo-warmup/registry"));
+            if (w.nodeCacheUrl() != null) requireFreePaths(app, List.of("/var/run/mnemo-warmup/nodecache/identity", "/var/run/mnemo-warmup/nodecache/ca"));
             String copies = describeCopies(pod, app, w);
             Map<String, Object> saved = new LinkedHashMap<>();
             saved.put("container", w.container());
@@ -156,6 +158,12 @@ final class OfflineInjector {
             saved.put("envPresent", app.containsKey("env"));
             append(pod, "volumes", toolsVolume(imageVolume, tools), obj("name", "mnemo-cache", "emptyDir", obj()), obj("name", "mnemo-work", "emptyDir", obj()));
             if (w.pullSecret() != null) append(pod, "volumes", secretVolume("mnemo-registry-pull", w.pullSecret()));
+            if (w.nodeCacheUrl() != null) {
+                append(pod, "volumes", obj("name", "mnemo-nodecache-identity", "projected", obj("sources", List.of(
+                    obj("serviceAccountToken", obj("audience", w.nodeCacheAudience(), "expirationSeconds", 600, "path", "token"))))),
+                    obj("name", "mnemo-nodecache-ca", "configMap", obj("name", w.nodeCacheCAConfigMap(), "optional", true,
+                        "items", List.of(obj("key", "ca.crt", "path", "ca.crt")))));
+            }
             if (!inline) {
                 List<Object> fetchArgs = new ArrayList<>(List.of("fetch", "--out", "/mnemo-cache")); fetchArgs.addAll(commonArgs);
                 Map<String, Object> fetch = obj("name", "mnemo-warmup-fetch", "image", w.image(), "command", List.of(launcher), "args", fetchArgs,
@@ -166,6 +174,14 @@ final class OfflineInjector {
                     requireFree(fetch, "env", List.of("MNEMO_WARMUP_REGISTRY_AUTH"));
                     append(fetch, "env", obj("name", "MNEMO_WARMUP_REGISTRY_AUTH", "value", "/var/run/mnemo-warmup/registry/config.json"));
                     append(fetch, "volumeMounts", mount("mnemo-registry-pull", "/var/run/mnemo-warmup/registry", true));
+                }
+                if (w.nodeCacheUrl() != null) {
+                    requireFree(fetch, "env", List.of("MNEMO_WARMUP_NODECACHE_URL", "MNEMO_WARMUP_NODECACHE_CA_FILE", "MNEMO_WARMUP_NODECACHE_TOKEN_FILE"));
+                    append(fetch, "env", obj("name", "MNEMO_WARMUP_NODECACHE_URL", "value", w.nodeCacheUrl()),
+                        obj("name", "MNEMO_WARMUP_NODECACHE_CA_FILE", "value", "/var/run/mnemo-warmup/nodecache/ca/ca.crt"),
+                        obj("name", "MNEMO_WARMUP_NODECACHE_TOKEN_FILE", "value", "/var/run/mnemo-warmup/nodecache/identity/token"));
+                    append(fetch, "volumeMounts", mount("mnemo-nodecache-identity", "/var/run/mnemo-warmup/nodecache/identity", true),
+                        mount("mnemo-nodecache-ca", "/var/run/mnemo-warmup/nodecache/ca", true));
                 }
                 if (!imageVolume) append(pod, "initContainers", install(tools));
                 append(pod, "initContainers", fetch);
@@ -188,6 +204,7 @@ final class OfflineInjector {
             notes.add(w.namespace() + "/" + w.name() + ": container=" + w.container() + ", image=" + w.image() + ", jar=" + w.jar() + ", store=" + w.store() + ", trainer=" + w.exitMode() + ", tools=" + tools
                     + ", tools-delivery=" + w.toolsDelivery());
             if (imageVolume) notes.add("  image-volume support cannot be verified offline; check the feature gate and runtime on every eligible node, or use init-container");
+            if (w.nodeCacheUrl() != null) notes.add("  node cache uses a projected service-account token in the fetch init container; cache failure falls back to the registry");
             notes.add("  trainer " + trainerName(w.name()) + " (CronJob, ServiceAccount, Role: leases only) copies from the workload, names only: " + copies);
         }
         output.addAll(generated);
@@ -236,7 +253,7 @@ final class OfflineInjector {
             "containers", List.of(trainer), "volumes", new ArrayList<>(List.of(toolsVolume(w.imageVolume(), tools), obj("name", "mnemo-work", "emptyDir", obj()))));
         if (!w.imageVolume()) trainerPod.put("initContainers", List.of(install(tools)));
         if (pod.get("volumes") instanceof List<?> volumes) for (Object volume : volumes) {
-            if (volume instanceof Map<?, ?> v && !List.of("mnemo-tools", "mnemo-work", "mnemo-cache", "mnemo-registry-pull").contains(v.get("name"))) append(trainerPod, "volumes", volume);
+            if (volume instanceof Map<?, ?> v && !List.of("mnemo-tools", "mnemo-work", "mnemo-cache", "mnemo-registry-pull", "mnemo-nodecache-identity", "mnemo-nodecache-ca").contains(v.get("name"))) append(trainerPod, "volumes", volume);
         }
         if (w.pushSecret() != null) append(trainerPod, "volumes", secretVolume("mnemo-registry-push", w.pushSecret()));
         copyIfPresent(pod, trainerPod, "imagePullSecrets", "nodeSelector", "tolerations", "affinity", "securityContext");

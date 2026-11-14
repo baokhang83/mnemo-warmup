@@ -26,7 +26,10 @@ Set these on the Deployment's **pod template** (`spec.template.metadata.annotati
 | `warmup.mnemo.io/pull-secret` | no | Name of a `kubernetes.io/dockerconfigjson` Secret in the workload's namespace with **pull** access to the archive repository. [Details](registry-auth.md#docker-config-secrets). |
 | `warmup.mnemo.io/push-secret` | no | The same with **push** access, used by the trainer. |
 | `warmup.mnemo.io/plain-http` | no | `"true"` talks plain HTTP to the registry. Local registries and tests only. |
-| `warmup.mnemo.io/tools-delivery` | no | How the tools reach the pod: `init-container` (the default, described below) or `image-volume`, which normally leaves the pod with **no init containers** on the start path. A pull Secret uses one isolated fetch init container. See [Tools delivery](#tools-delivery-init-containers-or-an-image-volume). |
+| `warmup.mnemo.io/tools-delivery` | no | How the tools reach the pod: `init-container` (the default, described below) or `image-volume`, which normally leaves the pod with **no init containers** on the start path. A pull Secret or node cache uses one isolated fetch init container. See [Tools delivery](#tools-delivery-init-containers-or-an-image-volume). |
+| `warmup.mnemo.io/node-cache-url` | with node cache | HTTPS origin of the node-local cache Service. Requires the CA ConfigMap and audience annotations below. |
+| `warmup.mnemo.io/node-cache-ca-configmap` | with node cache | ConfigMap in the workload namespace containing the cache server CA as `ca.crt`. |
+| `warmup.mnemo.io/node-cache-audience` | with node cache | Audience for the projected service-account token; it must match the cache service configuration. |
 
 **Three annotations are required today, not two:** `enabled`, `store` and `exit-mode`. The injector stops with `missing warmup.mnemo.io/exit-mode` otherwise, because it does not guess how your application signals that it has started.
 
@@ -63,6 +66,16 @@ The image's JDK decides the cache type: AppCDS on JDK 21 and later, the Leyden A
 
 For each opted-in Deployment, by default: two init containers (`mnemo-warmup-install` copies the launcher and tools from the tools image; `mnemo-warmup-fetch` runs `fetch` in your application's image), a changed application command that starts `java` through the launcher so it is still PID 1, shared `emptyDir` volumes, and a trainer **CronJob** with its ServiceAccount, Role (leases only) and RoleBinding. The CronJob runs every 10 minutes, does not overlap runs and stops a run after one hour; these values are not configurable in this release.
 
+### Experimental node-local archive cache
+
+The cache is opt-in. Install and configure the separate [node cache chart](../deploy/helm/mnemo-nodecache/README.md), then set all three `node-cache-*` annotations on the Deployment's pod template. The URL must be an HTTPS origin whose hostname matches the cache server certificate. The CA ConfigMap must be in the workload namespace; its `ca.crt` must trust that certificate. The cache operator must grant the workload's service account access to the archive repository.
+
+The injector projects a short-lived service-account token with the configured audience and mounts it and the CA only in the fetch init container. It does not mount them into the application or trainer. Even with `image-volume` delivery, enabling the node cache adds a fetch init container to keep the token out of the application container. The cache service also receives the workload's registry authorization over verified TLS to check current blob access on each request. Basic authorization can contain long-lived credentials, so the cache must be operated as a trusted component.
+
+The native fetcher resolves and verifies registry metadata first. It tries the cache and verifies the returned archive independently; an unavailable cache, missing CA file, rejected request, timeout, redirect or invalid archive causes a direct registry fetch. The optional CA ConfigMap does not block pod creation when absent. A projected service-account token is still a Kubernetes volume: failure to obtain or mount that token can prevent the pod from starting before the fetcher can fall back.
+
+The cache request timeout defaults to 15 seconds and can be set through `MNEMO_WARMUP_NODECACHE_TIMEOUT_SECONDS` (1–120) in the application's environment, which is copied to the fetch init container. The Java fallback path bypasses the cache. The cache currently rejects registries that redirect blob requests and falls back to direct downloads. The service evicts least-recently-used entries that have no active readers; if it cannot free enough space, it declines the fill and the client uses the registry. Fetch logs report `node cache hit`, `miss` or `shared` after a verified cache response. Measure cache and registry behavior before relying on this experimental path.
+
 ### Tools delivery: init containers or an image volume
 
 By default (`init-container`) two init containers run before every start, one after the other: the first copies the tools out of the tools image, the second fetches the archive. Their own work takes well under a second, but the kubelet starts containers one at a time and each costs a start-up, so on the benchmark clusters they delayed the application's start by about 1.75 s ([ADR 0012](adr/0012-tools-as-an-image-volume.md)).
@@ -78,7 +91,7 @@ What it needs and what it costs:
 
 - **A cluster and container runtime that support image volumes.** The feature is disabled by default in Kubernetes 1.33–1.34, enabled by default in 1.35, and stable in 1.36. Check the feature gate and runtime on every eligible node ([Kubernetes feature gates](https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/), [image volumes](https://kubernetes.io/docs/tasks/configure-pod-container/image-volumes/)). On a cluster without them a pod with the volume **does not start**. That is a deployment failure, like a missing Secret, not a cache failure, and it is why the mode is opt-in. It was verified on kind with Kubernetes 1.36.1 and containerd 2.3.1.
 - **Check support before opting in.** Renderers cannot detect the target cluster or verify node runtimes offline. Run a disposable [image-volume test pod](https://kubernetes.io/docs/tasks/configure-pod-container/image-volumes/) on each node pool eligible for the workload. API acceptance or a server version alone does not prove that the volume can mount on every node. Use `init-container` until the test succeeds.
-- **With `pull-secret`, one fetch init container remains.** It mounts the Secret and writes the cache; the application mounts neither the Secret nor its credentials. The tools still come from the image volume. Anonymous registries and workload identity use the inline fetch. `push-secret` belongs to the trainer.
+- **With `pull-secret` or the node cache, one fetch init container remains.** It mounts the required credentials and writes the cache; the application mounts neither the credentials nor their volumes. The tools still come from the image volume. Anonymous registries and workload identity without the node cache use the inline fetch. `push-secret` belongs to the trainer.
 - Fetch logs appear in the application container for inline fetch, or in `mnemo-warmup-fetch` when a pull Secret is set.
 
 To go back, remove the annotation or set it to `init-container` and render again: the injector records the mode it applied and restores the original Deployment either way.

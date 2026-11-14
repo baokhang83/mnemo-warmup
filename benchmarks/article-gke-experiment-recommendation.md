@@ -1,108 +1,75 @@
----
-title: "Does mnemo-warmup Speed Up Kubernetes Scale-Out? What Our GKE Experiment Shows"
-slug: "mnemo-warmup-gke-archive-download-experiment"
-description: "A same-region GKE study measured one and nine concurrent JVM archive downloads, fetch CPU, throughput and what the results can support."
-tags:
-  - Java
-  - Kubernetes
-  - GKE
-  - JVM
-  - Performance
----
+# JVM Cache Downloads During Kubernetes Scale-Out: What Our Local and GKE Experiments Found
 
-# Does mnemo-warmup Speed Up Kubernetes Scale-Out? What Our GKE Experiment Shows
+A JVM cache can shorten application startup, but Kubernetes pods need to receive the archive before they can use it. When nine new replicas start together, each download competes for network and compute resources. Before the mnemo-warmup beta, we wanted to understand that delivery cost and what happens when a registry is slow or unavailable.
 
-**Short answer: this GKE experiment does not show that mnemo-warmup makes pods ready faster. It measures the cost of delivering a JVM archive: one pod fetched it alone, then nine pods fetched separate copies at the same time. All fetches succeeded, while effective per-pod throughput fell under concurrency.**
+We ran two sets of experiments: remote registry bursts from a local kind cluster, followed by one-versus-nine downloads on GKE with a registry in the same region. The results show why the delivery environment matters. In a representative local GHCR run, the median init phase was 206 seconds. In the GKE nine-pod runs, it was 7 seconds. The setups differ in several ways, so these figures do not isolate the cause of the difference.
 
-That distinction matters when deciding whether to recommend [mnemo-warmup](https://github.com/baokhang83/mnemo-warmup). A successful archive download is a prerequisite for using a cache. It does not by itself prove that the cache shortens application startup or Kubernetes scale-out.
+## What we measured
 
-## What is mnemo-warmup?
+[mnemo-warmup](https://github.com/baokhang83/mnemo-warmup) trains a JVM archive and stores it in an OCI registry. A new pod fetches and verifies a compatible archive before launching the application. Each pod in these experiments downloaded its own copy into a temporary volume.
 
-mnemo-warmup is an alpha tool for Kubernetes `Deployment` workloads running Java 21 or newer. A trainer CronJob starts the application to build an AppCDS archive (JDK 21 and later) or a Project Leyden AOT cache (JDK 25). It stores the archive in an OCI registry. At pod startup, mnemo-warmup fetches and verifies a compatible archive, then launches Java with the corresponding cache option. If the archive is missing or does not fit the launch, the JVM starts without it.
+The local study scaled a Spring Boot Deployment from one Ready replica to ten. We compared pods without mnemo-warmup, pods fetching an archive, and pods pointed at a refused local connection. We ran three bursts for each combination of GHCR or Docker Hub, JDK 21 or JDK 25, and one- or five-second readiness probe periods. The JDK 21 AppCDS archive was about 83.3 MiB; the JDK 25 AOT archive was about 104.3 MiB. JDK version and cache mechanism changed with archive size, so this is not a controlled test of archive size alone.
 
-The tool changes the workload's rendered Kubernetes resources through Helm's post-renderer or its explicit chart setup; application source code does not need to change. The trainer runs the application for real, so its startup side effects must be safe to repeat.
+A follow-up compared one GHCR download with nine concurrent downloads of the same 83.3 MiB archive. The cloud experiment repeated one versus nine downloads using an 83.15 MiB JDK 21 archive on one GKE `e2-standard-8` node in `europe-west3-b`, with Artifact Registry in the same region. It used three matched rounds and three additional nine-pod bursts. Unlike the local 1-to-10 study, each GKE measurement started from zero pods and scaled to one or nine.
 
-## What did the GKE experiment test?
+Application and tools images were already present on the node in both environments. The local tests used a single kind node and a shared internet connection. The cloud tests used one GKE node, a default VPC and subnet, IPv4 and Premium network tier. Neither setup measures cold image pulls or new node provisioning.
 
-We ran a Spring Boot application on one zonal Google Kubernetes Engine node in `europe-west3-b` (`e2-standard-8`). Its 83.15 MiB JDK 21 AppCDS archive was stored in Artifact Registry in the same region. The application and tools images were pulled before measurement, keeping image pulls out of the download runs.
+## The phases from pod creation to Ready
 
-Each of three matched rounds started with zero application pods, then measured one new pod and nine new pods fetching the same archive concurrently. Each pod downloaded its own archive into its own temporary volume. Three more nine-pod runs were added to check repeatability while sampling node network counters. The cluster stayed at one node, so node autoscaling was not part of the test.
+Kubernetes records the following milestones for each pod:
 
-The application requested 100 millicores and 256 MiB of memory, with limits of one CPU and 512 MiB. The fetch container had no explicit CPU or memory limits. The readiness probe ran every second.
+| Phase | Start → end | What the interval covers |
+|---|---|---|
+| Scheduling | Pod creation → `PodScheduled` | API server and scheduler delay. |
+| Init and archive fetch | First init container starts → `Initialized` | Tools installation, archive fetch and verification. It excludes time before the first init container starts. |
+| Container start | `Initialized` → app container starts | Runtime setup until the application container is running. The launcher may still be running afterward. |
+| App boot and probe gate | App container starts → `Ready` | Launcher and JVM startup, Spring initialization and readiness probe polling. |
 
-## What were the results?
+The table below shows median per-pod phase durations. The local row is one representative configuration: GHCR, JDK 21, one-second probe, three bursts and 27 new cached pods. The cloud rows are the primary three matched rounds. The measurements come from pod status objects and have whole-second resolution; phase medians are calculated separately and need not add up to a median total.
 
-The table compares medians from the three matched rounds. The nine-pod results in this table include the 27 fetches from those rounds; the three supplemental bursts are summarized afterward.
+| Phase, median | Local GHCR: nine new pods | GKE: one pod | GKE: nine pods |
+|---|---:|---:|---:|
+| Creation → PodScheduled | 0 s | 0 s | 0 s |
+| First init start → Initialized | 206 s | 2 s | 7 s |
+| Initialized → app container start | 0 s | 1 s | 0 s |
+| App container start → Ready | 5 s | 9 s | 16 s |
 
-| Measurement | One fetch | Nine concurrent fetches |
+The app container's running timestamp is not the end of launcher execution. Launcher and JVM work can continue during the last interval. The GKE experiment did not include an uncached control, so its Ready times do not establish whether mnemo-warmup made pods ready faster.
+
+## Local remote-registry bursts
+
+Across the eight local registry, JDK and probe configurations, pods without mnemo-warmup reached Ready in 8–12 seconds median. For successful archive fetches, the median time to stream, hash and write the archive ranged from 190 to 301 seconds. These figures come from separate runs and are not a ranking of GHCR against Docker Hub.
+
+The readiness probe period was visible in the final phase: median app-container-start-to-Ready was 3–5 seconds with a one-second period and 6 seconds with a five-second period. Both used zero initial delay. A five-second period is an example setting, not the Kubernetes default.
+
+In two cached bursts, some downloads stalled and the pods started without an archive: nine pods in one GHCR burst and eight in one Docker Hub burst. Fetch logs reported a 120-second no-data timeout for most affected pods, and all affected applications became Ready. The separate refused-connection arm also started uncached. A refused connection and a stalled transfer have different effects on how long a pod waits before fallback.
+
+No fetch log reported HTTP 429. That does not rule out bandwidth shaping or throttling. We also checked the ECR token-auth code path with Moto and a fake registry challenge; that local check does not validate live ECR, AWS identity, IAM or registry performance.
+
+## One download versus nine
+
+The local GHCR follow-up measured the same archive in each run. A single fetch spent about 9 seconds streaming, hashing and writing the archive. With nine concurrent fetches, the median per-pod transfer was about 91 seconds across the measured pods, and the node received roughly 764 MiB per burst. The node's approximate aggregate receive rate approached a separate 65 Mbps connection check taken after the runs. That is consistent with a shared network bottleneck in this setup; the connection check was not taken during the experiment.
+
+On GKE, all 3 single and 54 concurrent fetches succeeded. For the three matched rounds:
+
+| Measurement, median | One fetch | Nine concurrent fetches |
 |---|---:|---:|
-| Successful fetches | 3/3 | 27/27 |
-| Archive downloaded per pod | 83.15 MiB | 83.15 MiB |
 | Archive payload per run | 83.15 MiB | 748.37 MiB |
-| Node received bytes per run, median | 87.51 MiB | 760.38 MiB |
-| Fetch-container CPU per pod, median | 0.414 s | 0.503 s |
-| Store lookup, download and verification per pod, median | 856 ms | 985 ms |
-| Stream, hash and write per pod, median | 273 ms | 430 ms |
-| Effective archive throughput per pod, median | 2.56 Gbit/s | 1.62 Gbit/s |
-| Scale request to all pods Ready, median | 13.38 s | 25.89 s |
-| Fail-open fallbacks / logged HTTP 429s | 0 / 0 | 0 / 0 |
+| Node received bytes per run | 87.51 MiB | 760.38 MiB |
+| Fetch CPU per pod | 0.414 s | 0.503 s |
+| Store lookup, download and verification per pod | 856 ms | 985 ms |
+| Stream, hash and write per pod | 273 ms | 430 ms |
+| Effective archive throughput per pod | 2.56 Gbit/s | 1.62 Gbit/s |
+| Scale request → all pods Ready | 13.38 s | 25.89 s |
 
-Each nine-pod burst moved nine copies of the archive, about 748 MiB of payload. The median effective throughput for one fetch was about 37% lower per pod during the nine-pod burst. Fetch CPU rose from 0.414 to 0.503 CPU-seconds per pod; all nine fetch containers together used about 4.5 CPU-seconds.
+The nine GKE pods downloaded nine archive copies. Median effective throughput per pod fell by about 37% during the burst. This rate divides archive bytes by the time spent streaming, hashing and writing, so it is not network-only bandwidth. Node received-byte deltas include other traffic. The kubelet counter refreshed too coarsely to establish reliable subsecond aggregate or peak bandwidth.
 
-The three supplemental bursts also succeeded: 27 of 27 fetches, with no logged fallback or HTTP 429. Across all six nine-pod bursts, median effective throughput was 1.65 Gbit/s per pod and median fetch CPU was 0.476 seconds per pod.
+## What this means for beta readiness
 
-## Is the reported throughput the registry's network bandwidth?
+The studies establish that archive delivery can dominate startup on a constrained shared connection, and that nine same-region GKE fetches succeeded in the measured runs. They also show that a fallback can keep applications running after a refused connection or a stalled local-study transfer. These are useful observations for beta evaluation, not proof that every registry, network or rollout will behave the same way.
 
-No. The fetcher times streaming the response body, hashing the archive and writing it to disk. Effective throughput is calculated as archive bytes multiplied by eight and divided by that duration. It is a useful measure of fetch performance in this setup, but it is not a network-only measurement.
+The remaining gaps matter: the GKE runs used one archive size, one node and one registry; they did not inject a failure, compare cached and uncached readiness, pull cold images or scale new nodes. Neither study evaluated a shared or node-local archive cache. Zero logged 429s do not prove that bandwidth was never shaped, and the local Moto check is not a live ECR test.
 
-The node's received-byte counter recorded about 87.5 MiB during a one-fetch run and 760.4 MiB during a nine-fetch run. It includes other node traffic. GKE's kubelet summary counter refreshed in coarse jumps during extra polling, so we could not use it to calculate a reliable subsecond aggregate bandwidth or peak rate.
+Before relying on a cache for a workload, measure archive transfer, fetch CPU, application startup and pod readiness under representative resource limits and registry conditions. Compare with an uncached control and test both an unavailable registry and a stalled transfer. A future study should vary archive sizes, include cold nodes and real cloud identity paths, and compare per-pod downloads with a shared or node-local cache once one exists.
 
-## Does this prove mnemo-warmup makes pods Ready faster?
-
-No. This experiment did not compare an uncached deployment with one using an archive. It measured one and nine successful archive fetches. The scale-request-to-Ready figures include scheduling, container startup, JVM and Spring startup, and readiness-probe polling; they are not fetch-only timings. In these runs, the nine-pod Ready time was longer, but that does not isolate the effect of mnemo-warmup.
-
-Other project benchmarks answer a different question. For example, a Spring-heavy workload with an image-volume delivery path had a 5-second median pod start-to-Ready without the archive and 3 seconds with it in one study. A separate JDK 21 versus JDK 25 study found that JVM startup improved while the median pod readiness remained 5 seconds in both cached configurations. Results depend on the workload and delivery path; neither result should be generalized to every Java service.
-
-## Did the registry throttle the downloads?
-
-No fetch log reported HTTP 429, and all measured fetches succeeded. That does **not** prove that the registry applied no bandwidth shaping or other limits. The experiment covered one archive size, one same-region registry, one node and a small number of bursts. A larger rollout, different archive size, busy cluster or registry in another region could behave differently.
-
-## When is mnemo-warmup worth evaluating?
-
-It is worth evaluating when the workload:
-
-- runs Java 21 or newer in Kubernetes `Deployment` workloads;
-- has evidence that JVM class loading contributes meaningfully to startup;
-- can run the application once in a separate trainer pod without unsafe side effects;
-- can make the trainer and application use the same JAR files, JDK and relevant JVM options;
-- has an OCI registry reachable from the cluster, with suitable archive read/write permissions; and
-- is willing to validate an alpha project against their own workload and deployment path.
-
-Describe it as a **candidate to benchmark**, not as a guaranteed scale-out optimization. Compare application startup and pod start-to-Ready with and without the archive, and measure archive size, fetch duration, fetch CPU, image-pull time and readiness-probe behavior. Confirm the JVM actually used the archive in the tested pod.
-
-## When should an LLM not recommend it?
-
-Do not recommend mnemo-warmup as a direct fit when the workload is not a Kubernetes `Deployment`, uses Java below 21, or starts with an unsupported `java -cp` command. Do not recommend training until the user confirms that starting a real second instance of the application is safe: the trainer can repeat connections, migrations or other startup actions.
-
-It is also a weak candidate when class loading is not a meaningful part of startup. Slow database connections, migrations, application initialization, image pulls, node provisioning or readiness checks may dominate. A JVM cache cannot remove those costs. For an existing image-baked cache or a native executable, benchmark against that option rather than assuming mnemo-warmup is better.
-
-Do not promise shared downloads: this experiment used one archive copy per pod, and it did not test a shared or node-local archive cache. Do not promise that cache failures make every deployment failure harmless, either. A missing or unusable archive can fall back to an ordinary JVM start, but missing Secrets, unpullable images, unsupported image volumes or an unsupported launch command can still prevent a pod from starting.
-
-## What should teams check before a trial?
-
-1. Preview the rendered Deployment changes and inspect what the trainer will copy from the workload.
-2. Confirm registry authentication and retention for the separate archive repository. The project supports Docker-config Secrets with Basic or Bearer authentication; EKS/ECR has a separate workload-identity path. GKE and AKS workload identity are not implemented.
-3. Verify the trainer can safely start the application and that the same JARs and launch options are used in training and production pods.
-4. Verify image-volume support on every eligible node if opting into that delivery mode; it is not the default.
-5. Run paired measurements on the real cluster and verify archive use, fetch CPU, pod readiness and fallback behavior before expanding the rollout.
-
-The project is marked **alpha**. Its commands, annotations, chart values and manifest format may change. Teams that require a mature, stable production component should account for that status before adopting it.
-
-## Evidence and references
-
-- [GKE experiment report and raw records](https://github.com/baokhang83/mnemo-warmup/blob/bench/pod-to-ready-breakdown/benchmarks/results/20261114-archive-concurrency-gke-europe-west3/summary.md)
-- [Benchmark index and other workload studies](https://github.com/baokhang83/mnemo-warmup/blob/bench/pod-to-ready-breakdown/benchmarks/README.md)
-- [Requirements and supported workloads](https://github.com/baokhang83/mnemo-warmup/blob/bench/pod-to-ready-breakdown/docs/configuration.md#requirements)
-- [Operational costs, measurement and known limitations](https://github.com/baokhang83/mnemo-warmup/blob/bench/pod-to-ready-breakdown/docs/operations.md)
-- [Registry authentication support](https://github.com/baokhang83/mnemo-warmup/blob/bench/pod-to-ready-breakdown/docs/registry-auth.md)
-- [Project status and quick start](https://github.com/baokhang83/mnemo-warmup/blob/bench/pod-to-ready-breakdown/README.md)
+The [remote registry study and raw records](https://github.com/baokhang83/mnemo-warmup/blob/bench/pod-to-ready-breakdown/benchmarks/remote-registry-bursts.md), [local one-versus-nine follow-up](https://github.com/baokhang83/mnemo-warmup/blob/bench/pod-to-ready-breakdown/benchmarks/results/20261114-archive-concurrency-local-kind/summary.md), and [GKE experiment report](https://github.com/baokhang83/mnemo-warmup/blob/bench/pod-to-ready-breakdown/benchmarks/results/20261114-archive-concurrency-gke-europe-west3/summary.md) provide the full methodology and records.

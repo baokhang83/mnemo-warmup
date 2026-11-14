@@ -100,6 +100,7 @@ def main(root):
                 'scale_to_ready_s': (ready-requested).total_seconds(),
                 'fetch_store_lookup_download_verify_ms': metric(r'fetch: timing:.*?store-lookup-download-verify=(\d+) ms', fetch),
                 'archive_transfer_hash_write_ms': metric(r'archive-transfer-hash-write=(\d+) ms', fetch),
+                'fetch_cgroup_cpu_usage_usec': metric(r'cgroup-cpu-usage=(\d+) usec', fetch),
                 'fetch_process_ms': metric(r'timing: fetch-process=(\d+) ms', fetch),
                 'launcher_plan_ms': metric(r'timing: plan-process=(\d+) ms', app),
                 'archive_used': bool(re.search(r'run: using (APP_CDS|LEYDEN_AOT) archive', app)),
@@ -131,7 +132,7 @@ def main(root):
         r = [row for row in rows if row['arm'] == arm]
         print(f"| {arm} | {sample(x['scheduling_s'] for x in r)} | {sample(x['init_install_fetch_s'] for x in r)} | {sample(x['initialized_to_app_container_start_s'] for x in r)} | {sample(x['app_container_start_to_ready_s'] for x in r)} |")
     print('\nThe init interval begins when the first init container starts, so it excludes time before that start, including scheduling and any image pull. The app container running timestamp does not mark JVM or launcher completion; that work continues inside the last interval. The app has no init containers in the no-tool arm, so its init interval is unavailable. Probe initial delay and period are recorded per pod in `pods.csv`.\n')
-    print('\nThe fault arm points to a refused local connection and exercises uncached startup; it is not a slow-remote-registry simulation. `pods.csv` contains per-pod timings, archive flags, reported 429s, app-container cgroup CPU counters, and archive sizes when available. Transfer time includes streaming, hashing, and writing the archive, and excludes request setup and response headers. CPU counters are read after readiness and do not measure the terminated fetch init container. A missing timing or counter remains empty.\n')
+    print('\nThe fault arm points to a refused local connection and exercises uncached startup; it is not a slow-remote-registry simulation. `pods.csv` contains per-pod timings, archive flags, reported 429s, app-container cgroup counters sampled after readiness, fetch-container CPU usage measured during native fetch, and archive sizes when available. Transfer time includes streaming, hashing, and writing the archive, and excludes request setup and response headers. A missing timing or counter remains empty.\n')
     print('A zero 429 count means only that captured fetch logs did not report HTTP 429; it does not prove the registry applied no rate or bandwidth limits. Unready bursts are saved as failure records and do not appear in this table.')
 
 

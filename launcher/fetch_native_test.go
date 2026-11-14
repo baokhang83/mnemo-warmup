@@ -151,6 +151,16 @@ func TestNativeFetchDownloadsVerifiesAndPublishes(t *testing.T) {
 	}
 }
 
+func TestParseCgroupCPUUsageUsec(t *testing.T) {
+	got, ok := parseCgroupCPUUsageUsec([]byte("usage_usec 12345\nuser_usec 9000\nsystem_usec 3345\n"))
+	if !ok || got != 12345 {
+		t.Fatalf("got %d, %v; want 12345, true", got, ok)
+	}
+	if _, ok := parseCgroupCPUUsageUsec([]byte("user_usec 12\n")); ok {
+		t.Fatal("expected missing usage_usec to be unavailable")
+	}
+}
+
 // What the native fetch publishes is what the native planner then accepts: the two halves agree with each other.
 func TestNativeFetchOutputIsAcceptedByTheNativePlanner(t *testing.T) {
 	f := newFixture(t)

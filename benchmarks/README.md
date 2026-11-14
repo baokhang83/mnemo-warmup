@@ -128,4 +128,6 @@ The [remote-registry burst study](remote-registry-bursts.md) describes the new o
 
 The remote study completed three one-to-ten bursts against GHCR and Docker Hub for each JDK/probe combination. Archives were 83.3 MiB (JDK 21) and about 104.3 MiB (JDK 25); successful per-pod downloads took roughly 190–301 s median on this laptop. Two five-second-probe bursts hit the fetcher's 120-second idle timeout and still started uncached, demonstrating fail-open behavior. These timings are environment-specific; see the [study report and raw records](remote-registry-bursts.md).
 
+A follow-up measured one fetch against nine simultaneous fetches of the same 83.3 MiB archive. The single fetch took about 9 s; concurrent fetches took about 91 s per pod and moved roughly nine archive copies over the shared connection. Fetch-container CPU measurements suggest network bandwidth was the main limit in this run. See the [single versus concurrent download results](results/20261114-archive-concurrency-local-kind/summary.md).
+
 Two earlier runs were discarded because other benchmark runs were active on the same machine. No other benchmark ran alongside the published runs.

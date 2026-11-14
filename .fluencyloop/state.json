@@ -3,7 +3,7 @@
   "feature": "92-implement-an-optional-secure-node-local-archive-cache-for",
   "branch": "feature/92-implement-an-optional-secure-node-local-archive-cache-for",
   "stage": "build",
-  "last_session": "005-verify-current-registry-pull-permission-for-cache-hits",
+  "last_session": "006-fetch-cache-misses-from-an-allowed-oci-repository",
   "base_ref": "design/node-archive-cache",
   "feature_dir": "",
   "plan": "",

@@ -53,14 +53,8 @@ func validRegistryHost(host string) bool {
 // Verify accepts an ephemeral Basic or Bearer authorization header. Empty
 // authorization is permitted for public registries. Other schemes are rejected.
 func (v *OCIRegistryVerifier) Verify(ctx context.Context, scope RepositoryScope, digest, proof string) error {
-	if _, ok := v.allowed[scope.Registry]; !ok || !repositoryPattern.MatchString(scope.Repository) || !digestPattern.MatchString(digest) || len(proof) > 8192 {
+	if _, ok := v.allowed[scope.Registry]; !ok || !repositoryPattern.MatchString(scope.Repository) || !digestPattern.MatchString(digest) || !validRegistryAuthorization(proof) {
 		return ErrDenied
-	}
-	if proof != "" {
-		parts := strings.Fields(proof)
-		if len(parts) != 2 || (!strings.EqualFold(parts[0], "Bearer") && !strings.EqualFold(parts[0], "Basic")) || strings.Join(parts, " ") != proof {
-			return ErrDenied
-		}
 	}
 	u := &url.URL{Scheme: "https", Host: scope.Registry, Path: "/v2/" + scope.Repository + "/blobs/" + digest}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
@@ -82,4 +76,15 @@ func (v *OCIRegistryVerifier) Verify(ctx context.Context, scope RepositoryScope,
 		return ErrDenied
 	}
 	return nil
+}
+
+func validRegistryAuthorization(proof string) bool {
+	if len(proof) > 8192 {
+		return false
+	}
+	if proof == "" {
+		return true
+	}
+	parts := strings.Fields(proof)
+	return len(parts) == 2 && (strings.EqualFold(parts[0], "Bearer") || strings.EqualFold(parts[0], "Basic")) && strings.Join(parts, " ") == proof
 }

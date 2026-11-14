@@ -3,7 +3,7 @@
   "feature": "92-implement-an-optional-secure-node-local-archive-cache-for",
   "branch": "feature/92-implement-an-optional-secure-node-local-archive-cache-for",
   "stage": "build",
-  "last_session": "004-require-workload-and-registry-authorization-before-servi",
+  "last_session": "005-verify-current-registry-pull-permission-for-cache-hits",
   "base_ref": "design/node-archive-cache",
   "feature_dir": "",
   "plan": "",

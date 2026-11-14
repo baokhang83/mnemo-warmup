@@ -125,3 +125,68 @@ func TestHandlerRequiresTLS(t *testing.T) {
 		t.Fatalf("plaintext status: %d", w.Code)
 	}
 }
+
+func TestRegistryRevocationDeniesAnExistingCacheHit(t *testing.T) {
+	data := []byte("archive")
+	var revoked atomic.Bool
+	registry := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if revoked.Load() || r.Header.Get("Authorization") != "Bearer registry-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusPartialContent)
+	}))
+	defer registry.Close()
+	host := strings.TrimPrefix(registry.URL, "https://")
+	verifier, err := NewOCIRegistryVerifier([]string{host}, registry.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := NewAuthorizer(reviewFunc(func(context.Context, string) (string, error) {
+		return "system:serviceaccount:team:app", nil
+	}), []Grant{{"system:serviceaccount:team:app", host, "team/archive"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(filepath.Join(t.TempDir(), "cache"), 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var downloads atomic.Int32
+	src := sourceFunc(func(context.Context, RepositoryScope, string) (io.ReadCloser, error) {
+		downloads.Add(1)
+		return io.NopCloser(bytes.NewReader(data)), nil
+	})
+	handler, err := NewHandler(auth, verifier, src, store, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := httptest.NewTLSServer(handler)
+	defer cache.Close()
+	body := `{"registry":"` + host + `","repository":"team/archive","digest":"` + digestOf(data) + `","size":7}`
+	request := func() int {
+		req, err := http.NewRequest(http.MethodPost, cache.URL+"/v1/blobs", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer caller")
+		req.Header.Set("X-Mnemo-Registry-Authorization", "Bearer registry-token")
+		resp, err := cache.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return resp.StatusCode
+	}
+	if got := request(); got != http.StatusOK {
+		t.Fatalf("first request: %d", got)
+	}
+	revoked.Store(true)
+	if got := request(); got != http.StatusForbidden {
+		t.Fatalf("revoked cache hit: %d", got)
+	}
+	if got := downloads.Load(); got != 1 {
+		t.Fatalf("source downloads: %d", got)
+	}
+}

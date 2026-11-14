@@ -30,7 +30,7 @@ unchanged JVM application. A pod starts from the cache when it fits its launch e
 
 ## Key benefits
 
-- **Shorter JVM start-up, no rewrite.** Keep your JDK, your frameworks and your JAR. Pods start from a ready-made class cache instead of loading every class from scratch. Pod readiness improves where class loading dominates the start (Spring Boot: [-40%](#measurements)); [measure](docs/operations.md#measure-the-benefit) yours.
+- **Shorter JVM start-up, no rewrite.** Keep your JDK, your frameworks and your JAR. Pods start from a ready-made class cache instead of loading every class from scratch. In our Spring Boot test, image volumes gave a [1 s (~20%) median paired readiness improvement](#measurements); [measure](docs/operations.md#measure-the-benefit) yours.
 - **Three annotations, no source changes.** An injector adds the init containers, the launcher and the trainer to a plain Deployment, and you can preview every change first.
 - **A cache problem never stops a pod.** A missing, outdated, damaged or unreachable cache means an ordinary start, and the log says why.
 - **Set it up once.** When the image or JVM options change, the trainer builds a new cache by itself.
@@ -63,7 +63,7 @@ It previews and installs an annotated Deployment, shows it starting without a ca
 
 ## Quick start in three steps
 
-**Before you start:** the CLI runs on your machine for the preview and as the Helm post-renderer. It needs Java 21 or newer. Starting with the `v0.3.0-beta.1` release, install it on macOS or Linux with:
+Install the CLI on macOS or Linux (requires Java 21+):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/scripts/install.sh | sh
@@ -71,15 +71,7 @@ export PATH="$HOME/.local/bin:$PATH"
 mnemo-warmup --version
 ```
 
-The installer downloads the CLI JAR and wrapper from the named GitHub release, checks their SHA-256 digests, and installs them under `~/.local`. The [installer source](scripts/install.sh) is available to review before running it. Set `MNEMO_VERSION` when running `sh` to select a different release tag, or `MNEMO_INSTALL_PREFIX` to select a different absolute installation prefix. Checksums detect corrupt or mismatched downloads; they do not independently authenticate a compromised release source.
-
-The `v0.3.0-beta.1` assets will be available once that prerelease is published. Until then, or as an alternative, extract the CLI from the tools image (the same one the injected init containers use):
-
-```bash
-docker run --rm -v "$PWD":/out --entrypoint cp ghcr.io/baokhang83/mnemo-warmup-tools:0.2.5 -r /opt/mnemo-warmup /out/
-export PATH="$PWD/mnemo-warmup/bin:$PATH"
-mnemo-warmup --version
-```
+See the [installer source](scripts/install.sh) and [installation options](docs/configuration.md#cli-installation-options).
 
 Helm 3 calls an executable as the post-renderer. Save this as `mnemo-warmup-inject` and `chmod +x` it:
 
@@ -177,7 +169,7 @@ Details and what is not supported: [configuration](docs/configuration.md#require
 
 | Workload Profile | Pod start-to-Ready | Verdict |
 |---|---|---|
-| 🟢 **Spring Boot**: start-up is mostly loading classes and creating beans | **5 s → 3 s**<br>40% faster | **Worth it.** The JVM itself starts 41% faster. |
+| 🟢 **Spring Boot**: start-up is mostly loading classes and creating beans | **1 s (~20%) median paired improvement** | **Worth measuring.** Spring-reported JVM application startup: 3.18 s → 1.90 s. |
 | 🟡 **Jenkins**: start-up is mostly the application running its own setup code (initializing plugins and configuration) | **4 s → 4 s**<br>no change | **Neutral.** The JVM starts 13% faster, the pod is ready at the same time. |
 | 🔴 **SonarQube**: the container starts a small launcher, which starts three other JVMs that do the real work | **15 s → 17 s**<br>13% slower | **Not a fit yet.** The cache only reaches the launcher ([#77](https://github.com/baokhang83/mnemo-warmup/issues/77)). |
 

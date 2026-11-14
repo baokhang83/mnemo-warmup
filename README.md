@@ -165,32 +165,26 @@ Details and what is not supported: [configuration](docs/configuration.md#require
 
 ## Measurements
 
-**Will it make my pods start faster?** It depends on what your app does while it starts.
+**Will it make my pods start faster?** Startup gains depend on your application's architecture.
 
-In our [GKE JDK 25 Leyden AOT workload-tier study](benchmarks/workload-tiers/results/gke-repaired.md), the cached single-pod trials took **31%–58% less time from application-container start to Ready** than the uncached trials. This phase excludes scheduling and archive fetch. Each cell was measured once, and the original watch observations have limitations described in the report; these figures are not end-to-end pod startup improvements or estimates of typical performance.
+In our [GKE JDK 25 Leyden AOT workload-tier study](benchmarks/workload-tiers/results/gke-repaired.md), cached single-pod trials reached Ready **31%–58% faster after application start** across four Spring Boot tiers:
 
-| Workload | Archive size | Uncached app start to Ready | Cached app start to Ready |
-|---|---:|---:|---:|
-| Minimal service | 54.3 MiB | 4.5 s | 2.0–2.1 s |
-| Standard service | 103.9 MiB | 7.4 s | 3.1–4.2 s |
-| Larger service | 116.0 MiB | 8.7 s | 3.9–5.0 s |
-| ThingsBoard | 223.5 MiB | 30.8 s | 21.2–21.4 s |
+| Workload | Archive size | Uncached app-start to Ready | Cached app-start to Ready | Improvement |
+| :--- | ---: | ---: | ---: | ---: |
+| **Minimal service** (37 JARs) | 54.3 MiB | 4.5 s | 2.0–2.1 s | **53%–56%** |
+| **Standard service** (70 JARs) | 103.9 MiB | 7.4 s | 3.1–4.2 s | **44%–58%** |
+| **Larger service** (98 JARs) | 116.0 MiB | 8.7 s | 3.9–5.0 s | **42%–55%** |
+| **ThingsBoard CE** (458 JARs) | 223.5 MiB | 30.8 s | 21.2–21.4 s | **~31%** |
 
-The cached range covers direct archive fetch, cold node cache and warm node cache. The report also records HPA scale-out, throughput, cache outcomes and request failures.
+These are reductions in app-start-to-Ready time; scheduling and archive fetch are excluded. Each cell was measured once, and the original watch observations have limitations described in the report.
 
-In an earlier local kind comparison, we measured three applications over 12 restarts each:
+**Key takeaways:**
 
-| Workload Profile | Pod start-to-Ready | Verdict |
-|---|---|---|
-| 🟢 **Spring Boot**: start-up is mostly loading classes and creating beans | **1 s (~20%) median paired improvement** | **Worth measuring.** Spring-reported JVM application startup: 3.18 s → 1.90 s. |
-| 🟡 **Jenkins**: start-up is mostly the application running its own setup code (initializing plugins and configuration) | **4 s → 4 s**<br>no change | **Neutral.** The JVM starts 13% faster, the pod is ready at the same time. |
-| 🔴 **SonarQube**: the container starts a small launcher, which starts three other JVMs that do the real work | **15 s → 17 s**<br>13% slower | **Not a fit yet.** The cache only reaches the launcher ([#77](https://github.com/baokhang83/mnemo-warmup/issues/77)). |
+- **Framework-heavy apps can benefit:** In local `kind` tests, Spring Boot had a **1 s (~20%) median paired readiness improvement** with [image volumes](docs/configuration.md#tools-delivery-init-containers-or-an-image-volume); its reported application startup was **3.18 s → 1.90 s**. Init-container overhead eliminated the readiness savings.
+- **Other startup work can dominate:** Jenkins reached Ready at about the same time, while SonarQube slowed down in the test because its child JVMs did not use the cache ([#77](https://github.com/baokhang83/mnemo-warmup/issues/77)).
+- **Image volumes avoid init-container overhead:** Use them where the cluster supports them.
 
-**The rule of thumb:** the more of your start-up is class loading (typical for Spring Boot and similar frameworks), the more you gain. If it is mostly your own initialization code, or a launcher that starts other JVMs, expect little or nothing.
-
-> **Use the `image` volume where your cluster supports it.** The green and yellow rows deliver the tools as a Kubernetes [`image` volume](docs/configuration.md#tools-delivery-init-containers-or-an-image-volume), which needs no init containers. With init containers the Spring Boot pod is ready in 5 s either way (the init containers cost what the cache saves), and Jenkins is 1 s slower. The red row used init containers.
-
-The local kind numbers are medians and pod times have a one-second resolution: read the direction, not the decimals. Measure your own app with `mnemo-warmup bench --jar app.jar` or [the cluster method](docs/operations.md#measure-the-benefit). Method, raw data and limits: [benchmarks](benchmarks/README.md). A comparison with other JVM and native-image approaches is planned in [#74](https://github.com/baokhang83/mnemo-warmup/issues/74).
+Run `mnemo-warmup bench --jar app.jar` or use the [cluster method](docs/operations.md#measure-the-benefit). See [benchmarks](benchmarks/README.md) for methodology and limitations; the alternatives comparison is planned in [#74](https://github.com/baokhang83/mnemo-warmup/issues/74).
 
 ## Disable or remove it
 

@@ -69,8 +69,13 @@ import java.util.regex.Pattern;
     public static JdkInfo fromJavaHome(Path javaHome, Duration timeout) {
 <span class="fc" id="L70">        Path java = resolveJavaExecutable(javaHome);</span>
 <span class="fc" id="L71">        String output = run(java, timeout);</span>
-<span class="fc" id="L72">        JdkInfo parsed = parse(output);</span>
-<span class="fc" id="L73">        return new JdkInfo(javaHome, parsed.version(), parsed.featureVersion(), parsed.vendor(), parsed.runtimeVersion());</span>
+        JdkInfo parsed;
+        try {
+<span class="fc" id="L74">            parsed = parse(output);</span>
+<span class="fc" id="L75">        } catch (IllegalArgumentException e) {</span>
+<span class="fc" id="L76">            throw new IllegalStateException(&quot;Cannot parse JVM settings from &quot; + java, e);</span>
+<span class="fc" id="L77">        }</span>
+<span class="fc" id="L78">        return new JdkInfo(javaHome, parsed.version(), parsed.featureVersion(), parsed.vendor(), parsed.runtimeVersion());</span>
     }
 
     /**
@@ -80,97 +85,97 @@ import java.util.regex.Pattern;
      * @throws IllegalArgumentException if there is no launcher under it
      */
     public Path javaExecutable() {
-<span class="pc bpc" id="L83" title="1 of 2 branches missed.">        if (javaHome == null) {</span>
-<span class="nc" id="L84">            throw new IllegalStateException(&quot;Java home of this JDK is unknown&quot;);</span>
+<span class="pc bpc" id="L88" title="1 of 2 branches missed.">        if (javaHome == null) {</span>
+<span class="nc" id="L89">            throw new IllegalStateException(&quot;Java home of this JDK is unknown&quot;);</span>
         }
-<span class="fc" id="L86">        return resolveJavaExecutable(javaHome);</span>
+<span class="fc" id="L91">        return resolveJavaExecutable(javaHome);</span>
     }
 
     /** Parses the output of {@code java -XshowSettings:properties -version}. */
     static JdkInfo parse(String settingsOutput) {
-<span class="fc" id="L91">        Map&lt;String, String&gt; props = new HashMap&lt;&gt;();</span>
-<span class="fc bfc" id="L92" title="All 2 branches covered.">        for (String line : settingsOutput.split(&quot;\\R&quot;)) {</span>
-<span class="fc" id="L93">            Matcher m = PROPERTY_LINE.matcher(line);</span>
-<span class="fc bfc" id="L94" title="All 2 branches covered.">            if (m.matches()) {</span>
-<span class="fc" id="L95">                props.put(m.group(1), m.group(2).trim());</span>
+<span class="fc" id="L96">        Map&lt;String, String&gt; props = new HashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L97" title="All 2 branches covered.">        for (String line : settingsOutput.split(&quot;\\R&quot;)) {</span>
+<span class="fc" id="L98">            Matcher m = PROPERTY_LINE.matcher(line);</span>
+<span class="fc bfc" id="L99" title="All 2 branches covered.">            if (m.matches()) {</span>
+<span class="fc" id="L100">                props.put(m.group(1), m.group(2).trim());</span>
             }
         }
-<span class="fc" id="L98">        String version = props.get(&quot;java.version&quot;);</span>
-<span class="fc bfc" id="L99" title="All 2 branches covered.">        if (version == null) {</span>
-<span class="fc" id="L100">            throw new IllegalArgumentException(&quot;No java.version found in JVM settings output&quot;);</span>
+<span class="fc" id="L103">        String version = props.get(&quot;java.version&quot;);</span>
+<span class="fc bfc" id="L104" title="All 2 branches covered.">        if (version == null) {</span>
+<span class="fc" id="L105">            throw new IllegalArgumentException(&quot;No java.version found in JVM settings output&quot;);</span>
         }
-<span class="fc" id="L102">        String home = props.get(&quot;java.home&quot;);</span>
-<span class="fc" id="L103">        return new JdkInfo(</span>
-<span class="pc bpc" id="L104" title="1 of 2 branches missed.">                home == null ? null : Path.of(home),</span>
+<span class="fc" id="L107">        String home = props.get(&quot;java.home&quot;);</span>
+<span class="fc" id="L108">        return new JdkInfo(</span>
+<span class="pc bpc" id="L109" title="1 of 2 branches missed.">                home == null ? null : Path.of(home),</span>
                 version,
-<span class="fc" id="L106">                parseFeatureVersion(version),</span>
-<span class="fc" id="L107">                props.getOrDefault(&quot;java.vendor&quot;, &quot;unknown&quot;),</span>
-<span class="fc" id="L108">                props.getOrDefault(&quot;java.runtime.version&quot;, version));</span>
+<span class="fc" id="L111">                parseFeatureVersion(version),</span>
+<span class="fc" id="L112">                props.getOrDefault(&quot;java.vendor&quot;, &quot;unknown&quot;),</span>
+<span class="fc" id="L113">                props.getOrDefault(&quot;java.runtime.version&quot;, version));</span>
     }
 
     /** Extracts the feature release: {@code 21.0.5 -&gt; 21}, {@code 25-ea -&gt; 25}, {@code 1.8.0_292 -&gt; 8}. */
     static int parseFeatureVersion(String version) {
-<span class="fc" id="L113">        Matcher m = LEADING_VERSION.matcher(version.trim());</span>
-<span class="fc bfc" id="L114" title="All 2 branches covered.">        if (!m.find()) {</span>
-<span class="fc" id="L115">            throw new IllegalArgumentException(&quot;Cannot parse Java version: &quot; + version);</span>
+<span class="fc" id="L118">        Matcher m = LEADING_VERSION.matcher(version.trim());</span>
+<span class="fc bfc" id="L119" title="All 2 branches covered.">        if (!m.find()) {</span>
+<span class="fc" id="L120">            throw new IllegalArgumentException(&quot;Cannot parse Java version: &quot; + version);</span>
         }
-<span class="fc" id="L117">        int major = Integer.parseInt(m.group(1));</span>
-<span class="pc bpc" id="L118" title="1 of 4 branches missed.">        if (major == 1 &amp;&amp; m.group(2) != null) {</span>
-<span class="fc" id="L119">            return Integer.parseInt(m.group(2));</span>
+<span class="fc" id="L122">        int major = Integer.parseInt(m.group(1));</span>
+<span class="pc bpc" id="L123" title="1 of 4 branches missed.">        if (major == 1 &amp;&amp; m.group(2) != null) {</span>
+<span class="fc" id="L124">            return Integer.parseInt(m.group(2));</span>
         }
-<span class="fc" id="L121">        return major;</span>
+<span class="fc" id="L126">        return major;</span>
     }
 
     private static Path resolveJavaExecutable(Path javaHome) {
-<span class="fc bfc" id="L125" title="All 2 branches covered.">        for (String name : new String[] {&quot;java&quot;, &quot;java.exe&quot;}) {</span>
-<span class="fc" id="L126">            Path candidate = javaHome.resolve(&quot;bin&quot;).resolve(name);</span>
-<span class="pc bpc" id="L127" title="1 of 4 branches missed.">            if (Files.isRegularFile(candidate) &amp;&amp; Files.isExecutable(candidate)) {</span>
-<span class="fc" id="L128">                return candidate;</span>
+<span class="fc bfc" id="L130" title="All 2 branches covered.">        for (String name : new String[] {&quot;java&quot;, &quot;java.exe&quot;}) {</span>
+<span class="fc" id="L131">            Path candidate = javaHome.resolve(&quot;bin&quot;).resolve(name);</span>
+<span class="pc bpc" id="L132" title="1 of 4 branches missed.">            if (Files.isRegularFile(candidate) &amp;&amp; Files.isExecutable(candidate)) {</span>
+<span class="fc" id="L133">                return candidate;</span>
             }
         }
-<span class="fc" id="L131">        throw new IllegalArgumentException(&quot;No java executable found under &quot; + javaHome.resolve(&quot;bin&quot;));</span>
+<span class="fc" id="L136">        throw new IllegalArgumentException(&quot;No java executable found under &quot; + javaHome.resolve(&quot;bin&quot;));</span>
     }
 
     private static String run(Path java, Duration timeout) {
         Process process;
         try {
-<span class="fc" id="L137">            process = new ProcessBuilder(java.toString(), &quot;-XshowSettings:properties&quot;, &quot;-version&quot;)</span>
-<span class="fc" id="L138">                    .redirectErrorStream(true)</span>
-<span class="fc" id="L139">                    .start();</span>
-<span class="nc" id="L140">        } catch (IOException e) {</span>
-<span class="nc" id="L141">            throw new IllegalStateException(&quot;Cannot run &quot; + java, e);</span>
-<span class="fc" id="L142">        }</span>
+<span class="fc" id="L142">            process = new ProcessBuilder(java.toString(), &quot;-XshowSettings:properties&quot;, &quot;-version&quot;)</span>
+<span class="fc" id="L143">                    .redirectErrorStream(true)</span>
+<span class="fc" id="L144">                    .start();</span>
+<span class="nc" id="L145">        } catch (IOException e) {</span>
+<span class="nc" id="L146">            throw new IllegalStateException(&quot;Cannot run &quot; + java, e);</span>
+<span class="fc" id="L147">        }</span>
         // Read on another thread: a launcher (or an agent from JAVA_TOOL_OPTIONS) that hangs while holding
         // the stream open must not hold us past the timeout, so the wait covers the reading too.
         // The JVM writes the settings to stderr; merged into stdout above.
-<span class="fc" id="L146">        var reader = Executors.newSingleThreadExecutor(r -&gt; {</span>
-<span class="fc" id="L147">            Thread t = new Thread(r, &quot;jdk-probe-reader&quot;);</span>
-<span class="fc" id="L148">            t.setDaemon(true);</span>
-<span class="fc" id="L149">            return t;</span>
+<span class="fc" id="L151">        var reader = Executors.newSingleThreadExecutor(r -&gt; {</span>
+<span class="fc" id="L152">            Thread t = new Thread(r, &quot;jdk-probe-reader&quot;);</span>
+<span class="fc" id="L153">            t.setDaemon(true);</span>
+<span class="fc" id="L154">            return t;</span>
         });
         try {
-<span class="fc" id="L152">            Future&lt;byte[]&gt; output = reader.submit(() -&gt; process.getInputStream().readAllBytes());</span>
+<span class="fc" id="L157">            Future&lt;byte[]&gt; output = reader.submit(() -&gt; process.getInputStream().readAllBytes());</span>
             byte[] bytes;
             try {
-<span class="fc" id="L155">                bytes = output.get(timeout.toMillis(), TimeUnit.MILLISECONDS);</span>
-<span class="fc" id="L156">            } catch (TimeoutException e) {</span>
-<span class="fc" id="L157">                throw new IllegalStateException(&quot;Timed out probing &quot; + java + &quot; after &quot; + timeout.toSeconds() + &quot; s&quot;);</span>
-<span class="nc" id="L158">            } catch (ExecutionException e) {</span>
-<span class="nc" id="L159">                throw new IllegalStateException(&quot;Cannot read the output of &quot; + java + &quot;: &quot; + e.getCause(), e.getCause());</span>
-<span class="fc" id="L160">            }</span>
-<span class="pc bpc" id="L161" title="1 of 2 branches missed.">            if (!process.waitFor(Math.max(1, timeout.toSeconds()), TimeUnit.SECONDS)) {</span>
-<span class="nc" id="L162">                throw new IllegalStateException(&quot;Timed out probing &quot; + java + &quot; after &quot; + timeout.toSeconds() + &quot; s&quot;);</span>
+<span class="fc" id="L160">                bytes = output.get(timeout.toMillis(), TimeUnit.MILLISECONDS);</span>
+<span class="fc" id="L161">            } catch (TimeoutException e) {</span>
+<span class="fc" id="L162">                throw new IllegalStateException(&quot;Timed out probing &quot; + java + &quot; after &quot; + timeout.toSeconds() + &quot; s&quot;);</span>
+<span class="nc" id="L163">            } catch (ExecutionException e) {</span>
+<span class="nc" id="L164">                throw new IllegalStateException(&quot;Cannot read the output of &quot; + java + &quot;: &quot; + e.getCause(), e.getCause());</span>
+<span class="fc" id="L165">            }</span>
+<span class="pc bpc" id="L166" title="1 of 2 branches missed.">            if (!process.waitFor(Math.max(1, timeout.toSeconds()), TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L167">                throw new IllegalStateException(&quot;Timed out probing &quot; + java + &quot; after &quot; + timeout.toSeconds() + &quot; s&quot;);</span>
             }
-<span class="pc bpc" id="L164" title="1 of 2 branches missed.">            if (process.exitValue() != 0) {</span>
-<span class="nc" id="L165">                throw new IllegalStateException(&quot;Probing &quot; + java + &quot; failed with exit code &quot; + process.exitValue());</span>
+<span class="pc bpc" id="L169" title="1 of 2 branches missed.">            if (process.exitValue() != 0) {</span>
+<span class="nc" id="L170">                throw new IllegalStateException(&quot;Probing &quot; + java + &quot; failed with exit code &quot; + process.exitValue());</span>
             }
-<span class="fc" id="L167">            return new String(bytes, StandardCharsets.UTF_8);</span>
-<span class="nc" id="L168">        } catch (InterruptedException e) {</span>
-<span class="nc" id="L169">            Thread.currentThread().interrupt();</span>
-<span class="nc" id="L170">            throw new IllegalStateException(&quot;Interrupted while probing &quot; + java, e);</span>
+<span class="fc" id="L172">            return new String(bytes, StandardCharsets.UTF_8);</span>
+<span class="nc" id="L173">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L174">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L175">            throw new IllegalStateException(&quot;Interrupted while probing &quot; + java, e);</span>
         } finally {
-<span class="fc" id="L172">            process.destroyForcibly();</span>
-<span class="fc" id="L173">            reader.shutdownNow();</span>
+<span class="fc" id="L177">            process.destroyForcibly();</span>
+<span class="fc" id="L178">            reader.shutdownNow();</span>
         }
     }
 }

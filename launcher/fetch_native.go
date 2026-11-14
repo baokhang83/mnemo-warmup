@@ -320,6 +320,8 @@ type registry struct {
 	authz          string
 	timeout        time.Duration
 	transferTiming func(int64, time.Duration)
+	nodeCache      *nodeCacheClient
+	cacheNote      func(string)
 }
 
 func (l launcher) openRegistry(o fetchOptions, env map[string]string) (*registry, error) {
@@ -336,6 +338,13 @@ func (l launcher) openRegistry(o fetchOptions, env map[string]string) (*registry
 		scheme = "http"
 	}
 	r := &registry{base: &url.URL{Scheme: scheme, Host: host}, repo: repo, timeout: o.timeout}
+	cache, cacheErr := newNodeCacheClient(env)
+	if cacheErr != nil {
+		l.note("node cache configuration unavailable; using registry")
+	} else {
+		r.nodeCache = cache
+	}
+	r.cacheNote = func(message string) { l.note("%s", message) }
 	if env["MNEMO_WARMUP_TIMING"] == "1" {
 		r.transferTiming = func(bytes int64, elapsed time.Duration) {
 			fmt.Fprintf(l.stderr, "fetch: timing: archive-transfer-hash-write=%d ms, archive-bytes=%d\n", elapsed.Milliseconds(), bytes)
@@ -663,8 +672,19 @@ func (r *registry) fetchArchive(fp string, live manifestJSON, out string) (*fetc
 		return nil, registryError{"the stored manifest names an archive file outside the output directory"}
 	}
 	target := filepath.Join(out, name)
-	if err := r.download("/v2/"+r.repo+"/blobs/"+layer.Digest, layer, target); err != nil {
-		return nil, err
+	cached := false
+	if r.nodeCache != nil {
+		if err := r.nodeCache.download(r.base.Host, r.repo, r.authz, layer, target, r.transferTiming,
+			func(status string) { r.cacheNote("node cache " + status + ": verified archive") }); err == nil {
+			cached = true
+		} else {
+			r.cacheNote("node cache unavailable or invalid; trying registry directly")
+		}
+	}
+	if !cached {
+		if err := r.download("/v2/"+r.repo+"/blobs/"+layer.Digest, layer, target); err != nil {
+			return nil, err
+		}
 	}
 	abs, err := filepath.Abs(target)
 	if err != nil {

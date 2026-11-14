@@ -1,0 +1,7 @@
+apiVersion: v2
+name: mnemo-nodecache
+description: Experimental, opt-in node-local archive cache for mnemo-warmup
+type: application
+version: 0.1.0
+appVersion: "dev"
+kubeVersion: ">=1.26.0-0"

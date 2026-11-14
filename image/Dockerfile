@@ -37,7 +37,8 @@ COPY launcher/ ./
 # Tests run for the BUILD platform (a test binary for another architecture cannot execute here);
 # only the shipped binary is cross-compiled.
 RUN CGO_ENABLED=0 go test ./... \
- && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/mnemo-launcher .
+ && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/mnemo-launcher . \
+ && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/mnemo-nodecache ./cmd/mnemo-nodecache
 
 # busybox gives the init-container pattern `cp` and the wrapper its `sh`; it is about 4 MB.
 FROM busybox:1.37
@@ -49,5 +50,6 @@ LABEL org.opencontainers.image.title="mnemo-warmup-tools" \
       org.opencontainers.image.version="${VERSION}"
 COPY --from=build /src/warmup-cli/target/mnemo-warmup.jar /opt/mnemo-warmup/mnemo-warmup.jar
 COPY --from=launcher --chmod=0755 /out/mnemo-launcher /opt/mnemo-warmup/bin/mnemo-launcher
+COPY --from=launcher --chmod=0755 /out/mnemo-nodecache /opt/mnemo-warmup/bin/mnemo-nodecache
 COPY --chmod=0755 image/mnemo-warmup /opt/mnemo-warmup/bin/mnemo-warmup
 COPY --chmod=0755 scripts/mnemo-warmup-exec /opt/mnemo-warmup/bin/mnemo-warmup-exec

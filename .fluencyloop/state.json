@@ -1,11 +1,11 @@
 {
   "schema_version": "1",
-  "feature": "70-warn-when-an-application-image-already-carries-a-build-ti",
-  "branch": "feature/70-warn-when-an-application-image-already-carries-a-build-ti",
+  "feature": "92-implement-an-optional-secure-node-local-archive-cache-for",
+  "branch": "feature/92-implement-an-optional-secure-node-local-archive-cache-for",
   "stage": "build",
-  "last_session": "004-complete-preview-cache-detection-compatibility-docs-and",
-  "base_ref": "bench/pod-to-ready-breakdown",
+  "last_session": "014-validate-node-cache-service-on-a-single-node-kind-cluste",
+  "base_ref": "design/node-archive-cache",
   "feature_dir": "",
   "plan": "",
-  "updated": "2026-11-13"
+  "updated": "2026-11-14"
 }

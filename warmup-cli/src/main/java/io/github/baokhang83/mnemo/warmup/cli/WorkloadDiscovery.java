@@ -13,7 +13,8 @@ final class WorkloadDiscovery {
     static final String PREFIX = "warmup.mnemo.io/";
     record Workload(String name, String namespace, String container, String image, String store,
                     String exitMode, String probeUrl, String pullSecret, String pushSecret, boolean plainHttp,
-                    List<String> command, List<String> jvmArgs, String jar, String toolsDelivery) {
+                    List<String> command, List<String> jvmArgs, String jar, String toolsDelivery,
+                    String nodeCacheUrl, String nodeCacheCAConfigMap, String nodeCacheAudience) {
         /** The tools arrive as an image volume and the fetch runs in the application container (docs/adr/0012). */
         boolean imageVolume() { return IMAGE_VOLUME.equals(toolsDelivery); }
     }
@@ -89,8 +90,21 @@ final class WorkloadDiscovery {
         if (delivery == null) delivery = INIT_CONTAINER;
         if (!delivery.equals(INIT_CONTAINER) && !delivery.equals(IMAGE_VOLUME))
             throw new IllegalArgumentException("tools-delivery must be " + INIT_CONTAINER + " or " + IMAGE_VOLUME + ", got: " + delivery);
+        String nodeCacheUrl = optionalString(annotations, PREFIX + "node-cache-url");
+        String nodeCacheCA = optionalString(annotations, PREFIX + "node-cache-ca-configmap");
+        String nodeCacheAudience = optionalString(annotations, PREFIX + "node-cache-audience");
+        if (nodeCacheUrl != null || nodeCacheCA != null || nodeCacheAudience != null) {
+            if (nodeCacheUrl == null || nodeCacheCA == null || nodeCacheAudience == null)
+                throw new IllegalArgumentException("node cache requires node-cache-url, node-cache-ca-configmap and node-cache-audience");
+            URI cacheUri;
+            try { cacheUri = URI.create(nodeCacheUrl); } catch (IllegalArgumentException e) { throw new IllegalArgumentException("invalid node cache URL", e); }
+            if (!"https".equals(cacheUri.getScheme()) || cacheUri.getHost() == null || cacheUri.getUserInfo() != null
+                    || cacheUri.getQuery() != null || cacheUri.getFragment() != null
+                    || (cacheUri.getPath() != null && !cacheUri.getPath().isEmpty() && !cacheUri.getPath().equals("/")))
+                throw new IllegalArgumentException("node-cache-url must be an HTTPS origin without credentials or a path");
+        }
         return new Workload(name, namespace, containerName, image, store, mode, probe, pullSecret, pushSecret, "true".equals(plainHttp),
-                List.copyOf(command), List.copyOf(jvm), command.get(jarIndex + 1), delivery);
+                List.copyOf(command), List.copyOf(jvm), command.get(jarIndex + 1), delivery, nodeCacheUrl, nodeCacheCA, nodeCacheAudience);
     }
 
     private static String optionalString(Map<String, Object> values, String key) {

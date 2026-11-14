@@ -33,3 +33,7 @@ warmup:
   plainHttp: false     # local registries only
   pullSecret: ""       # optional Docker config Secret for archive downloads
   pushSecret: ""       # optional Docker config Secret for the trainer
+  nodeCache:
+    url: ""            # optional HTTPS origin of the node-local cache Service
+    caConfigMap: ""    # ConfigMap in this namespace with the cache CA as ca.crt
+    audience: ""       # projected token audience configured by the cache operator

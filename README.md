@@ -30,7 +30,7 @@ unchanged JVM application. A pod starts from the cache when it fits its launch e
 
 ## Key benefits
 
-- **Shorter JVM start-up, no rewrite.** Keep your JDK, your frameworks and your JAR. Pods start from a ready-made class cache instead of loading every class from scratch. In our Spring Boot test, image volumes gave a [1 s (~20%) median paired readiness improvement](#measurements); [measure](docs/operations.md#measure-the-benefit) yours.
+- **Shorter JVM start-up, no rewrite.** Keep your JDK, your frameworks and your JAR. Pods start from a ready-made class cache instead of loading every class from scratch. In our [GKE study](#measurements), Spring Boot workloads reached Ready 31%–58% faster after application start in single-pod trials; [measure](docs/operations.md#measure-the-benefit) yours.
 - **Three annotations, no source changes.** An injector adds the init containers, the launcher and the trainer to a plain Deployment, and you can preview every change first.
 - **A cache problem never stops a pod.** A missing, outdated, damaged or unreachable cache means an ordinary start, and the log says why.
 - **Set it up once.** When the image or JVM options change, the trainer builds a new cache by itself.
@@ -165,7 +165,20 @@ Details and what is not supported: [configuration](docs/configuration.md#require
 
 ## Measurements
 
-**Will it make my pods start faster?** It depends on what your app does while it starts. We measured three real applications (1 CPU, 1 GiB, 12 restarts each).
+**Will it make my pods start faster?** It depends on what your app does while it starts.
+
+In our [GKE JDK 25 Leyden AOT workload-tier study](benchmarks/workload-tiers/results/gke-repaired.md), the cached single-pod trials took **31%–58% less time from application-container start to Ready** than the uncached trials. This phase excludes scheduling and archive fetch. Each cell was measured once, and the original watch observations have limitations described in the report; these figures are not end-to-end pod startup improvements or estimates of typical performance.
+
+| Workload | Archive size | Uncached app start to Ready | Cached app start to Ready |
+|---|---:|---:|---:|
+| Minimal service | 54.3 MiB | 4.5 s | 2.0–2.1 s |
+| Standard service | 103.9 MiB | 7.4 s | 3.1–4.2 s |
+| Larger service | 116.0 MiB | 8.7 s | 3.9–5.0 s |
+| ThingsBoard | 223.5 MiB | 30.8 s | 21.2–21.4 s |
+
+The cached range covers direct archive fetch, cold node cache and warm node cache. The report also records HPA scale-out, throughput, cache outcomes and request failures.
+
+In an earlier local kind comparison, we measured three applications over 12 restarts each:
 
 | Workload Profile | Pod start-to-Ready | Verdict |
 |---|---|---|
@@ -177,7 +190,7 @@ Details and what is not supported: [configuration](docs/configuration.md#require
 
 > **Use the `image` volume where your cluster supports it.** The green and yellow rows deliver the tools as a Kubernetes [`image` volume](docs/configuration.md#tools-delivery-init-containers-or-an-image-volume), which needs no init containers. With init containers the Spring Boot pod is ready in 5 s either way (the init containers cost what the cache saves), and Jenkins is 1 s slower. The red row used init containers.
 
-Numbers are medians and pod times have a one-second resolution: read the direction, not the decimals. Measure your own app with `mnemo-warmup bench --jar app.jar` or [the cluster method](docs/operations.md#measure-the-benefit). Method, raw data and limits: [benchmarks](benchmarks/README.md). More studies (JDK 21 vs 25, app size, scale-out, alternatives) are planned for the [0.3.0 beta](https://github.com/baokhang83/mnemo-warmup/milestone/3).
+The local kind numbers are medians and pod times have a one-second resolution: read the direction, not the decimals. Measure your own app with `mnemo-warmup bench --jar app.jar` or [the cluster method](docs/operations.md#measure-the-benefit). Method, raw data and limits: [benchmarks](benchmarks/README.md). A comparison with other JVM and native-image approaches is planned in [#74](https://github.com/baokhang83/mnemo-warmup/issues/74).
 
 ## Disable or remove it
 

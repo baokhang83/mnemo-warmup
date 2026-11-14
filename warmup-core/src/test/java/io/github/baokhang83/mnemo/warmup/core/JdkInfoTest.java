@@ -103,6 +103,15 @@ class JdkInfoTest {
     }
 
     @Test
+    void rejectsAnExecutableThatDoesNotReportJdkSettings(@TempDir Path dir) throws Exception {
+        assumeTrue(Files.isExecutable(Path.of("/bin/sh")), "needs /bin/sh");
+        Path home = fakeJdk(dir, "#!/bin/sh\nexit 0\n");
+        var e = assertThrows(IllegalStateException.class, () -> JdkInfo.fromJavaHome(home, Duration.ofSeconds(1)));
+        assertTrue(e.getMessage().contains("Cannot parse JVM settings"), e.getMessage());
+        assertTrue(e.getCause() instanceof IllegalArgumentException);
+    }
+
+    @Test
     void aLauncherThatNeverAnswersTimesOutInsteadOfHanging(@TempDir Path dir) throws Exception {
         assumeTrue(Files.isExecutable(Path.of("/bin/sh")), "needs /bin/sh");
         Path home = fakeJdk(dir, "#!/bin/sh\nexec sleep 60\n");

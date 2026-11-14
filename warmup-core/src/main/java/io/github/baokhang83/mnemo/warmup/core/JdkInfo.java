@@ -69,7 +69,12 @@ public record JdkInfo(Path javaHome, String version, int featureVersion, String 
     public static JdkInfo fromJavaHome(Path javaHome, Duration timeout) {
         Path java = resolveJavaExecutable(javaHome);
         String output = run(java, timeout);
-        JdkInfo parsed = parse(output);
+        JdkInfo parsed;
+        try {
+            parsed = parse(output);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException("Cannot parse JVM settings from " + java, e);
+        }
         return new JdkInfo(javaHome, parsed.version(), parsed.featureVersion(), parsed.vendor(), parsed.runtimeVersion());
     }
 

@@ -2,7 +2,7 @@
 
 This chart installs the optional `mnemo-nodecache` service as a DaemonSet and a ClusterIP Service. It requires Kubernetes 1.26 or newer. The Service uses `internalTrafficPolicy: Local` so a client pod reaches an endpoint on its own node; a node without an endpoint has no cache endpoint. Verify that the cluster networking implementation honors this policy.
 
-**Development status:** the native fetcher can try the service and fall back to the registry, but this chart and integration have not yet been verified on a cluster. Registry redirects and automatic registry-token exchange are not supported. The Java fallback path does not use the node cache.
+**Development status:** the cache service and chart passed a single-node kind functional check using a local TLS registry. Nine client pods produced one cache miss and eight hits; an ungranted service account was denied, and eviction was verified. The native fetcher and injector were exercised separately in automated tests, but their complete path has not yet been validated on a cluster or measured under cloud burst conditions. Registry redirects and automatic registry-token exchange are not supported. The Java fallback path does not use the node cache.
 
 The DaemonSet uses a pod-local `emptyDir`, not a host directory. Restarting or replacing the cache pod loses that node's cache. It runs as a non-root user with a read-only root filesystem. The ServiceAccount can create Kubernetes TokenReviews; it does not receive permissions to read Kubernetes Secrets through the API. The kubelet mounts the configuration Secret into the cache pod.
 

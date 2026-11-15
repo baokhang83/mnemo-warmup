@@ -34,7 +34,7 @@ So, whoever can do any of the following can run code in your application pods:
 ## Secret and configuration isolation
 
 - **Names only, never values.** When rendering the trainer `CronJob`, the offline injector copies environment variable names, `envFrom` Secret/ConfigMap references, and volume mount paths from your Deployment. Secret values are never read, printed in `--preview` output, or written into `mnemo-warmup.manifest.json`.
-- **No `pull-secret` exposure to application code in `image-volume` mode.** With a `pull-secret` (or a node cache), the injector keeps one isolated fetch init container that mounts the registry Secret and the cache; the application container neither mounts the Secret nor receives the path to it (covered by an injector test). The Helm chart is stricter: it refuses to render `tools.delivery=image-volume` together with `store.pullSecret`.
+- **No `pull-secret` exposure to application code in `image-volume` mode.** With a `pull-secret` (or a node cache), the injector keeps one isolated fetch init container that mounts the registry Secret and the cache; the application container neither mounts the Secret nor receives the path to it (covered by an injector test). The Helm chart renders the same layout (`tools.delivery=image-volume` with `store.pullSecret`).
 - **Log redaction.** Registry tokens, temporary STS credentials, and authorization headers are never written to stdout, stderr, or error messages.
 
 ## Scoped registry credentials

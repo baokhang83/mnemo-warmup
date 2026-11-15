@@ -10,6 +10,8 @@ on:
     paths:
       - 'scripts/install.sh'
       - 'scripts/test-install.sh'
+      - 'scripts/publish-cli-release.sh'
+      - 'scripts/test-publish-cli-release.sh'
       - 'image/mnemo-warmup'
       - '.github/workflows/publish-cli.yml'
 
@@ -28,6 +30,7 @@ jobs:
         with:
           persist-credentials: false
       - run: scripts/test-install.sh
+      - run: scripts/test-publish-cli-release.sh
 
   publish:
     name: publish CLI release assets
@@ -56,32 +59,9 @@ jobs:
           cp warmup-cli/target/mnemo-warmup.jar release-cli/mnemo-warmup.jar
           cp image/mnemo-warmup release-cli/mnemo-warmup
           (cd release-cli && sha256sum mnemo-warmup.jar mnemo-warmup > SHA256SUMS)
+      # Draft, upload every asset, then publish: a published release can be immutable and take no new assets (#142).
       - name: Publish release and assets
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            if [[ "$RELEASE_TAG" == *-beta.* ]]; then
-              gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --notes "CLI release $RELEASE_TAG" --prerelease
-            else
-              gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --notes "CLI release $RELEASE_TAG"
-            fi
-          fi
-          if [[ "$RELEASE_TAG" == *-beta.* ]] && [[ "$(gh release view "$RELEASE_TAG" --json isPrerelease --jq '.isPrerelease')" != true ]]; then
-            echo "::error::The existing beta release must be marked as a prerelease"
-            exit 1
-          fi
-          # A retry must not silently replace assets from an existing release.
-          mkdir -p existing-assets
-          for file in mnemo-warmup.jar mnemo-warmup SHA256SUMS; do
-            if gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -Fxq "$file"; then
-              gh release download "$RELEASE_TAG" --pattern "$file" --dir existing-assets
-              cmp "release-cli/$file" "existing-assets/$file" || {
-                echo "::error::Existing release asset $file differs from this build"
-                exit 1
-              }
-            else
-              gh release upload "$RELEASE_TAG" "release-cli/$file"
-            fi
-          done
+        run: scripts/publish-cli-release.sh

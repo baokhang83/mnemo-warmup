@@ -22,9 +22,11 @@ updates:
     schedule: { interval: weekly, day: monday }
     open-pull-requests-limit: 5
     commit-message: { prefix: ci }
+    # Only minor and patch bumps are grouped. A major version of an action is its own pull request, reviewed on its own:
+    # the release and publish workflows only run on tags, so a major bump there cannot be proven by this repository's PR checks.
     groups:
-      actions:
-        patterns: ["*"]
+      actions-minor-and-patch:
+        update-types: [minor, patch]
 
   - package-ecosystem: docker
     directory: /image

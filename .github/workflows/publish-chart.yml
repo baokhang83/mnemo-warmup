@@ -19,10 +19,12 @@ on:
         required: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   chart:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

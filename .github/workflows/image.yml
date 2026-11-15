@@ -40,6 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ inputs.release_tag || github.sha }}
       # Resolved ONCE, to a commit SHA: verify and publish below both use exactly this commit, even for a
       # manual dispatch of an older tag, and even if the tag moves meanwhile.
@@ -71,6 +72,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ needs.resolve.outputs.sha }}
       - name: Build the image and run the end-to-end check
         run: scripts/verify-image.sh 21 25
@@ -86,6 +88,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ needs.resolve.outputs.sha }}
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3

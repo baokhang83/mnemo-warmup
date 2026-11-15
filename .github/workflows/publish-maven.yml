@@ -19,6 +19,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     name: publish to maven central
+    # The release environment requires approval and only runs for v* tags or main (docs/security-roadmap.md, S8).
+    environment: release
     steps:
       - name: Validate release tag
         env:

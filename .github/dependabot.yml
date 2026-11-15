@@ -1,0 +1,33 @@
+# Dependency and action updates (security roadmap, Phase 0). Only what ships is covered: the Maven reactor, the Go launcher, the
+# workflows, and the tools image. The benchmark and example projects are not shipped and are left out to keep the noise down.
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    commit-message: { prefix: deps }
+    groups:
+      maven-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: gomod
+    directory: /launcher
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 3
+    commit-message: { prefix: deps }
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    commit-message: { prefix: ci }
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /image
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 3
+    commit-message: { prefix: deps }

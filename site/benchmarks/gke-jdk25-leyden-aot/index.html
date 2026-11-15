@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GKE benchmark: Leyden AOT cache on JDK 25 for Spring Boot pods | mnemo-warmup</title>
+<meta name="description" content="Method and results of a single-node GKE study of mnemo-warmup on JDK 25 Leyden AOT: minimal, standard, larger Spring Boot tiers and ThingsBoard CE, one pod and a 1-to-9 HPA burst, with every caveat.">
+<link rel="canonical" href="https://baokhang83.github.io/mnemo-warmup/benchmarks/gke-jdk25-leyden-aot/">
+<link rel="alternate" type="text/plain" href="../../llms.txt" title="llms.txt">
+<link rel="stylesheet" href="../../assets/site.css">
+<meta property="og:title" content="GKE benchmark: Leyden AOT cache on JDK 25 for Spring Boot pods | mnemo-warmup">
+<meta property="og:description" content="Method and results of a single-node GKE study of mnemo-warmup on JDK 25 Leyden AOT: minimal, standard, larger Spring Boot tiers and ThingsBoard CE, one pod and a 1-to-9 HPA burst, with every caveat.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://baokhang83.github.io/mnemo-warmup/benchmarks/gke-jdk25-leyden-aot/">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="../../">mnemo-warmup</a>
+  <nav aria-label="Primary"><a href="../../#architecture">Architecture</a><a href="../../#decision-matrix">Compare</a><a href="../../benchmarks/gke-jdk25-leyden-aot/" aria-current="page">Benchmarks</a><a href="../../guides/spring-boot-distroless/">Guides</a><a href="../../reference/annotations-and-cli/">Reference</a><a href="../../security/">Security</a><a href="../../coverage/">Coverage</a><a href="https://github.com/baokhang83/mnemo-warmup">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+<div class="crumbs"><a href="../../">mnemo-warmup</a> / Benchmarks / GKE JDK 25 Leyden AOT</div>
+
+<h1>GKE benchmark: Leyden AOT on JDK 25, four workload tiers</h1>
+<p class="lede">How much sooner do pods become ready when each starts from a trained Leyden AOT cache, from one pod up to a
+nine-pod autoscale burst? Method, numbers and every caveat the study recorded.</p>
+<p class="note">One trial per cell, descriptive values only. These are not confidence intervals and not a prediction for your application.</p>
+
+<h2>Setup</h2>
+<ul>
+ <li><strong>Cluster.</strong> A fixed single-node amd64 GKE Standard cluster, one 12-vCPU, 64-GB E2 node, node autoscaling disabled so provisioning stays out of the timings. Workloads used an HPA (min 1, max 9) with Metrics Server 0.9.1 and CPU-based scaling.</li>
+ <li><strong>Runtime.</strong> Debian OpenJDK 25.0.4.1 for all four tiers, Leyden AOT archives trained with <code>spring-refresh</code>. The protocol keeps resources, probes and the database seed matched within a tier.</li>
+ <li><strong>Tiers.</strong> Minimal (Spring Web, Actuator), Standard (adds JPA/Hibernate, PostgreSQL, Security, Validation, caching), Larger sample (adds Springdoc, Kafka, RabbitMQ, Prometheus) and ThingsBoard Community Edition 4.3.1.8 as a real heavy application with PostgreSQL. The first three are synthetic.</li>
+ <li><strong>Arms.</strong> <em>uncached</em> (no archive); <em>direct</em> (each pod downloads the archive from the registry); <em>cold</em> and <em>warm node cache</em> (the optional node-local archive cache, empty or pre-populated).</li>
+ <li><strong>Topologies.</strong> One pod, and an HPA scale-out from 1 to 9 under a tier-calibrated request load.</li>
+</ul>
+
+<h2>App-ready time, seconds</h2>
+<p>Median of observed per-pod durations. Compare an archive arm with the uncached arm of the <em>same</em> tier and pod count only.</p>
+<div class="table-wrap"><table><thead><tr><th>Tier</th><th class="num">1 pod: uncached</th><th class="num">direct</th><th class="num">cold node cache</th><th class="num">warm node cache</th><th class="num">9 pods: uncached</th><th class="num">direct</th><th class="num">cold node cache</th><th class="num">warm node cache</th></tr></thead><tbody><tr><td>Minimal</td><td class="num">4.5</td><td class="num">2.1</td><td class="num">2.1</td><td class="num">2.0</td><td class="num">5.4</td><td class="num">3.0</td><td class="num">3.1</td><td class="num">3.0</td></tr><tr><td>Standard</td><td class="num">7.4</td><td class="num">3.1</td><td class="num">4.2</td><td class="num">4.0</td><td class="num">11.6</td><td class="num">5.9</td><td class="num">5.1</td><td class="num">5.1</td></tr><tr><td>Larger sample</td><td class="num">8.7</td><td class="num">3.9</td><td class="num">5.0</td><td class="num">4.1</td><td class="num">15.4</td><td class="num">9.0</td><td class="num">7.9</td><td class="num">8.0</td></tr><tr><td>ThingsBoard CE</td><td class="num">30.8</td><td class="num">21.4</td><td class="num">21.4</td><td class="num">21.2</td><td class="num">55.3</td><td class="num">51.1</td><td class="num">44.0</td><td class="num">43.3</td></tr></tbody></table></div>
+<p>Reading it: in the three Spring Boot tiers a trained archive shortened app-ready time in every archive arm, by more as the tier grew
+(standard, one pod: 7.4 s uncached against 3.1 s direct). ThingsBoard shortened by about 9 s for one pod and by 4 to 12 s for nine.
+The study shows no startup advantage for the node cache over direct fetch for a single pod.</p>
+
+<h2>Archive sizes</h2>
+<div class="table-wrap"><table><thead><tr><th>Tier</th><th class="num">Archive bytes</th><th class="num">MiB</th></tr></thead><tbody><tr><td>Minimal</td><td class="num">56,942,592</td><td class="num">54.3</td></tr><tr><td>Standard</td><td class="num">108,924,928</td><td class="num">103.9</td></tr><tr><td>Larger sample</td><td class="num">121,602,048</td><td class="num">116.0</td></tr><tr><td>ThingsBoard CE</td><td class="num">234,381,312</td><td class="num">223.5</td></tr></tbody></table></div>
+<p>Sizes are observations, not targets: they depend on the JDK build, dependencies and training path.</p>
+
+<h2>Why Kubernetes 1.33+ image volumes matter</h2>
+<p>This is a separate measurement, from the kind benchmark, not from GKE. By default each pod runs two init containers before the application:
+one copies the tools, one fetches the archive. Their own work is small (native fetch about 80 ms), but the kubelet starts init
+containers one after another, and in a stage-by-stage timeline of the Jenkins runs the pod started the application about
+<strong>1.75 s</strong> later than a pod without them. With <code>warmup.mnemo.io/tools-delivery: "image-volume"</code> the tools are mounted as a
+read-only image volume, so the install init container disappears, and (with no pull Secret or node cache) so does the fetch init container.</p>
+<div class="table-wrap"><table><thead><tr><th>Spring Boot, 1 CPU / 1 GiB (kind)</th><th>No mnemo-warmup</th><th>Archive, init containers</th><th>Archive, image volume</th></tr></thead><tbody><tr><td>Pod start-to-Ready (median)</td><td>5 s</td><td>5 s</td><td><strong>3 s</strong></td></tr></tbody></table></div>
+<p>Requirements: Kubernetes 1.33 or later (image volumes are beta) and containerd 2.1+ or CRI-O 1.31+. Without support a pod using the volume
+does <strong>not start</strong>, which is why the mode is opt-in. Details: <a href="https://github.com/baokhang83/mnemo-warmup/blob/main/docs/adr/0012-tools-as-an-image-volume.md">ADR 0012</a>.</p>
+
+<h2>Limits and anomalies the study recorded</h2>
+<ul>
+ <li>One trial per cell; no variance estimates.</li>
+ <li>Original cells used 128 load workers with a 500m limit; Standard and Larger HPA cells were repaired with 256 workers and a two-CPU limit, so HPA reaction times are not comparable across original and repaired runs.</li>
+ <li>HPA timings from watch receipt can include watch buffering; the HPA-ready times above are erratic (for example ThingsBoard warm-cache: 238 s) and are deliberately not summarised here.</li>
+ <li>Ten connection-refused errors at load start appear in several cells; the logs do not identify the rejecting component.</li>
+ <li>Original Larger direct-fetch and warm-cache primer runs hit registry HTTP 401 responses; repaired cells refresh credentials before each trial.</li>
+ <li>A ThingsBoard first-use nine-pod burst against an empty database raised a bootstrap optimistic-lock conflict; such rounds are excluded and the database is restored before each measured round.</li>
+ <li>Single node, registry in the node’s region, workload and tools images pre-pulled: image pulls and node provisioning are excluded by design.</li>
+</ul>
+<p>Source tables, the full load calibration and the raw method: <a href="https://github.com/baokhang83/mnemo-warmup/blob/main/benchmarks/workload-tiers/results/gke-repaired.md">gke-repaired.md</a> ·
+<a href="https://github.com/baokhang83/mnemo-warmup/blob/main/benchmarks/workload-tiers/README.md">workload-tiers README</a> ·
+<a href="https://github.com/baokhang83/mnemo-warmup/blob/main/benchmarks/README.md">kind benchmark</a>.</p>
+
+</main>
+<footer class="site"><div class="wrap">
+  Apache-2.0 · alpha software · <a href="https://github.com/baokhang83/mnemo-warmup">GitHub</a> ·
+  <a href="../../llms.txt">llms.txt</a> · <a href="../../llms-full.txt">llms-full.txt</a> ·
+  <a href="../../sitemap.xml">sitemap</a> · <a href="../../coverage/">Coverage report</a>
+</div></footer>
+
+</body>
+</html>

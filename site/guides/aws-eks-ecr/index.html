@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Amazon ECR and EKS IRSA for AppCDS / AOT cache distribution | mnemo-warmup</title>
+<meta name="description" content="Set up IAM Roles for Service Accounts (IRSA) so mnemo-warmup can pull and push JVM AppCDS and Leyden AOT archives to Amazon ECR from EKS pods without stored passwords. Policies, roles and a verification checklist.">
+<link rel="canonical" href="https://baokhang83.github.io/mnemo-warmup/guides/aws-eks-ecr/">
+<link rel="alternate" type="text/plain" href="../../llms.txt" title="llms.txt">
+<link rel="stylesheet" href="../../assets/site.css">
+<meta property="og:title" content="Amazon ECR and EKS IRSA for AppCDS / AOT cache distribution | mnemo-warmup">
+<meta property="og:description" content="Set up IAM Roles for Service Accounts (IRSA) so mnemo-warmup can pull and push JVM AppCDS and Leyden AOT archives to Amazon ECR from EKS pods without stored passwords. Policies, roles and a verification checklist.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://baokhang83.github.io/mnemo-warmup/guides/aws-eks-ecr/">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="../../">mnemo-warmup</a>
+  <nav aria-label="Primary"><a href="../../#architecture">Architecture</a><a href="../../#decision-matrix">Compare</a><a href="../../benchmarks/gke-jdk25-leyden-aot/">Benchmarks</a><a href="../../guides/spring-boot-distroless/">Guides</a><a href="../../reference/annotations-and-cli/">Reference</a><a href="../../security/">Security</a><a href="../../coverage/">Coverage</a><a href="https://github.com/baokhang83/mnemo-warmup">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+<div class="crumbs"><a href="../../">mnemo-warmup</a> / Guides / EKS and ECR</div>
+
+<h1>Amazon ECR archive store on EKS with IRSA</h1>
+<p class="lede">Use the pod’s IAM role (IRSA) to log in to ECR, so no registry password lives in a Secret. One pull-only role for the application’s
+<code>fetch</code>, one push role for the trainer.</p>
+<p class="note"><strong>Not verified on a live EKS cluster and ECR registry.</strong> Unit tests use local fakes for STS, ECR and the registry, and the signing code is checked against AWS’s SigV4 test vectors. Run the checklist at the end on your cluster before relying on it. GKE and AKS workload identity and EKS Pod Identity are not supported yet.</p>
+
+<h2>How the login works</h2>
+<ol>
+ <li>EKS injects <code>AWS_ROLE_ARN</code> and <code>AWS_WEB_IDENTITY_TOKEN_FILE</code> into a pod whose service account carries an IAM role.</li>
+ <li>For an ECR host (<code>&lt;account&gt;.dkr.ecr.&lt;region&gt;.amazonaws.com</code>, including <code>ecr-fips</code> and <code>.cn</code>), mnemo-warmup calls STS <code>AssumeRoleWithWebIdentity</code> in the registry’s region.</li>
+ <li>It signs an ECR <code>GetAuthorizationToken</code> call, caches the login for its roughly 12-hour life, refreshes it five minutes before expiry, and refreshes once if the registry rejects it mid-run.</li>
+ <li>No credential is written to a log or error message.</li>
+</ol>
+<p>A <code>--registry-auth</code> file entry for the registry still wins; with neither a file entry nor a web identity, access is anonymous.</p>
+
+<h2>Create two roles</h2>
+<p>Separate roles mean a compromised application cannot overwrite archives. Trust policy for each role:</p>
+<pre><code>{
+  &quot;Version&quot;: &quot;2012-10-17&quot;,
+  &quot;Statement&quot;: [{
+    &quot;Effect&quot;: &quot;Allow&quot;,
+    &quot;Principal&quot;: { &quot;Federated&quot;: &quot;arn:aws:iam::&lt;account&gt;:oidc-provider/&lt;oidc-issuer-host-and-path&gt;&quot; },
+    &quot;Action&quot;: &quot;sts:AssumeRoleWithWebIdentity&quot;,
+    &quot;Condition&quot;: { &quot;StringEquals&quot;: {
+      &quot;&lt;oidc-issuer-host-and-path&gt;:aud&quot;: &quot;sts.amazonaws.com&quot;,
+      &quot;&lt;oidc-issuer-host-and-path&gt;:sub&quot;: &quot;system:serviceaccount:&lt;namespace&gt;:&lt;service-account&gt;&quot;
+    } }
+  }]
+}</code></pre>
+<p>Pull role permissions:</p>
+<pre><code>{
+  &quot;Version&quot;: &quot;2012-10-17&quot;,
+  &quot;Statement&quot;: [
+    { &quot;Effect&quot;: &quot;Allow&quot;, &quot;Action&quot;: &quot;ecr:GetAuthorizationToken&quot;, &quot;Resource&quot;: &quot;*&quot; },
+    { &quot;Effect&quot;: &quot;Allow&quot;,
+      &quot;Action&quot;: [&quot;ecr:BatchCheckLayerAvailability&quot;, &quot;ecr:GetDownloadUrlForLayer&quot;, &quot;ecr:BatchGetImage&quot;],
+      &quot;Resource&quot;: &quot;arn:aws:ecr:&lt;region&gt;:&lt;account&gt;:repository/&lt;archive-repository&gt;&quot; }
+  ]
+}</code></pre>
+<p>The push role adds <code>ecr:InitiateLayerUpload</code>, <code>ecr:UploadLayerPart</code>, <code>ecr:CompleteLayerUpload</code> and <code>ecr:PutImage</code> on the same repository.
+ECR does not create repositories on push: create <code>&lt;archive-repository&gt;</code> first, with tag immutability off, and check the blob-size limit (archives can reach hundreds of MB).</p>
+
+<h2>Attach the roles</h2>
+<ul>
+ <li><strong>Application (<code>fetch</code>):</strong> annotate the application’s service account with the pull role; leave <code>pull-secret</code> and <code>push-secret</code> empty.</li>
+ <li><strong>Trainer, Helm chart:</strong> set <code>trainer.serviceAccount.annotations["eks.amazonaws.com/role-arn"]</code> to the push role.</li>
+ <li><strong>Trainer, injector:</strong> the injector generates the trainer’s ServiceAccount and has no annotation for it, so add the role annotation with your own patch after rendering. This is a known limitation.</li>
+</ul>
+<p>To act as a role in another account, set <code>MNEMO_WARMUP_AWS_ROLE_ARN</code>; the pod’s role then needs <code>sts:AssumeRole</code> on it. Other variables: <code>AWS_ROLE_SESSION_NAME</code> (default <code>mnemo-warmup</code>), <code>AWS_ENDPOINT_URL_STS</code> and <code>AWS_ENDPOINT_URL_ECR</code> for VPC endpoints.</p>
+
+<h2>What happens when it fails</h2>
+<p><code>fetch</code> treats every login problem (missing token file, denied permission, STS or ECR down) as “no archive”: it prints the reason and the application starts without a cache, exit 0
+(<code>--strict</code> exits 1). Transient errors (connection failures, 429, 5xx) get up to three attempts; permission errors are not retried.</p>
+
+<h2>Verify on your cluster</h2>
+<ol>
+ <li><code>kubectl exec</code> into a pod on the annotated service account and confirm <code>AWS_ROLE_ARN</code> and <code>AWS_WEB_IDENTITY_TOKEN_FILE</code> are set.</li>
+ <li>Run the trainer once and check the archive appears in ECR under the tag <code>fp-&lt;hex&gt;</code>.</li>
+ <li>Start the application and check the <code>fetch</code> log for <code>Archive:</code> rather than a <code>fetch:</code> note.</li>
+ <li>Remove <code>ecr:PutImage</code> from the push role and confirm the trainer reports the denial while the application still starts.</li>
+</ol>
+<p>Nothing deletes archives: bound growth with an ECR lifecycle policy scoped to <code>fp-</code> tags. See <a href="https://github.com/baokhang83/mnemo-warmup/blob/main/docs/archive-retention.md">archive retention</a>
+and the <a href="https://github.com/baokhang83/mnemo-warmup/blob/main/docs/aws-workload-identity.md">source guide</a>.</p>
+
+</main>
+<footer class="site"><div class="wrap">
+  Apache-2.0 · alpha software · <a href="https://github.com/baokhang83/mnemo-warmup">GitHub</a> ·
+  <a href="../../llms.txt">llms.txt</a> · <a href="../../llms-full.txt">llms-full.txt</a> ·
+  <a href="../../sitemap.xml">sitemap</a> · <a href="../../coverage/">Coverage report</a>
+</div></footer>
+
+</body>
+</html>

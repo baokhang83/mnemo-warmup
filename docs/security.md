@@ -23,3 +23,7 @@ How `mnemo-warmup` isolates permissions, handles secrets and credentials, and en
 
 - **Distroless and shell-free support.** Every injected step executes through the static `mnemo-launcher` binary, requiring no `/bin/sh` or package manager inside your application image.
 - **Never fatal on cache failure.** The launcher relies on the JVM's default `-Xshare:auto` behavior and never passes `-Xshare:on`. If the archive is missing, corrupted (SHA-256 mismatch), expired, or unreachable, the launcher logs the reason and starts the JVM normally with exit code `0`.
+
+## Roadmap
+
+Known gaps and the plan to close them, including what registry write access means today: [security roadmap](security-roadmap.md).

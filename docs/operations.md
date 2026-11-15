@@ -69,6 +69,7 @@ Archives stay in the registry until your retention policy or an operator removes
 
 ## Known limitations
 
+- **Archives are not signed.** Integrity is checked, the publisher is not: registry write access is code execution in the pods that use the fingerprint. See the [trust model](security.md#trust-model-who-can-publish-an-archive).
 - **Trainer service account and IRSA.** The injector generates the trainer's ServiceAccount and has no annotation for it, so the EKS role annotation for the push role must be added by your own patch after rendering. The application's service account is yours and carries the pull role. See [registry authentication](registry-auth.md#eks-and-ecr).
 - **Trainer schedule, deadline and resources** are fixed (every 10 minutes, one hour, none set).
 - **Verified on:** kind with Helm 3, a plain-HTTP registry, JDK 21 (AppCDS), a Temurin and a distroless Java 21 image, arm64 locally; amd64 and arm64 in CI once that job has run. **Not verified:** a live EKS and ECR, Helm 4, JDK 25 through the injector, multi-container pods.

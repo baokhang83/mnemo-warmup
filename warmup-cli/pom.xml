@@ -20,7 +20,7 @@
     <dependency>
       <groupId>org.yaml</groupId>
       <artifactId>snakeyaml</artifactId>
-      <version>2.4</version>
+      <version>2.7</version>
     </dependency>
     <dependency>
       <groupId>io.github.baokhang83.mnemo</groupId>

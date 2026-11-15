@@ -2,6 +2,29 @@
 
 How `mnemo-warmup` isolates permissions, handles secrets and credentials, and ensures a cache failure never disrupts a running workload.
 
+## Trust model: who can publish an archive
+
+**Registry write access to the archive repository is code execution in every pod that uses that fingerprint.** Read this before choosing who may push.
+
+What `mnemo-warmup` verifies today is **integrity**: the stored layer's digest and size match the manifest, the archive's SHA-256 matches the manifest, and the manifest's fingerprint matches the JDK, JVM options and classpath of the pod starting up. A damaged or truncated archive is rejected and the pod starts without a cache.
+
+What it does **not** verify is **who published** the archive. Nothing is signed, tags are mutable, and the fingerprint is computed from the launch, not from the archive. The checks compare against values the same registry served. The JVM treats a class-data or AOT archive as trusted input and does not re-verify the classes in it, so a crafted archive that passes those checks is run by the application. Signing and verification are planned ([roadmap](security-roadmap.md), Phase 2).
+
+So, whoever can do any of the following can run code in your application pods:
+
+- push to the archive repository (including anything holding the trainer's push credential: during training, that is the container that runs your application);
+- change the repository's tags or contents through the registry's own administration;
+- sit on the network path when `plainHttp` is on, or when TLS to the registry is not verified.
+
+**What to do until signing exists:**
+
+- Give each application its **own archive repository**, so a compromise of one does not reach another.
+- Give pods **pull-only** credentials. Only the trainer needs push, and it should not be shared with anything else.
+- Restrict who can push to the repository to the trainer's identity, and review the registry's audit log for other writers.
+- Use **TLS** to the registry. Use `plainHttp` only for local tests.
+- Turn on **immutable tags** where the registry supports them. The trainer pushes a tag again only to repair an incomplete entry, and that repair against an immutable tag is not covered by a test ([archive retention](archive-retention.md)).
+- Treat the archive repository like a code repository, not like a cache.
+
 ## Least-privilege Kubernetes RBAC
 
 - **No cluster-wide permissions.** `mnemo-warmup` requires no `cluster-admin`, custom controller, CRD, or mutating admission webhook.

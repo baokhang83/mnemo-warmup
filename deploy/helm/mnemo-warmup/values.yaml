@@ -22,8 +22,8 @@ tools:
   #   image-volume    the tools image is mounted as an image volume and the fetch runs in the application container's own
   #                   entrypoint, so the pod has NO init containers on the start path. Needs a cluster and container runtime
   #                   that support image volumes (Kubernetes 1.33+ beta; containerd 2.1+ or CRI-O 1.31+): a pod on a cluster
-  #                   without them does not start. The application container then also reads the registry, so store.pullSecret
-  #                   cannot be used with it (the Secret would be readable by the application): the chart refuses that.
+  #                   without them does not start. With store.pullSecret the fetch stays in ONE isolated init container (the
+  #                   install container is still gone): only it mounts the Secret, so application code cannot read it.
   delivery: init-container
   image:
     repository: ghcr.io/baokhang83/mnemo-warmup-tools

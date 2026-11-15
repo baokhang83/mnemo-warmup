@@ -131,7 +131,24 @@ out=$(helm template rel "$PARENT" -n default)
 absent "$out" "- exec" "parent, default mode: no exec prefix"
 absent "$out" "reference:" "parent, default mode: no image volume"
 check "$out" "name: mnemo-warmup-install" "parent, default mode: still has its init containers"
-if helm template rel "$CHART" "${BASE[@]}" --set tools.delivery=image-volume --set store.pullSecret=pull >/dev/null 2>&1; then fail "image-volume must refuse store.pullSecret"; else ok "image-volume refuses store.pullSecret"; fi
+# a pull Secret with an image volume: one isolated fetch init container holds the Secret, the application never does
+out=$(helm template rel "$PARENT" -n default --set tools.delivery=image-volume --set warmup.tools.delivery=image-volume --set warmup.store.pullSecret=pull)
+validate "image-volume with a pull Secret (parent chart)" "$out"
+absent "$out" "mnemo-warmup-install" "pull Secret + image volume: still no install init container"
+check "$out" "name: mnemo-warmup-fetch" "pull Secret + image volume: an isolated fetch init container"
+check "$out" "command: [\"$IV/bin/mnemo-launcher\"]" "pull Secret + image volume: the fetch and the app both run the launcher from the image volume"
+check "$out" "- fetch" "pull Secret + image volume: the init container runs fetch"
+fetch_part=$(awk '/name: mnemo-warmup-fetch/,/name: app/' <<<"$out")
+check "$fetch_part" "mnemo-registry-pull" "pull Secret + image volume: the fetch container mounts the Secret"
+check "$fetch_part" "MNEMO_WARMUP_REGISTRY_AUTH" "pull Secret + image volume: the fetch container gets the auth path"
+app_part=$(awk '/- name: app$/{f=1} f; /^---/{f=0}' <<<"$out")   # the Deployment's app container only, not the trainer after it
+absent "$app_part" "mnemo-registry-pull" "pull Secret + image volume: the application container does not mount the Secret"
+absent "$app_part" "MNEMO_WARMUP_REGISTRY_AUTH" "pull Secret + image volume: the application container has no auth path"
+absent "$app_part" "mountPath: /tmp/mnemo-warmup" "pull Secret + image volume: the application container has no scratch volume"
+app_cache=$(awk '/mountPath: \/mnemo-cache/{getline n; print n; exit}' <<<"$app_part")
+if [[ "$app_cache" == *"readOnly: true"* ]]; then ok "pull Secret + image volume: the application's cache mount is read-only"; else fail "pull Secret + image volume: the application's cache mount must be read-only"; fi
+check "$app_part" "- exec" "pull Secret + image volume: the app still starts through exec"
+absent "$app_part" "- --store" "pull Secret + image volume: no fetch options in the application's args"
 if helm template rel "$CHART" "${BASE[@]}" --set tools.delivery=sidecar >/dev/null 2>&1; then fail "an unknown tools.delivery must be refused"; else ok "an unknown tools.delivery is refused"; fi
 
 echo "== example workload chart (examples/helm/example-app)"

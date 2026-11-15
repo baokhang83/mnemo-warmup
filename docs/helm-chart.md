@@ -132,8 +132,8 @@ by themselves, and **one line is added to `args`**, before your own command:
 ```
 
 That line is harmless in the default mode, so a Deployment written with it works in both. The mode needs a cluster and runtime with image volume support
-(Kubernetes 1.33+, containerd 2.1+ or CRI-O 1.31+); a pod on a cluster without it does not start. It cannot be used with `store.pullSecret`, because the
-application container would then be able to read the Secret: the chart refuses to render the combination. See the
+(Kubernetes 1.33+, containerd 2.1+ or CRI-O 1.31+); a pod on a cluster without it does not start. With `store.pullSecret` the fetch stays in one isolated init container that mounts the Secret
+(the install container is still gone), so the application container never can read it; the application starts through `exec --` with a read-only cache. See the
 [annotation reference](configuration.md#tools-delivery-init-containers-or-an-image-volume) for the full list of what changes.
 
 ### 6. Deploy, train, then check

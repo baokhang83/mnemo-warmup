@@ -87,11 +87,17 @@ an image volume holds the whole tools image, and the tools sit under /opt/mnemo-
 {{- fail (printf "tools.delivery must be init-container or image-volume, got %q" .tools.delivery) -}}
 {{- end -}}
 {{- if eq .tools.delivery "image-volume" -}}
-{{- if .store.pullSecret -}}
-{{- fail "tools.delivery=image-volume cannot be used with store.pullSecret: the fetch runs in the application container, which could then read the Secret. Use tools.delivery=init-container" -}}
-{{- end -}}
 true
 {{- end -}}
+{{- end -}}
+
+{{/*
+inlineFetch renders "true" or nothing. With an image volume and no pull Secret, the launcher fetches inside the application
+container's own entrypoint and the pod has no init containers. With a pull Secret the fetch stays in one isolated init container
+that mounts the Secret, so application code never can (the same rule as the injector, docs/adr/0012).
+*/}}
+{{- define "mnemo-warmup.inlineFetch" -}}
+{{- if and (include "mnemo-warmup.imageVolume" .) (not .store.pullSecret) -}}true{{- end -}}
 {{- end -}}
 
 {{- define "mnemo-warmup.toolsRoot" -}}
@@ -140,11 +146,15 @@ true
 
 {{/* Runs IN THE APPLICATION IMAGE, so it sees the JDK and JAR files the app will run with. Exits 0 on every problem. */}}
 {{- define "mnemo-warmup.fetchInitContainer" -}}
-{{- if not (include "mnemo-warmup.imageVolume" .) -}}
+{{- if not (include "mnemo-warmup.inlineFetch" .) -}}
 - name: mnemo-warmup-fetch
   image: {{ include "mnemo-warmup.appImage" . | quote }}
   imagePullPolicy: {{ .app.image.pullPolicy }}
+  {{- if include "mnemo-warmup.imageVolume" . }}
+  command: ["{{ include "mnemo-warmup.toolsRoot" . }}/bin/mnemo-launcher"]
+  {{- else }}
   command: ["/mnemo-tools/bin/mnemo-warmup"]
+  {{- end }}
   args:
     - fetch
     - --out
@@ -180,7 +190,7 @@ so it writes the cache and has the scratch volume. */}}
 - name: mnemo-tools
   mountPath: /mnemo-tools
   readOnly: true
-{{- if include "mnemo-warmup.imageVolume" . }}
+{{- if include "mnemo-warmup.inlineFetch" . }}
 - name: mnemo-cache
   mountPath: /mnemo-cache
 - name: mnemo-work
@@ -215,11 +225,14 @@ so it writes the cache and has the scratch volume. */}}
 {{/* For the application container's `args`, before the application's own command: with an image volume, the launcher fetches the
 archive and then starts the command that follows. Renders nothing in the default mode. */}}
 {{- define "mnemo-warmup.argsPrefix" -}}
-{{- if include "mnemo-warmup.imageVolume" . }}
+{{- if include "mnemo-warmup.inlineFetch" . }}
 - exec
 - --out
 - /mnemo-cache
 {{- include "mnemo-warmup.launchArgs" . | nindent 0 }}
+- --
+{{- else if include "mnemo-warmup.imageVolume" . }}
+- exec
 - --
 {{- end }}
 {{- end -}}

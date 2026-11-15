@@ -2,11 +2,12 @@
 
 ## Supported Versions
 
-`mnemo-warmup` is currently in active pre-1.0 development (`alpha`). Security fixes are applied to the latest minor release line on `main`.
+`mnemo-warmup` is currently in active pre-1.0 development (`alpha`). Security fixes are applied to the latest release line on `main`, and to `0.2.x` until `0.3.0` is released as final.
 
 | Version | Supported |
 | ------- | --------- |
-| `0.2.x` | :white_check_mark: |
+| `0.3.x` (beta) | :white_check_mark: |
+| `0.2.x` | :white_check_mark: until `0.3.0` final |
 | `< 0.2.0` | :x: |
 
 ## Reporting a Vulnerability
@@ -15,7 +16,7 @@
 
 If you discover a security vulnerability in `mnemo-warmup` (including issues related to RBAC scope, credential handling, archive integrity verification, or container privilege escalation), please report it privately:
 
-1. **GitHub Private Vulnerability Reporting (Preferred):** Go to the [**Security** tab](https://github.com) of this repository and click **"Report a vulnerability"** to open a private security advisory.
+1. **GitHub Private Vulnerability Reporting (Preferred):** Go to the [**Security** tab](https://github.com/baokhang83/mnemo-warmup/security) of this repository and click **"Report a vulnerability"** to open a private security advisory.
 2. **Response Timeline:** You will receive an acknowledgment within **48 hours**. Once confirmed, we will work on a patch and coordinate a disclosure timeline with you before publishing a fix.
 
 ## Security Model & Scope

@@ -25,7 +25,7 @@ jobs:
   chart:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -34,7 +34,7 @@ jobs:
           git config user.name "$GITHUB_ACTOR"
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
 
-      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
 
       - name: Stamp the release version
         env:
@@ -56,7 +56,7 @@ jobs:
           helm template check deploy/helm/mnemo-warmup --set app.image.repository=my-app --set app.image.tag=1.0 --set store.url=oci://registry.example.com/team/warmup >/dev/null
 
       - name: Run chart-releaser
-        uses: helm/chart-releaser-action@a917fd15b20e8b64b94d9158ad54cd6345335584 # v1.6.0
+        uses: helm/chart-releaser-action@92c6b97fa9f664492a2592e0d1d80bc6bf378957 # v1.9.0
         with:
           charts_dir: deploy/helm
           mark_as_latest: false     # the app release (v1.2.3) stays "Latest"

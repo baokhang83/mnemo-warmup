@@ -13,6 +13,10 @@
 #
 # TOOLS_DELIVERY=init-container (default) or image-volume (docs/adr/0012: no init containers, the tools are an image volume and
 # the fetch runs in the application container) selects the chart's tools.delivery; the same scenarios run in both modes.
+# WITH_PULL_SECRET=1 starts the registry with htpasswd authentication and gives the chart that login as store.pullSecret and
+# store.pushSecret. Nothing can then fetch or push without the Secret, so the run proves the Secret reaches the fetch and the
+# trainer, and (with image-volume, where the fetch stays in one isolated init container) that the application container
+# never sees it.
 # Usage: scripts/e2e-kind.sh [jdk ...]       Needs docker, kind, kubectl, helm and network access (Maven Central, image pulls).
 # KEEP=1 keeps the cluster and registry for debugging. Logs of a failed run are written to $ARTIFACTS.
 set -uo pipefail
@@ -21,6 +25,11 @@ cd "$(dirname "$0")/.." || exit 2
 JDKS=("$@"); [ ${#JDKS[@]} -gt 0 ] || JDKS=(21 25)
 TOOLS_DELIVERY=${TOOLS_DELIVERY:-init-container}
 case "$TOOLS_DELIVERY" in init-container|image-volume) ;; *) echo "TOOLS_DELIVERY must be init-container or image-volume"; exit 2 ;; esac
+WITH_PULL_SECRET=${WITH_PULL_SECRET:-0}
+case "$WITH_PULL_SECRET" in 0|1) ;; *) echo "WITH_PULL_SECRET must be 0 or 1"; exit 2 ;; esac
+# the fetch runs inside the application container only with an image volume and no pull Secret
+INLINE_FETCH=0; [ "$TOOLS_DELIVERY" = image-volume ] && [ "$WITH_PULL_SECRET" = 0 ] && INLINE_FETCH=1
+REG_USER=mnemo; REG_PASS=e2e-$RANDOM$RANDOM
 RUN="$$-$(date +%s)"
 CLUSTER="mw-e2e-$RUN"
 CTX="kind-$CLUSTER"
@@ -83,7 +92,13 @@ done
 
 echo "== starting kind cluster $CLUSTER and the archive registry"
 kind create cluster --name "$CLUSTER" ${KIND_NODE_IMAGE:+--image "$KIND_NODE_IMAGE"} --wait 180s >/dev/null 2>&1 || { echo "kind create failed"; exit 1; }
-docker run -d --name "$REG" --network kind registry:2 >/dev/null || { echo "registry start failed"; exit 1; }
+if [ "$WITH_PULL_SECRET" = 1 ]; then
+  docker run --rm --entrypoint htpasswd httpd:2 -Bbn "$REG_USER" "$REG_PASS" >"$WORK/htpasswd" 2>/dev/null || { echo "htpasswd failed"; exit 1; }
+  docker run -d --name "$REG" --network kind -v "$WORK/htpasswd:/auth/htpasswd:ro" -e REGISTRY_AUTH=htpasswd \
+    -e REGISTRY_AUTH_HTPASSWD_REALM=e2e -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd registry:2 >/dev/null || { echo "registry start failed"; exit 1; }
+else
+  docker run -d --name "$REG" --network kind registry:2 >/dev/null || { echo "registry start failed"; exit 1; }
+fi
 REG_IP=$(docker inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' "$REG")
 [ -n "$REG_IP" ] || { echo "no registry address on the kind network"; exit 1; }
 for img in "${IMAGES[@]}"; do kind load docker-image "$img" --name "$CLUSTER" >/dev/null 2>&1 || { echo "kind load failed for $img"; exit 1; }; done
@@ -97,6 +112,14 @@ for n in "${JDKS[@]}"; do
   ns="e2e-$n"
   echo "== JDK $n (namespace $ns)"
   k create namespace "$ns" >/dev/null
+  # a login Secret (used for pull and push) with a registry that requires it, or an empty override
+  if [ "$WITH_PULL_SECRET" = 1 ]; then
+    k -n "$ns" create secret docker-registry reg-cred --docker-server="$REG_IP:5000" --docker-username="$REG_USER" --docker-password="$REG_PASS" >/dev/null \
+      || die "$ns" "cannot create the registry Secret"
+    printf 'warmup:\n  store: { pullSecret: reg-cred, pushSecret: reg-cred }\n' >"$ARTIFACTS.secret-$n.yaml"
+  else
+    printf '{}\n' >"$ARTIFACTS.secret-$n.yaml"
+  fi
   if [ "$n" -ge 25 ]; then expect_type=LEYDEN_AOT; else expect_type=APP_CDS; fi
 
   cat >"$ARTIFACTS.values-$n.yaml" <<YAML
@@ -144,7 +167,7 @@ YAML
 
   # fetch's output for a pod: its own init container, or (image-volume) the lines it printed in the application container
   fetch_logs() {
-    if [ "$TOOLS_DELIVERY" = image-volume ]; then
+    if [ "$INLINE_FETCH" = 1 ]; then
       k -n "$ns" logs "$1" -c app 2>&1 | grep -E '^(fetch:|Archive:|Flags:|No usable archive|mnemo-launcher:)' || true
     else
       k -n "$ns" logs "$1" -c mnemo-warmup-fetch 2>&1
@@ -152,7 +175,7 @@ YAML
   }
 
   # ---- A. first start: no archive yet ----
-  helm --kube-context "$CTX" install ex "$CHART" -n "$ns" -f "$ARTIFACTS.values-$n.yaml" --wait --timeout 6m >/dev/null 2>&1 \
+  helm --kube-context "$CTX" install ex "$CHART" -n "$ns" -f "$ARTIFACTS.values-$n.yaml" -f "$ARTIFACTS.secret-$n.yaml" --wait --timeout 6m >/dev/null 2>&1 \
     || die "$ns" "helm install did not become ready (the app must start without an archive)"
   ok "the app starts and becomes ready without an archive"
   pod=$(app_pods | head -1)
@@ -160,7 +183,11 @@ YAML
   if has "$fetch_log" "No usable archive"; then ok "fetch reports no usable archive and exits 0"; else fail "fetch log: $fetch_log"; fi
   init_names=$(k -n "$ns" get pod "${pod#pod/}" -o jsonpath='{.spec.initContainers[*].name}')
   if [ "$TOOLS_DELIVERY" = image-volume ]; then
-    if [ -z "$init_names" ]; then ok "the pod has no init containers (tools.delivery=image-volume)"; else fail "init containers in image-volume mode: $init_names"; fi
+    if [ "$INLINE_FETCH" = 1 ]; then
+      if [ -z "$init_names" ]; then ok "the pod has no init containers (tools.delivery=image-volume)"; else fail "init containers in image-volume mode: $init_names"; fi
+    else
+      if [ "$init_names" = "mnemo-warmup-fetch" ]; then ok "image-volume with a pull Secret: one isolated fetch init container, no install container"; else fail "init containers: '$init_names'"; fi
+    fi
     if [ -n "$(k -n "$ns" get pod "${pod#pod/}" -o jsonpath='{.spec.volumes[?(@.name=="mnemo-tools")].image.reference}')" ]; then ok "the tools are an image volume"; else fail "the tools volume is not an image volume"; fi
   else
     if [ "$init_names" = "mnemo-warmup-install mnemo-warmup-fetch" ]; then ok "the pod has the install and fetch init containers"; else fail "init containers: '$init_names'"; fi
@@ -196,8 +223,20 @@ YAML
   if has "$cmdline" "java" && ! has "$cmdline" "mnemo-warmup"; then ok "java is PID 1 (no wrapper process)"; else fail "PID 1 is: $cmdline"; fi
   if has "$cmdline" "$( [ "$expect_type" = LEYDEN_AOT ] && echo -XX:AOTCache= || echo -XX:SharedArchiveFile= )"; then ok "the archive flag is on the command line"; else fail "command line: $cmdline"; fi
 
+  # ---- D2. the registry login (WITH_PULL_SECRET=1) ----
+  if [ "$WITH_PULL_SECRET" = 1 ]; then
+    anon=$(docker exec "$REG" wget -S -q -O /dev/null http://localhost:5000/v2/ 2>&1 | awk '/HTTP\//{print $2; exit}')
+    if [ "$anon" = 401 ]; then ok "the registry refuses anonymous requests, so the archive was fetched and pushed with the Secret"; else fail "an anonymous request returned '$anon', expected 401"; fi
+    podname=${pod#pod/}
+    app_spec=$(k -n "$ns" get pod "$podname" -o jsonpath='{.spec.containers[?(@.name=="app")]}')
+    fetch_spec=$(k -n "$ns" get pod "$podname" -o jsonpath='{.spec.initContainers[?(@.name=="mnemo-warmup-fetch")]}')
+    if has "$fetch_spec" "mnemo-registry-pull" && has "$fetch_spec" "MNEMO_WARMUP_REGISTRY_AUTH"; then ok "the fetch init container mounts the Secret"; else fail "fetch container spec: $fetch_spec"; fi
+    if ! has "$app_spec" "mnemo-registry-pull" && ! has "$app_spec" "MNEMO_WARMUP_REGISTRY_AUTH"; then ok "the application container neither mounts the Secret nor has its path"; else fail "application container spec: $app_spec"; fi
+    if k -n "$ns" exec "$podname" -c app -- sh -c 'test ! -e /var/run/mnemo-warmup/registry/config.json' >/dev/null 2>&1; then ok "the Secret's file does not exist inside the application container"; else fail "the registry login is readable inside the application container"; fi
+  fi
+
   # ---- E. a changed JVM option: still starts, uncached, with a reason ----
-  helm --kube-context "$CTX" upgrade ex "$CHART" -n "$ns" -f "$ARTIFACTS.values-$n.yaml" -f "$ARTIFACTS.fallback-$n.yaml" --wait --timeout 6m >/dev/null 2>&1 \
+  helm --kube-context "$CTX" upgrade ex "$CHART" -n "$ns" -f "$ARTIFACTS.values-$n.yaml" -f "$ARTIFACTS.secret-$n.yaml" -f "$ARTIFACTS.fallback-$n.yaml" --wait --timeout 6m >/dev/null 2>&1 \
     || die "$ns" "the Deployment with a changed JVM option did not become ready"
   settle
   pod=$(app_pods | head -1)
@@ -206,6 +245,6 @@ YAML
   if line=$(source_line "$pod") && has "$line" "DemoApplication source: file:"; then ok "and the pod runs uncached but healthy"; else fail "expected the class to load from the JAR after the mismatch, got: '${line:-<no class-load line>}'"; fi
 done
 
-rm -f "$ARTIFACTS".values-*.yaml "$ARTIFACTS".fallback-*.yaml
+rm -f "$ARTIFACTS".values-*.yaml "$ARTIFACTS".fallback-*.yaml "$ARTIFACTS".secret-*.yaml
 summary
 [ "$failures" -eq 0 ]

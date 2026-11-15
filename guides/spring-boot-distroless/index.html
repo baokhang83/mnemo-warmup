@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spring Boot on distroless: AppCDS and Leyden AOT caches with mnemo-warmup</title>
+<meta name="description" content="Walkthrough: extract a Spring Boot layered JAR in a multi-stage Dockerfile and run mnemo-warmup on gcr.io/distroless/java21-debian12 without /bin/sh, using three annotations and a Helm post-renderer.">
+<link rel="canonical" href="https://baokhang83.github.io/mnemo-warmup/guides/spring-boot-distroless/">
+<link rel="alternate" type="text/plain" href="../../llms.txt" title="llms.txt">
+<link rel="stylesheet" href="../../assets/site.css">
+<meta property="og:title" content="Spring Boot on distroless: AppCDS and Leyden AOT caches with mnemo-warmup">
+<meta property="og:description" content="Walkthrough: extract a Spring Boot layered JAR in a multi-stage Dockerfile and run mnemo-warmup on gcr.io/distroless/java21-debian12 without /bin/sh, using three annotations and a Helm post-renderer.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://baokhang83.github.io/mnemo-warmup/guides/spring-boot-distroless/">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="../../">mnemo-warmup</a>
+  <nav aria-label="Primary"><a href="../../#architecture">Architecture</a><a href="../../#decision-matrix">Compare</a><a href="../../benchmarks/gke-jdk25-leyden-aot/">Benchmarks</a><a href="../../guides/spring-boot-distroless/" aria-current="page">Guides</a><a href="../../reference/annotations-and-cli/">Reference</a><a href="../../security/">Security</a><a href="../../coverage/">Coverage</a><a href="https://github.com/baokhang83/mnemo-warmup">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+<div class="crumbs"><a href="../../">mnemo-warmup</a> / Guides / Spring Boot on distroless</div>
+
+<h1>Spring Boot on distroless with mnemo-warmup</h1>
+<p class="lede">Extract the layered JAR in a multi-stage build, run it on <code>gcr.io/distroless/java21-debian12</code> (no shell),
+and let the injector add the trainer and the fetch step. Nothing in the generated pod needs <code>/bin/sh</code>.</p>
+
+<h2>1. Build the image</h2>
+<p>An archive remembers the JAR files it was trained on, so the trainer and every pod must run identical files at identical paths.
+Spring Boot 3.3+ can extract its JAR at build time:</p>
+<pre><code># syntax=docker/dockerfile:1
+FROM maven:3.9-eclipse-temurin-21 AS build
+WORKDIR /src
+COPY pom.xml .
+COPY src src
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -B -ntp -DskipTests package \
+ &amp;&amp; java -Djarmode=tools -jar target/app.jar extract --destination /out
+
+FROM gcr.io/distroless/java21-debian12
+COPY --from=build /out /app
+EXPOSE 8080
+ENTRYPOINT [&quot;java&quot;, &quot;-jar&quot;, &quot;/app/app.jar&quot;]</code></pre>
+<p>The complete file is <a href="https://github.com/baokhang83/mnemo-warmup/blob/main/examples/spring-boot/Dockerfile.distroless"><code>examples/spring-boot/Dockerfile.distroless</code></a>.</p>
+
+<h2>2. Annotate the Deployment</h2>
+<pre><code>spec:
+  template:
+    metadata:
+      annotations:
+        warmup.mnemo.io/enabled: &quot;true&quot;
+        warmup.mnemo.io/store: &quot;oci://registry.example.com/team/app-warmup&quot;
+        warmup.mnemo.io/exit-mode: &quot;spring-refresh&quot;
+    spec:
+      containers:
+        - name: app
+          image: my-app:1.0
+          command: [&quot;java&quot;]
+          args: [&quot;-Xmx512m&quot;, &quot;-jar&quot;, &quot;/app/app.jar&quot;]</code></pre>
+<p>The injector needs an <em>explicit</em> <code>java [options] -jar &lt;jar&gt; [args]</code> in <code>command</code> and <code>args</code>. If the Java command comes from the image’s
+<code>ENTRYPOINT</code>, supply it with <code>warmup.mnemo.io/command: '["java","-jar","/app/app.jar"]'</code>. Launches with <code>-cp</code> and a main class are not supported.
+A changed JVM option is a new fingerprint, so a new archive is trained.</p>
+
+<h2>3. Preview, then deploy</h2>
+<pre><code>helm template my-app ./my-chart --namespace my-namespace \
+  | mnemo-warmup inject --namespace my-namespace --preview
+
+helm upgrade --install my-app ./my-chart --namespace my-namespace \
+  --post-renderer ./scripts/mnemo-warmup-inject \
+  --post-renderer-args=--namespace=my-namespace</code></pre>
+<p>The preview lists the container, JAR, store, trainer mode and what the trainer copies from your workload <strong>by name only</strong>; it never prints a value.
+Review it: the trainer starts your application for real with that configuration. Helm 3 only; with Helm 4 pipe <code>helm template | mnemo-warmup inject | kubectl apply -f -</code>.</p>
+
+<h2>Why no shell is needed</h2>
+<p>Every generated container runs <code>mnemo-launcher</code>, a static Go binary: <code>install</code> copies the tools, <code>fetch</code> looks up the archive (a failure is logged and exits 0),
+and <code>exec</code> asks the tools for the final command and <b>replaces itself</b> with it, so <code>java</code> is PID 1 and gets SIGTERM directly.
+It finds <code>java</code> the way your command would: an explicit path, then <code>PATH</code>, <code>JAVA_HOME</code>, common JDK locations.</p>
+
+<h2>Optional: no init containers</h2>
+<p>Add <code>warmup.mnemo.io/tools-delivery: "image-volume"</code> on Kubernetes 1.33+ with a supporting runtime. See the <a href="../../benchmarks/gke-jdk25-leyden-aot/#why-kubernetes-1-33-image-volumes-matter">measurement</a>.</p>
+
+<h2>What was verified, and limits</h2>
+<ul>
+ <li><code>scripts/e2e-kind-inject.sh</code> runs this path on kind with Helm 3 on both a Temurin and a distroless Java 21 image: preview, first start, asynchronous training, cache hit, update and rollback, corrupted archive, stopped registry, removal.</li>
+ <li><code>scripts/verify-image.sh</code> checks the launcher on <code>gcr.io/distroless/java21-debian12</code> (install, train, push, fetch, corrupt archives, UTF-8 arguments, exit status, SIGTERM).</li>
+ <li>Java 21 or newer must be in the application image. Cache files are mode 0600 and owned by the user that ran <code>fetch</code>, so run the app as that user.</li>
+ <li>Annotation path run end to end on JDK 21 (AppCDS) only; JDK 25 AOT is covered through the Helm chart and the GKE study. Alpha.</li>
+</ul>
+
+</main>
+<footer class="site"><div class="wrap">
+  Apache-2.0 · alpha software · <a href="https://github.com/baokhang83/mnemo-warmup">GitHub</a> ·
+  <a href="../../llms.txt">llms.txt</a> · <a href="../../llms-full.txt">llms-full.txt</a> ·
+  <a href="../../sitemap.xml">sitemap</a> · <a href="../../coverage/">Coverage report</a>
+</div></footer>
+
+</body>
+</html>

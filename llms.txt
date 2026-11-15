@@ -9,6 +9,15 @@ An annotated Deployment (three annotations, no source changes) is rendered throu
 - **Status.** Alpha, heading to a 0.3.0 beta. Not verified: live EKS/ECR, Helm 4, remote-registry scale-out.
 - **Install.** Tools image `ghcr.io/baokhang83/mnemo-warmup-tools`, Helm repo `https://baokhang83.github.io/mnemo-warmup/`, Maven Central `io.github.baokhang83.mnemo:warmup-core`.
 
+## Docs site
+
+- [Home](https://baokhang83.github.io/mnemo-warmup/): Lifecycle diagram, decision matrix against GraalVM Native Image, CRaC and manual AppCDS/Leyden, FAQ.
+- [GKE benchmark, JDK 25 Leyden AOT](https://baokhang83.github.io/mnemo-warmup/benchmarks/gke-jdk25-leyden-aot/): Four workload tiers, method, tables and caveats.
+- [Spring Boot on distroless](https://baokhang83.github.io/mnemo-warmup/guides/spring-boot-distroless/): Layered JAR, no shell, annotations, preview.
+- [EKS and ECR](https://baokhang83.github.io/mnemo-warmup/guides/aws-eks-ecr/): IRSA roles, policies, verification checklist.
+- [Annotations and CLI reference](https://baokhang83.github.io/mnemo-warmup/reference/annotations-and-cli/): Every warmup.mnemo.io/* key, default and flag.
+- [Security model](https://baokhang83.github.io/mnemo-warmup/security/): RBAC scope, Lease locking, digest verification, fail-safe behaviour.
+
 ## Core documentation
 
 - [README](https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/README.md): Overview, quick start, measurements, requirements.

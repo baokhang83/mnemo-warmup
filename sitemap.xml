@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://baokhang83.github.io/mnemo-warmup/</loc></url>
+  <url><loc>https://baokhang83.github.io/mnemo-warmup/benchmarks/gke-jdk25-leyden-aot/</loc></url>
+  <url><loc>https://baokhang83.github.io/mnemo-warmup/guides/spring-boot-distroless/</loc></url>
+  <url><loc>https://baokhang83.github.io/mnemo-warmup/guides/aws-eks-ecr/</loc></url>
+  <url><loc>https://baokhang83.github.io/mnemo-warmup/reference/annotations-and-cli/</loc></url>
+  <url><loc>https://baokhang83.github.io/mnemo-warmup/security/</loc></url>
+  <url><loc>https://baokhang83.github.io/mnemo-warmup/coverage/</loc></url>
+  <url><loc>https://baokhang83.github.io/mnemo-warmup/llms.txt</loc></url>
+  <url><loc>https://baokhang83.github.io/mnemo-warmup/llms-full.txt</loc></url>
+</urlset>

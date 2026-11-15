@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mnemo-warmup security model: RBAC scope, Lease locking, digest verification, fail-safe</title>
+<meta name="description" content="Security model of the mnemo-warmup Helm post-renderer and trainer: Role limited to Kubernetes Leases, Lease locking, archive digest verification, credential separation and what still can stop a pod.">
+<link rel="canonical" href="https://baokhang83.github.io/mnemo-warmup/security/">
+<link rel="alternate" type="text/plain" href="../llms.txt" title="llms.txt">
+<link rel="stylesheet" href="../assets/site.css">
+<meta property="og:title" content="mnemo-warmup security model: RBAC scope, Lease locking, digest verification, fail-safe">
+<meta property="og:description" content="Security model of the mnemo-warmup Helm post-renderer and trainer: Role limited to Kubernetes Leases, Lease locking, archive digest verification, credential separation and what still can stop a pod.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://baokhang83.github.io/mnemo-warmup/security/">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="../">mnemo-warmup</a>
+  <nav aria-label="Primary"><a href="../#architecture">Architecture</a><a href="../#decision-matrix">Compare</a><a href="../benchmarks/gke-jdk25-leyden-aot/">Benchmarks</a><a href="../guides/spring-boot-distroless/">Guides</a><a href="../reference/annotations-and-cli/">Reference</a><a href="../security/" aria-current="page">Security</a><a href="../coverage/">Coverage</a><a href="https://github.com/baokhang83/mnemo-warmup">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+<div class="crumbs"><a href="../">mnemo-warmup</a> / Security</div>
+
+<h1>Security model</h1>
+<p class="lede">What mnemo-warmup can touch in your cluster, how an archive is validated before use, and what happens when something is wrong. Written for the platform engineer deciding whether to put a third-party post-renderer in a deployment path.</p>
+<p class="note">Alpha software and not independently audited. This page describes behaviour documented and tested in the repository; read the source and the preview output for your own review.</p>
+
+<h2>Kubernetes RBAC scope</h2>
+<ul>
+ <li>The injector is <strong>offline</strong>: it reads rendered YAML on stdin, writes YAML on stdout, and contacts no cluster.</li>
+ <li>Per opted-in workload it generates one CronJob, ServiceAccount, Role and RoleBinding, named after the Deployment plus a short hash.</li>
+ <li>The Role grants <code>get</code>, <code>create</code>, <code>update</code> and <code>delete</code> on <strong><code>leases</code> only</strong>, in the workload’s namespace. No Secrets, pods or cluster-wide access.</li>
+ <li>The trainer starts <em>your application</em> with copied environment variables, <code>envFrom</code> references, volumes and mounts, security context, pull secrets, node selector, tolerations and affinity. It therefore holds whatever your app holds. The preview lists these <strong>by name only</strong>; review it.</li>
+</ul>
+
+<h2>Lease locking</h2>
+<p>Before training, the trainer takes a Kubernetes <code>Lease</code> named after the fingerprint, so two trainers never train the same archive. A lease left by a crashed trainer expires on its own
+(<code>kubectl get lease | grep mnemo-warmup</code>). The CronJob does not overlap runs and stops a run after one hour.</p>
+
+<h2>Archive integrity</h2>
+<ul>
+ <li>Archives are OCI artifacts tagged by <strong>fingerprint</strong>: JDK build, classpath JAR contents and JVM options. A changed option or image is a different archive.</li>
+ <li><code>fetch</code> verifies the <strong>digest</strong> before use. In the end-to-end test, 4 KiB of a stored archive were overwritten with random bytes at the same size: the pod rejected it and started uncached and Ready.</li>
+ <li>Before adding the JVM flag, <code>run</code> compares the manifest with this exact launch: JDK build, JVM options, classpath content, JAR modification times and training directory. Any mismatch starts <code>java</code> as given and logs why.</li>
+ <li>The CLI installer’s SHA-256 checks detect corrupt or mismatched downloads; they do not authenticate a compromised release source.</li>
+ <li>Archives hold class metadata for your application. Treat the archive repository like any registry holding application artifacts: restrict who can push.</li>
+</ul>
+
+<h2>Credentials</h2>
+<ul>
+ <li>Pull and push credentials are separate Secrets (or roles). A read-only credential cannot overwrite archives. Image-pull credentials are not reused for the archive store.</li>
+ <li>ECR via IRSA: short-lived web-identity credentials, cached and refreshed; none written to logs or errors. See <a href="../guides/aws-eks-ecr/">EKS and ECR</a>.</li>
+ <li>With a pull Secret or node cache, even image-volume delivery keeps a <code>fetch</code> init container so credentials and cache identity stay out of the application container.</li>
+ <li>Optional node-local cache: HTTPS only, a CA from a ConfigMap, a projected service-account token with its own audience; it follows at most one same-origin redirect, never forwards credentials to another host, and verifies the client’s registry proof on every request including hits.</li>
+ <li>Do not put credentials under shared CI caches or build files.</li>
+</ul>
+
+<h2>Fail-safe behaviour</h2>
+<p>Failures <em>looking up or validating</em> an archive never stop a pod; it starts the ordinary way and its log says why.</p>
+<div class="table-wrap"><table><thead><tr><th>Situation</th><th>What happens</th></tr></thead><tbody><tr><td>No archive yet</td><td><code>fetch</code>: no usable archive; the app starts uncached.</td></tr><tr><td>Registry unreachable or login refused</td><td><code>fetch</code> logs and exits 0; Ready about 14–15 s later in the end-to-end test.</td></tr><tr><td>Archive damaged</td><td>Rejected by the digest check; uncached start.</td></tr><tr><td>Image has no Java, or older than 21</td><td>The launcher skips the tool; your command runs unchanged.</td></tr><tr><td><code>run</code> helper stalls</td><td>Stopped after 60 s; your command runs unchanged.</td></tr></tbody></table></div>
+<h3>Not covered by the fallback</h3>
+<ul>
+ <li>A <code>pull-secret</code> or <code>push-secret</code> that does not exist in the namespace.</li>
+ <li>The tools or application image cannot be pulled.</li>
+ <li>With <code>tools-delivery: image-volume</code>, a cluster or runtime without image-volume support: the pod stays in <code>ContainerCreating</code>.</li>
+ <li>An application command that is wrong in the first place.</li>
+</ul>
+
+<h2>Removing it</h2>
+<p>Remove the annotations (or set <code>enabled</code> to <code>"false"</code>) and render again; the original command returns and, with Helm, the generated CronJob, ServiceAccount, Role and RoleBinding are pruned. Archives stay in the registry until your retention policy removes them.</p>
+<p>Source: <a href="https://github.com/baokhang83/mnemo-warmup/blob/main/docs/operations.md">operations.md</a> · <a href="https://github.com/baokhang83/mnemo-warmup/blob/main/docs/offline-injector.md">offline-injector.md</a> · <a href="https://github.com/baokhang83/mnemo-warmup/blob/main/docs/registry-auth.md">registry-auth.md</a>.</p>
+
+</main>
+<footer class="site"><div class="wrap">
+  Apache-2.0 · alpha software · <a href="https://github.com/baokhang83/mnemo-warmup">GitHub</a> ·
+  <a href="../llms.txt">llms.txt</a> · <a href="../llms-full.txt">llms-full.txt</a> ·
+  <a href="../sitemap.xml">sitemap</a> · <a href="../coverage/">Coverage report</a>
+</div></footer>
+
+</body>
+</html>

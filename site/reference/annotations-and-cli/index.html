@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mnemo-warmup annotations and CLI reference: warmup.mnemo.io/* keys, defaults and flags</title>
+<meta name="description" content="Scannable reference for every warmup.mnemo.io annotation, its default value, and the mnemo-warmup CLI commands build, bench, push, fetch, run and inject with their flags and environment variables.">
+<link rel="canonical" href="https://baokhang83.github.io/mnemo-warmup/reference/annotations-and-cli/">
+<link rel="alternate" type="text/plain" href="../../llms.txt" title="llms.txt">
+<link rel="stylesheet" href="../../assets/site.css">
+<meta property="og:title" content="mnemo-warmup annotations and CLI reference: warmup.mnemo.io/* keys, defaults and flags">
+<meta property="og:description" content="Scannable reference for every warmup.mnemo.io annotation, its default value, and the mnemo-warmup CLI commands build, bench, push, fetch, run and inject with their flags and environment variables.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://baokhang83.github.io/mnemo-warmup/reference/annotations-and-cli/">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="../../">mnemo-warmup</a>
+  <nav aria-label="Primary"><a href="../../#architecture">Architecture</a><a href="../../#decision-matrix">Compare</a><a href="../../benchmarks/gke-jdk25-leyden-aot/">Benchmarks</a><a href="../../guides/spring-boot-distroless/">Guides</a><a href="../../reference/annotations-and-cli/" aria-current="page">Reference</a><a href="../../security/">Security</a><a href="../../coverage/">Coverage</a><a href="https://github.com/baokhang83/mnemo-warmup">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+<div class="crumbs"><a href="../../">mnemo-warmup</a> / Reference / Annotations and CLI</div>
+
+<h1>Annotations and CLI reference</h1>
+<p class="lede">Every <code>warmup.mnemo.io/*</code> annotation with its default, and every command and flag. Set annotations on the Deployment’s <strong>pod template</strong> (<code>spec.template.metadata.annotations</code>) as quoted strings.</p>
+<p class="note">Three annotations are required today: <code>enabled</code>, <code>store</code> and <code>exit-mode</code>. The injector stops with <code>missing warmup.mnemo.io/exit-mode</code> otherwise.</p>
+<h2>Annotations</h2>
+<div class="table-wrap"><table><thead><tr><th>Annotation</th><th>Required</th><th>Default</th><th>Meaning</th></tr></thead><tbody><tr><td>warmup.mnemo.io/enabled</td><td>yes</td><td>—</td><td><code>"true"</code> turns adoption on. <code>"false"</code> (or no annotations) leaves the workload untouched and restores fields the injector owns.</td></tr><tr><td>warmup.mnemo.io/store</td><td>yes</td><td>—</td><td>Archive repository, <code>oci://host[:port]/path</code>. Not your application image repository.</td></tr><tr><td>warmup.mnemo.io/exit-mode</td><td>yes</td><td>—</td><td>How the trainer knows startup is done: <code>spring-refresh</code> or <code>http-probe</code>.</td></tr><tr><td>warmup.mnemo.io/probe-url</td><td>with http-probe</td><td>—</td><td>HTTP URL reachable from the trainer pod. Not allowed with <code>spring-refresh</code>.</td></tr><tr><td>warmup.mnemo.io/container</td><td>multi-container pods</td><td>—</td><td>Name of the application container.</td></tr><tr><td>warmup.mnemo.io/command</td><td>no</td><td>from <code>command</code> + <code>args</code></td><td>Complete JSON string array for the launch when the Java command comes from <code>ENTRYPOINT</code>, e.g. <code>["java","-jar","/app/app.jar"]</code>.</td></tr><tr><td>warmup.mnemo.io/pull-secret</td><td>no</td><td>anonymous</td><td><code>kubernetes.io/dockerconfigjson</code> Secret with <strong>pull</strong> access to the archive repository.</td></tr><tr><td>warmup.mnemo.io/push-secret</td><td>no</td><td>anonymous</td><td>The same with <strong>push</strong> access, used by the trainer.</td></tr><tr><td>warmup.mnemo.io/plain-http</td><td>no</td><td><code>false</code></td><td><code>"true"</code> talks plain HTTP to the registry. Local registries and tests only.</td></tr><tr><td>warmup.mnemo.io/tools-delivery</td><td>no</td><td><code>init-container</code></td><td><code>init-container</code> or <code>image-volume</code> (Kubernetes 1.33+, supporting runtime). A pull Secret or node cache keeps a fetch init container.</td></tr><tr><td>warmup.mnemo.io/node-cache-url</td><td>with node cache</td><td>—</td><td>HTTPS origin of the node-local cache Service.</td></tr><tr><td>warmup.mnemo.io/node-cache-ca-configmap</td><td>with node cache</td><td>—</td><td>ConfigMap with the cache CA certificate under <code>ca.crt</code>.</td></tr><tr><td>warmup.mnemo.io/node-cache-audience</td><td>with node cache</td><td>—</td><td>Audience for the projected service-account token.</td></tr></tbody></table></div>
+<h2>Commands</h2>
+<div class="table-wrap"><table><thead><tr><th>Command</th><th>What it does</th><th>Options (defaults)</th></tr></thead><tbody><tr><td>build</td><td>Train an archive locally and write it with a manifest.</td><td><code>--jar</code>, <code>--java-home</code>, <code>--cache-type auto|appcds|aot</code>, <code>--exit-mode spring-refresh|http-probe</code>, <code>--url</code>, <code>--warmup-url</code>, <code>--warmup-script</code>, <code>--poll-interval-millis 500</code>, <code>--timeout-seconds 300</code>, <code>--jvm-arg</code>, <code>--image-digest</code>, <code>--work-dir .mnemo-warmup</code></td></tr><tr><td>bench</td><td>Compare start with no archive, AppCDS and (JDK 25+) AOT in fresh JVMs.</td><td>build options plus <code>--runs 3</code>, <code>--warmups 1</code></td></tr><tr><td>push</td><td>Upload archive and manifest, tag <code>fp-&lt;hex&gt;</code>.</td><td><code>--store</code>, <code>--registry-auth</code>, <code>--plain-http</code></td></tr><tr><td>fetch</td><td>Look up, verify (digest) and write the archive for this exact launch. Exits 0 on any problem unless <code>--strict</code>.</td><td><code>--jar</code>, <code>--jvm-arg</code>, <code>--image-digest</code>, <code>--store</code>, <code>--registry-auth</code>, <code>--plain-http</code>, <code>--out .mnemo-warmup/cache</code>, <code>--cache-type</code>, <code>--store-timeout-seconds 120</code>, <code>--strict</code></td></tr><tr><td>run</td><td>Print the final launch command with the archive flag if it fits.</td><td><code>--cache-dir</code>, <code>--image-digest</code>, <code>--print</code>, <code>--format shell|nul</code>, <code>--spawn</code>, <code>--stop-timeout-seconds 25</code></td></tr><tr><td>inject</td><td>Rewrite a rendered YAML stream offline (stdin to stdout). No cluster contact.</td><td><code>--namespace</code>, <code>--preview</code>, <code>--tools-image</code></td></tr></tbody></table></div>
+<p>Exit codes for <code>build</code>: <code>0</code> success, <code>1</code> training failed, <code>2</code> invalid input. <code>push</code>: <code>0</code> success, <code>1</code> store failure, <code>2</code> invalid input. <code>fetch</code> exits 0 by default, whatever goes wrong; <code>--strict</code> exits 1 on a store problem and 2 on bad arguments.</p>
+<h2>Environment variables</h2>
+<div class="table-wrap"><table><thead><tr><th>Variable</th><th>Meaning</th></tr></thead><tbody><tr><td>MNEMO_WARMUP_REGISTRY_AUTH</td><td>Docker-config file used when <code>--registry-auth</code> is not given.</td></tr><tr><td>MNEMO_WARMUP_CACHE_DIR</td><td>Default for <code>run --cache-dir</code>.</td></tr><tr><td>MNEMO_WARMUP_IMAGE_DIGEST</td><td>Default for <code>run --image-digest</code>.</td></tr><tr><td>MNEMO_WARMUP_TIMING=1</td><td>Print millisecond phase timings from the tools.</td></tr><tr><td>MNEMO_WARMUP_AWS_ROLE_ARN</td><td>Second role to assume after the web identity (ECR).</td></tr><tr><td>AWS_ROLE_SESSION_NAME</td><td>STS session name, default <code>mnemo-warmup</code>.</td></tr></tbody></table></div>
+<h2>Fixed in this release</h2>
+<ul>
+ <li>Trainer CronJob: every 10 minutes, <code>concurrencyPolicy: Forbid</code>, one-hour deadline. Not configurable per workload yet.</li>
+ <li>Only <code>Deployment</code> workloads; launches with <code>-cp</code> and a main class and <code>@argfiles</code> are refused.</li>
+ <li>Deployment names over 63 characters are rejected (the name is used as a label value).</li>
+</ul>
+<p>Prose reference and ADRs: <a href="https://github.com/baokhang83/mnemo-warmup/blob/main/docs/reference.md">reference.md</a> · <a href="https://github.com/baokhang83/mnemo-warmup/blob/main/docs/configuration.md">configuration.md</a>.</p>
+
+</main>
+<footer class="site"><div class="wrap">
+  Apache-2.0 · alpha software · <a href="https://github.com/baokhang83/mnemo-warmup">GitHub</a> ·
+  <a href="../../llms.txt">llms.txt</a> · <a href="../../llms-full.txt">llms-full.txt</a> ·
+  <a href="../../sitemap.xml">sitemap</a> · <a href="../../coverage/">Coverage report</a>
+</div></footer>
+
+</body>
+</html>

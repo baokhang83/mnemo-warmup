@@ -34,35 +34,40 @@ jobs:
           jacoco-csv-file: coverage/target/site/jacoco-aggregate/jacoco.csv
           badges-directory: coverage/target/site/jacoco-aggregate/badges
 
-      # gh-pages also serves the Helm repository (index.yaml, charts/, artifacthub-repo.yml): keep it out of the clean-up
-      - name: Include Artifact Hub repository metadata
-        if: matrix.java == 21 && github.event_name == 'push' && github.ref == 'refs/heads/main' && hashFiles('artifacthub-repo.yml') != ''
-        run: cp artifacthub-repo.yml coverage/target/site/jacoco-aggregate/artifacthub-repo.yml
-
-      - name: Include llms.txt and llms-full.txt at the site root
-        if: matrix.java == 21 && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      # Assemble the Pages site. Runs on pull requests too (nothing is deployed), so a broken layout fails review, not main.
+      # gh-pages also serves the Helm repository (index.yaml, charts/, artifacthub-repo.yml), kept out of the clean-up below.
+      - name: Assemble the GitHub Pages site
+        if: matrix.java == 21
         run: |
-          site=coverage/target/site/jacoco-aggregate
-          cp llms.txt "$site/llms.txt"
-          scripts/build-llms-full.sh "$site/llms-full.txt"
-          # Link them from the landing page (the JaCoCo report) so crawlers that do not guess root paths find them.
-          # Fail loudly if JaCoCo's markup ever changes.
-          grep -q '<div class="footer">' "$site/index.html"
-          sed -i 's|<div class="footer">|<div class="footer"><span class="left"><a href="llms.txt">llms.txt</a> &middot; <a href="llms-full.txt">llms-full.txt</a></span>|' "$site/index.html"
-          sed -i 's|</head>|<link rel="alternate" type="text/plain" href="llms.txt" title="llms.txt"/></head>|' "$site/index.html"
-          grep -q 'href="llms-full.txt">llms-full.txt</a>' "$site/index.html"
-          # Google Search Console ownership verification for the Pages site.
-          sed -i 's|</head>|<meta name="google-site-verification" content="Q7SKsA-JukICYFV0a1XTQDHq_ZciLmj43Pjui4xJ_9Y"/></head>|' "$site/index.html"
-          grep -q 'name="google-site-verification" content="Q7SKsA-JukICYFV0a1XTQDHq_ZciLmj43Pjui4xJ_9Y"' "$site/index.html"
-          # Bing Webmaster Tools ownership verification for the Pages site.
-          sed -i 's|</head>|<meta name="msvalidate.01" content="F8E60EFE3EC283577A2A0DADE4A5D82E"/></head>|' "$site/index.html"
-          grep -q 'name="msvalidate.01" content="F8E60EFE3EC283577A2A0DADE4A5D82E"' "$site/index.html"
+          report=coverage/target/site/jacoco-aggregate
+          out=pages-site
+          rm -rf "$out"
+          mkdir -p "$out/coverage"
+          # Docs site (landing page, subpages, sitemap, robots) at the root.
+          cp -R site/. "$out/"
+          cp llms.txt "$out/llms.txt"
+          scripts/build-llms-full.sh "$out/llms-full.txt"
+          if [ -f artifacthub-repo.yml ]; then cp artifacthub-repo.yml "$out/artifacthub-repo.yml"; fi
+          # The JaCoCo report moves under /coverage/ whole (it uses relative links).
+          cp -R "$report/." "$out/coverage/"
+          # The README coverage badge reads badges/jacoco.svg from the gh-pages branch root: keep it there.
+          rm -rf "$out/coverage/badges"
+          cp -R "$report/badges" "$out/badges"
+          test -s "$out/badges/jacoco.svg"
+          test -f "$out/index.html" && test -f "$out/coverage/index.html"
+          # Ownership verification tags and crawler files must survive any edit of the site.
+          grep -q 'name="google-site-verification" content="Q7SKsA-JukICYFV0a1XTQDHq_ZciLmj43Pjui4xJ_9Y"' "$out/index.html"
+          grep -q 'name="msvalidate.01" content="F8E60EFE3EC283577A2A0DADE4A5D82E"' "$out/index.html"
+          grep -q 'href="llms-full.txt">llms-full.txt</a>' "$out/index.html"
+          grep -q 'llms-full.txt' "$out/sitemap.xml"
+          # Helm repository files must not be produced here (they live on gh-pages and are excluded from the clean-up).
+          test ! -e "$out/index.yaml" && test ! -e "$out/charts"
 
       - name: Publish coverage report to GitHub Pages
         if: matrix.java == 21 && github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: JamesIves/github-pages-deploy-action@v4
         with:
-          folder: coverage/target/site/jacoco-aggregate
+          folder: pages-site
           clean-exclude: |
             index.yaml
             artifacthub-repo.yml

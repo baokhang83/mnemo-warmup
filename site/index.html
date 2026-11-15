@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Automate AppCDS &amp; Project Leyden AOT Caches on Kubernetes | mnemo-warmup</title>
+<meta name="description" content="Train AppCDS or Project Leyden AOT caches once inside your Kubernetes cluster and give them to every JVM pod through an OCI registry. Three annotations, no GraalVM, fails open to an ordinary start.">
+<meta name="google-site-verification" content="Q7SKsA-JukICYFV0a1XTQDHq_ZciLmj43Pjui4xJ_9Y" />
+<meta name="msvalidate.01" content="F8E60EFE3EC283577A2A0DADE4A5D82E" />
+<link rel="canonical" href="https://baokhang83.github.io/mnemo-warmup/">
+<link rel="alternate" type="text/plain" href="llms.txt" title="llms.txt">
+<link rel="stylesheet" href="assets/site.css">
+<meta property="og:title" content="Automate AppCDS &amp; Project Leyden AOT Caches on Kubernetes | mnemo-warmup">
+<meta property="og:description" content="Train AppCDS or Project Leyden AOT caches once inside your Kubernetes cluster and give them to every JVM pod through an OCI registry. Three annotations, no GraalVM, fails open to an ordinary start.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://baokhang83.github.io/mnemo-warmup/">
+<script type="application/ld+json">
+{
+ "@context": "https://schema.org",
+ "@type": "SoftwareApplication",
+ "name": "mnemo-warmup",
+ "applicationCategory": "DeveloperApplication",
+ "operatingSystem": "Kubernetes",
+ "license": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+ "url": "https://baokhang83.github.io/mnemo-warmup/",
+ "codeRepository": "https://github.com/baokhang83/mnemo-warmup",
+ "description": "Trains AppCDS and Project Leyden AOT caches inside a Kubernetes cluster and distributes them to JVM pods through an OCI registry."
+}
+</script>
+<script type="application/ld+json">
+{
+ "@context": "https://schema.org",
+ "@type": "FAQPage",
+ "mainEntity": [
+  {
+   "@type": "Question",
+   "name": "Does Project Leyden AOT work with Spring Boot on Kubernetes?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "Yes, on JDK 25, where mnemo-warmup trains a Leyden AOT cache in a single step. The GKE benchmark ran Spring Boot sample applications and ThingsBoard CE with AOT archives on Debian OpenJDK 25.0.4.1. On JDK 21 to 24 it uses AppCDS instead. The annotation path was run end to end on JDK 21 only; the Helm-chart path covers both. The project is alpha."
+   }
+  },
+  {
+   "@type": "Question",
+   "name": "How does mnemo-warmup handle distroless images without a shell?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "Every container the injector generates runs a static launcher binary (mnemo-launcher), not a shell script, so gcr.io/distroless/java21-debian12 works. The launcher replaces itself with java, so the JVM stays PID 1 and receives SIGTERM directly. The image still needs Java 21 or newer."
+   }
+  },
+  {
+   "@type": "Question",
+   "name": "What happens if the OCI registry goes down?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "The pod still starts. fetch logs the reason and exits 0, and the application starts without an archive. In the end-to-end test with the registry stopped, pods became Ready about 14 to 15 seconds after deletion, which is how long fetch takes to give up. Missing pull Secrets and unsupported image volumes are deployment errors that this fallback does not cover."
+   }
+  },
+  {
+   "@type": "Question",
+   "name": "Do I need to change my application code or switch to GraalVM?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "No application code changes. You add three annotations (enabled, store, exit-mode) to the Deployment pod template. The container must launch with an explicit java -jar command and run identical JAR files in the trainer and in every pod; for Spring Boot that means extracting the JAR when you build the image."
+   }
+  },
+  {
+   "@type": "Question",
+   "name": "Does it work with Helm 4?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "Not verified. The post-renderer here is a script path, which Helm 3 accepts; Helm 4 expects a plugin and none is shipped yet. With Helm 4, render and inject in a pipeline: helm template | mnemo-warmup inject | kubectl apply."
+   }
+  }
+ ]
+}
+</script>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="./">mnemo-warmup</a>
+  <nav aria-label="Primary"><a href="#architecture">Architecture</a><a href="#decision-matrix">Compare</a><a href="benchmarks/gke-jdk25-leyden-aot/">Benchmarks</a><a href="guides/spring-boot-distroless/">Guides</a><a href="reference/annotations-and-cli/">Reference</a><a href="security/">Security</a><a href="coverage/">Coverage</a><a href="https://github.com/baokhang83/mnemo-warmup">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+
+
+<section class="hero" id="top">
+  <span class="pill">Apache-2.0 · alpha · Kubernetes · Java 21+</span>
+  <h1>Automate AppCDS &amp; Project Leyden AOT caches on Kubernetes</h1>
+  <p class="lede">mnemo-warmup trains a class-data archive <strong>once, inside your cluster</strong>, stores it in an OCI
+  registry, and gives it to every replica of an unchanged JVM application. A pod starts from the archive only when it fits
+  its launch exactly; otherwise it starts the ordinary way. No GraalVM, no application code changes.</p>
+</section>
+
+<h2 id="architecture">The lifecycle, step by step</h2>
+<p>Choose a scenario, then click any stage.</p>
+<div class="diagram" id="arch">
+  <div class="tabs" role="group" aria-label="Scenario">
+    <button type="button" data-mode="init" aria-pressed="true">Init-container delivery</button>
+    <button type="button" data-mode="vol" aria-pressed="false">Image-volume delivery</button>
+    <button type="button" data-mode="down" aria-pressed="false">Registry down</button>
+  </div>
+  <svg viewBox="0 0 800 270" role="img" aria-label="Lifecycle: a Helm post-renderer injects a trainer CronJob with a Lease; the trainer pushes the archive to an OCI registry; each pod fetches and verifies it through an init container or an image volume; the JVM then starts as PID 1. A failed lookup falls back to an ordinary start.">
+<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z"/></marker></defs>
+<g class="node" data-step="inject"><rect x="8" y="30" width="140" height="62" rx="10"/><text x="78" y="56" text-anchor="middle">Inject</text><text class="sub" x="78" y="74" text-anchor="middle">Helm post-renderer</text></g>
+<g class="node" data-step="trainer"><rect x="172" y="30" width="140" height="62" rx="10"/><text x="242" y="56" text-anchor="middle">Train</text><text class="sub" x="242" y="74" text-anchor="middle">CronJob + Lease</text></g>
+<g class="node" data-step="registry"><rect x="336" y="30" width="140" height="62" rx="10"/><text x="406" y="56" text-anchor="middle">Store</text><text class="sub" x="406" y="74" text-anchor="middle">OCI registry</text></g>
+<g class="node" data-step="fetch"><rect x="500" y="30" width="150" height="62" rx="10"/><text x="575" y="56" text-anchor="middle">Fetch + verify</text><text class="sub" x="575" y="74" text-anchor="middle">init container / image volume</text></g>
+<g class="node" data-step="jvm"><rect x="640" y="160" width="150" height="62" rx="10"/><text x="715" y="186" text-anchor="middle">Java, PID 1</text><text class="sub" x="715" y="204" text-anchor="middle">archive on, if it fits</text></g>
+<g class="node" data-step="fallback"><rect x="400" y="170" width="170" height="52" rx="10"/><text x="485" y="193" text-anchor="middle">Fail open</text><text class="sub" x="485" y="210" text-anchor="middle">ordinary start, reason logged</text></g>
+<path id="e-inject-trainer" class="edge" d="M148 61 H170"/>
+<path id="e-trainer-registry" class="edge" d="M312 61 H334"/>
+<path id="e-registry-fetch" class="edge" d="M476 61 H498"/>
+<path id="e-fetch-jvm" class="edge" d="M620 92 C 660 120, 690 130, 705 158"/>
+<path id="e-fetch-fallback" class="edge" d="M540 92 C 520 120, 500 140, 490 168"/>
+<path id="e-fallback-jvm" class="edge" d="M570 196 H638"/>
+</svg>
+  <div class="detail" aria-live="polite"></div>
+</div>
+
+<h2>What it measured</h2>
+<p>Pod start-to-Ready and the JVM’s own start, on a kind laptop cluster and on a single-node GKE cluster. Both are small
+studies: read the limits on each page.</p>
+<div class="stats">
+  <div class="stat"><b>5 s → 3 s</b><span>pod Ready, Spring Boot, 1 CPU / 1 GiB, image-volume delivery (kind)</span></div>
+  <div class="stat"><b>3.2 → 1.9 s</b><span>Spring start with the archive (kind, 1 CPU / 1 GiB)</span></div>
+  <div class="stat"><b>7.4 → 3.1 s</b><span>standard tier app-ready, one pod, JDK 25 AOT (GKE, 1 trial)</span></div>
+  <div class="stat"><b>0</b><span>gain on SonarQube: its container only starts a coordinator JVM</span></div>
+</div>
+<p><a href="benchmarks/gke-jdk25-leyden-aot/">Full GKE methodology, tables and caveats →</a></p>
+
+<h2 id="decision-matrix">When to use mnemo-warmup</h2>
+<p>Different tools shorten JVM start in different ways. This matrix is a summary for orientation, not a benchmark.</p>
+<div class="table-wrap"><table><thead><tr><th>Approach</th><th>What you get</th><th>What it asks of you</th><th>Where it hurts</th></tr></thead><tbody><tr><td><strong>GraalVM Native Image</strong></td><td>The fastest cold starts and smallest footprint of these options.</td><td>A native build in CI; reachability metadata (reflection, proxies, resources) available at build time.</td><td>Closed-world compilation: some dynamic JVM features are restricted, and the native binary needs its own build, test and debug path.</td></tr><tr><td><strong>CRaC</strong> (checkpoint/restore)</td><td>Restore a warmed-up JVM instead of starting one.</td><td>A CRaC-enabled JDK, checkpoint hooks for open resources, and a checkpointing step in your pipeline.</td><td>Restore typically needs extra Linux capabilities in the container, and state must be made safe to snapshot. Check your platform’s policy.</td></tr><tr><td><strong>Manual AppCDS / Leyden in CI</strong></td><td>The same JVM archives, built in a Dockerfile stage.</td><td>A multi-stage Dockerfile and a training run per application, kept in step with every JDK and JAR change.</td><td>Training in CI lacks the cluster’s real config; the archive must match the exact JDK build, JARs and paths.</td></tr><tr><td><strong>mnemo-warmup</strong></td><td>AppCDS (JDK 21+) or Leyden AOT (JDK 25) archives, trained in the live cluster, shared through an OCI registry.</td><td>No code change: three annotations. An explicit <code>java -jar</code> launch and identical JARs in trainer and pods (Spring Boot: extract the JAR when building the image).</td><td>One extra real startup in a trainer pod; a registry to run; gains only where start is class loading (neutral on Jenkins, none on SonarQube); alpha.</td></tr></tbody></table></div>
+<div class="note"><strong>Pick mnemo-warmup when</strong> startup is dominated by class loading in a framework-heavy service, you can’t or won’t go native, and you’d rather not run a CRaC checkpoint pipeline. <strong>Pick another when</strong> you need sub-second starts at any cost (native), or your start is dominated by initialization work (database, caches), which no class archive removes.</div>
+
+<h2>Go to…</h2>
+<div class="cards">
+  <a class="card" href="benchmarks/gke-jdk25-leyden-aot/"><strong>GKE benchmark</strong><span>Four tiers on JDK 25 AOT: method, tables, limits.</span></a>
+  <a class="card" href="guides/spring-boot-distroless/"><strong>Spring Boot on distroless</strong><span>Layered JAR, no shell, annotations, preview.</span></a>
+  <a class="card" href="guides/aws-eks-ecr/"><strong>EKS and ECR</strong><span>IRSA roles, policies, verification checklist.</span></a>
+  <a class="card" href="reference/annotations-and-cli/"><strong>Annotations and CLI</strong><span>Every <code>warmup.mnemo.io/*</code> key and flag.</span></a>
+  <a class="card" href="security/"><strong>Security model</strong><span>RBAC scope, Lease, digest checks, fail-safe.</span></a>
+  <a class="card" href="coverage/"><strong>Coverage report</strong><span>JaCoCo aggregate for every module.</span></a>
+</div>
+
+<h2>Three annotations</h2>
+<pre><code>spec:
+  template:
+    metadata:
+      annotations:
+        warmup.mnemo.io/enabled: &quot;true&quot;
+        warmup.mnemo.io/store: &quot;oci://registry.example.com/team/app-warmup&quot;
+        warmup.mnemo.io/exit-mode: &quot;spring-refresh&quot;   # or http-probe, plus warmup.mnemo.io/probe-url</code></pre>
+<pre><code>helm upgrade --install my-app ./my-chart --namespace my-namespace \
+  --post-renderer ./scripts/mnemo-warmup-inject \
+  --post-renderer-args=--namespace=my-namespace</code></pre>
+<p class="note">Alpha: options, annotations and the manifest format may still change. Not verified: live EKS/ECR, Helm 4, remote-registry scale-out beyond the GKE study.</p>
+
+<h2 id="faq">FAQ</h2>
+<details><summary>Does Project Leyden AOT work with Spring Boot on Kubernetes?</summary><p>Yes, on JDK 25, where mnemo-warmup trains a Leyden AOT cache in a single step. The GKE benchmark ran Spring Boot sample applications and ThingsBoard CE with AOT archives on Debian OpenJDK 25.0.4.1. On JDK 21 to 24 it uses AppCDS instead. The annotation path was run end to end on JDK 21 only; the Helm-chart path covers both. The project is alpha.</p></details><details><summary>How does mnemo-warmup handle distroless images without a shell?</summary><p>Every container the injector generates runs a static launcher binary (mnemo-launcher), not a shell script, so gcr.io/distroless/java21-debian12 works. The launcher replaces itself with java, so the JVM stays PID 1 and receives SIGTERM directly. The image still needs Java 21 or newer.</p></details><details><summary>What happens if the OCI registry goes down?</summary><p>The pod still starts. fetch logs the reason and exits 0, and the application starts without an archive. In the end-to-end test with the registry stopped, pods became Ready about 14 to 15 seconds after deletion, which is how long fetch takes to give up. Missing pull Secrets and unsupported image volumes are deployment errors that this fallback does not cover.</p></details><details><summary>Do I need to change my application code or switch to GraalVM?</summary><p>No application code changes. You add three annotations (enabled, store, exit-mode) to the Deployment pod template. The container must launch with an explicit java -jar command and run identical JAR files in the trainer and in every pod; for Spring Boot that means extracting the JAR when you build the image.</p></details><details><summary>Does it work with Helm 4?</summary><p>Not verified. The post-renderer here is a script path, which Helm 3 accepts; Helm 4 expects a plugin and none is shipped yet. With Helm 4, render and inject in a pipeline: helm template | mnemo-warmup inject | kubectl apply.</p></details>
+
+</main>
+<footer class="site"><div class="wrap">
+  Apache-2.0 · alpha software · <a href="https://github.com/baokhang83/mnemo-warmup">GitHub</a> ·
+  <a href="llms.txt">llms.txt</a> · <a href="llms-full.txt">llms-full.txt</a> ·
+  <a href="sitemap.xml">sitemap</a> · <a href="coverage/">Coverage report</a>
+</div></footer>
+<script src="assets/site.js"></script>
+</body>
+</html>

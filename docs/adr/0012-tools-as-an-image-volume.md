@@ -2,7 +2,7 @@
 
 Status: accepted (v0.2.6), opt-in
 
-Update: the injector now permits a pull Secret or node cache with image-volume delivery by using a fetch init container. The original inline-only restriction below describes the earlier decision; see the [current configuration guide](../configuration.md#tools-delivery-init-containers-or-an-image-volume).
+Update: the injector and the Helm chart now permit a pull Secret (and, in the injector, a node cache) with image-volume delivery by using one isolated fetch init container. The original inline-only restriction below describes the earlier decision; see the [current configuration guide](../configuration.md#tools-delivery-init-containers-or-an-image-volume).
 
 ## Context
 
@@ -37,7 +37,7 @@ or `tools.delivery: image-volume` (the Helm chart). The default stays `init-cont
   The launcher still becomes the JVM (`exec`), so the JVM is PID 1 and gets SIGTERM directly.
 - **The application container therefore mounts the cache read-write** (it was read-only) and a scratch volume, and the fetch
   uses the application's own environment and security context. These are the things the init container copied from it.
-- **The registry pull Secret is refused in this mode.** The injector stops with a message and the chart fails to render. The Secret
+- **The registry pull Secret is refused in this mode.** (Superseded: both now keep an isolated fetch init container instead.) The injector stopped with a message and the chart failed to render. The Secret
   would have to be mounted into the application container, where the application's code can read it; the init container never
   gave it that. Anonymous registries and registries reached through the pod's workload identity work; a pod that needs a
   pull Secret keeps the init-container mode. (The push Secret is the trainer's, unchanged.)

@@ -16,7 +16,9 @@ var repositoryPattern = regexp.MustCompile(`^[a-z0-9]+([._/-][a-z0-9]+)*$`)
 // the blob in its exact repository. The operator explicitly allows each
 // registry host; credentials are never sent to a redirect or another host.
 type OCIRegistryVerifier struct {
-	allowed map[string]struct{}
+	// allowed maps each registry host the operator configured to that same configured string. Requests are only ever
+	// sent to the value read from here, never to the host string a caller supplied (that only selects the entry).
+	allowed map[string]string
 	client  *http.Client
 }
 
@@ -26,12 +28,12 @@ func NewOCIRegistryVerifier(registries []string, client *http.Client) (*OCIRegis
 	if client == nil || len(registries) == 0 {
 		return nil, errors.New("registry allowlist and HTTPS client are required")
 	}
-	v := &OCIRegistryVerifier{allowed: make(map[string]struct{}, len(registries))}
+	v := &OCIRegistryVerifier{allowed: make(map[string]string, len(registries))}
 	for _, host := range registries {
 		if !validRegistryHost(host) {
 			return nil, errors.New("invalid allowed registry host")
 		}
-		v.allowed[host] = struct{}{}
+		v.allowed[host] = host
 	}
 	c := *client
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -53,10 +55,11 @@ func validRegistryHost(host string) bool {
 // Verify accepts an ephemeral Basic or Bearer authorization header. Empty
 // authorization is permitted for public registries. Other schemes are rejected.
 func (v *OCIRegistryVerifier) Verify(ctx context.Context, scope RepositoryScope, digest, proof string) error {
-	if _, ok := v.allowed[scope.Registry]; !ok || !repositoryPattern.MatchString(scope.Repository) || !digestPattern.MatchString(digest) || !validRegistryAuthorization(proof) {
+	registry, ok := v.allowed[scope.Registry]
+	if !ok || !repositoryPattern.MatchString(scope.Repository) || !digestPattern.MatchString(digest) || !validRegistryAuthorization(proof) {
 		return ErrDenied
 	}
-	u := &url.URL{Scheme: "https", Host: scope.Registry, Path: "/v2/" + scope.Repository + "/blobs/" + digest}
+	u := &url.URL{Scheme: "https", Host: registry, Path: "/v2/" + scope.Repository + "/blobs/" + digest}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return ErrDenied
@@ -74,7 +77,7 @@ func (v *OCIRegistryVerifier) Verify(ctx context.Context, scope RepositoryScope,
 	if isRegistryRedirect(resp.StatusCode) {
 		location := resp.Header.Get("Location")
 		resp.Body.Close()
-		target, ok := sameRegistryRedirect(scope.Registry, location)
+		target, ok := sameRegistryRedirect(registry, location)
 		if !ok {
 			return ErrDenied
 		}

@@ -14,8 +14,15 @@ import (
 // to each exact repository. It follows only HTTPS redirects to the same
 // registry origin and never logs credentials.
 type OCIRegistrySource struct {
-	credentials map[RepositoryScope]string
+	// credentials maps each allowed scope to the operator's own copy of that scope and its credential path. Requests are only
+	// ever sent to the registry and repository stored in the entry, never to the strings a caller supplied (those only select it).
+	credentials map[RepositoryScope]registrySourceEntry
 	client      *http.Client
+}
+
+type registrySourceEntry struct {
+	scope RepositoryScope
+	path  string
 }
 
 // NewOCIRegistrySource takes a map of allowed repositories to credential file
@@ -26,12 +33,12 @@ func NewOCIRegistrySource(credentials map[RepositoryScope]string, client *http.C
 	if len(credentials) == 0 || client == nil {
 		return nil, errors.New("repository allowlist and HTTPS client are required")
 	}
-	s := &OCIRegistrySource{credentials: make(map[RepositoryScope]string, len(credentials))}
+	s := &OCIRegistrySource{credentials: make(map[RepositoryScope]registrySourceEntry, len(credentials))}
 	for scope, path := range credentials {
 		if !validRegistryHost(scope.Registry) || !repositoryPattern.MatchString(scope.Repository) {
 			return nil, errors.New("invalid allowed registry repository")
 		}
-		s.credentials[scope] = path
+		s.credentials[scope] = registrySourceEntry{scope: RepositoryScope{Registry: scope.Registry, Repository: scope.Repository}, path: path}
 	}
 	c := *client
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -40,10 +47,11 @@ func NewOCIRegistrySource(credentials map[RepositoryScope]string, client *http.C
 }
 
 func (s *OCIRegistrySource) Open(ctx context.Context, scope RepositoryScope, digest string) (io.ReadCloser, error) {
-	path, allowed := s.credentials[scope]
+	entry, allowed := s.credentials[scope]
 	if !allowed || !digestPattern.MatchString(digest) {
 		return nil, ErrDenied
 	}
+	path, scope := entry.path, entry.scope
 	if _, ok := ctx.Deadline(); !ok {
 		return nil, errors.New("registry download requires a deadline")
 	}

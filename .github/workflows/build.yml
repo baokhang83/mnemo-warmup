@@ -54,6 +54,9 @@ jobs:
           # Google Search Console ownership verification for the Pages site.
           sed -i 's|</head>|<meta name="google-site-verification" content="Q7SKsA-JukICYFV0a1XTQDHq_ZciLmj43Pjui4xJ_9Y"/></head>|' "$site/index.html"
           grep -q 'name="google-site-verification" content="Q7SKsA-JukICYFV0a1XTQDHq_ZciLmj43Pjui4xJ_9Y"' "$site/index.html"
+          # Bing Webmaster Tools ownership verification for the Pages site.
+          sed -i 's|</head>|<meta name="msvalidate.01" content="F8E60EFE3EC283577A2A0DADE4A5D82E"/></head>|' "$site/index.html"
+          grep -q 'name="msvalidate.01" content="F8E60EFE3EC283577A2A0DADE4A5D82E"' "$site/index.html"
 
       - name: Publish coverage report to GitHub Pages
         if: matrix.java == 21 && github.event_name == 'push' && github.ref == 'refs/heads/main'

@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>IsolatedArchivePublisher.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">IsolatedArchivePublisher.java</span></div><h1>IsolatedArchivePublisher.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+
+/**
+ * Publishes a file left by an isolated training step. The caller supplies a manifest describing the
+ * intended workload, not metadata supplied by the training step. Publication rechecks the store
+ * under the lease and computes the archive's size and digest from a private copy before uploading.
+ *
+ * &lt;p&gt;Signing establishes who published the bytes; it does not establish that an archive produced by
+ * an untrusted application or JDK is safe to execute.
+ */
+public final class IsolatedArchivePublisher {
+
+    private final long openTimeoutMillis;
+    private final long copyTimeoutMillis;
+
+<span class="fc" id="L22">    public IsolatedArchivePublisher() { this(5_000, 600_000); }</span>
+
+    /** Bounds the open (a named pipe blocks it) and the copy (a slow or endless producer). */
+<span class="fc" id="L25">    IsolatedArchivePublisher(long openTimeoutMillis, long copyTimeoutMillis) {</span>
+<span class="pc bpc" id="L26" title="2 of 4 branches missed.">        if (openTimeoutMillis &lt;= 0 || copyTimeoutMillis &lt;= 0) throw new IllegalArgumentException(&quot;timeouts must be positive&quot;);</span>
+<span class="fc" id="L27">        this.openTimeoutMillis = openTimeoutMillis;</span>
+<span class="fc" id="L28">        this.copyTimeoutMillis = copyTimeoutMillis;</span>
+<span class="fc" id="L29">    }</span>
+
+    /**
+     * Copies at most {@code max} bytes of {@code file} into {@code out}, without following a symlink. The open and the copy run on a
+     * daemon reader thread with time limits: a path swapped for a named pipe after the type check would block an open forever, and
+     * Java cannot open a file without blocking. A reader left blocked is abandoned; it can never write to {@code out} afterwards.
+     */
+    long copyBounded(Path file, java.io.OutputStream out, long max, String what) throws IOException {
+<span class="fc" id="L37">        var opened = new java.util.concurrent.CompletableFuture&lt;Boolean&gt;();</span>
+<span class="fc" id="L38">        var done = new java.util.concurrent.CompletableFuture&lt;Long&gt;();</span>
+<span class="fc" id="L39">        var buffer = new java.util.concurrent.SynchronousQueue&lt;byte[]&gt;();</span>
+<span class="fc" id="L40">        var abandoned = new java.util.concurrent.atomic.AtomicBoolean();</span>
+<span class="pc bpc" id="L41" title="1 of 2 branches missed.">        if (!RunPlanner.startReader(() -&gt; {</span>
+<span class="fc" id="L42">            try (var in = Files.newInputStream(file, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {</span>
+<span class="fc" id="L43">                opened.complete(true);</span>
+<span class="fc" id="L44">                long total = 0;</span>
+<span class="fc" id="L45">                byte[] chunk = new byte[64 * 1024];</span>
+<span class="fc bfc" id="L46" title="All 2 branches covered.">                for (int n; (n = in.read(chunk)) != -1; ) {</span>
+<span class="fc bfc" id="L47" title="All 2 branches covered.">                    if (n &gt; max - total) throw new IOException(what + &quot; exceeds the maximum size&quot;);</span>
+<span class="fc" id="L48">                    total += n;</span>
+                    // hand over a copy, so this thread never touches the caller's stream
+<span class="pc bpc" id="L50" title="1 of 2 branches missed.">                    while (!buffer.offer(java.util.Arrays.copyOf(chunk, n), 100, java.util.concurrent.TimeUnit.MILLISECONDS)) {</span>
+<span class="nc bnc" id="L51" title="All 2 branches missed.">                        if (abandoned.get()) return;</span>
+                    }
+                }
+<span class="fc" id="L54">                done.complete(total);</span>
+<span class="pc bnc" id="L55" title="All 2 branches missed.">            } catch (IOException | RuntimeException e) {</span>
+<span class="fc" id="L56">                opened.complete(false);</span>
+<span class="fc" id="L57">                done.completeExceptionally(e);</span>
+<span class="nc" id="L58">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L59">                Thread.currentThread().interrupt();</span>
+<span class="nc" id="L60">                done.completeExceptionally(e);</span>
+<span class="fc" id="L61">            }</span>
+<span class="fc" id="L62">        })) {</span>
+<span class="nc" id="L63">            throw new IOException(&quot;too many earlier reads of the handoff are still blocked&quot;);</span>
+        }
+        try {
+<span class="fc bfc" id="L66" title="All 2 branches covered.">            if (!opened.get(openTimeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS)) {</span>
+<span class="pc" id="L67">                try { done.get(); } catch (java.util.concurrent.ExecutionException e) {</span>
+<span class="fc" id="L68">                    throw new IOException(what + &quot; cannot be read: &quot; + e.getCause().getMessage(), e.getCause());</span>
+<span class="nc" id="L69">                }</span>
+            }
+<span class="fc" id="L71">            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(copyTimeoutMillis);</span>
+            while (true) {
+<span class="fc" id="L73">                byte[] chunk = buffer.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS);</span>
+<span class="fc bfc" id="L74" title="All 2 branches covered.">                if (chunk != null) { out.write(chunk); continue; }</span>
+<span class="pc bpc" id="L75" title="1 of 2 branches missed.">                if (done.isDone()) {</span>
+<span class="fc" id="L76">                    try { return done.get(); } catch (java.util.concurrent.ExecutionException e) {</span>
+<span class="fc" id="L77">                        throw new IOException(what + &quot; cannot be read: &quot; + e.getCause().getMessage(), e.getCause());</span>
+                    }
+                }
+<span class="nc bnc" id="L80" title="All 2 branches missed.">                if (System.nanoTime() &gt; deadline) throw new IOException(what + &quot; was not read within the time limit&quot;);</span>
+<span class="nc" id="L81">            }</span>
+<span class="fc" id="L82">        } catch (java.util.concurrent.TimeoutException e) {</span>
+<span class="fc" id="L83">            throw new IOException(what + &quot; did not open within the time limit (not a regular file?)&quot;, e);</span>
+<span class="nc" id="L84">        } catch (InterruptedException | java.util.concurrent.ExecutionException e) {</span>
+<span class="nc bnc" id="L85" title="All 2 branches missed.">            if (e instanceof InterruptedException) Thread.currentThread().interrupt();</span>
+<span class="nc" id="L86">            throw new IOException(what + &quot; cannot be read&quot;, e);</span>
+        } finally {
+<span class="fc" id="L88">            abandoned.set(true);</span>
+        }
+    }
+
+    /** Checks and publishes the training output, or reports why it was not published. */
+    public TrainingOrchestrator.Outcome publish(
+            ArchiveManifest live, ArchiveStore store, TrainingLock lock, Path archive, long maxArchiveBytes) {
+<span class="pc bpc" id="L95" title="1 of 2 branches missed.">        if (maxArchiveBytes &lt;= 0) {</span>
+<span class="nc" id="L96">            throw new IllegalArgumentException(&quot;maximum archive size must be positive&quot;);</span>
+        }
+<span class="fc" id="L98">        Path[] privateDirectory = new Path[1];</span>
+        try {
+<span class="fc" id="L100">            return new TrainingOrchestrator().ensure(live, store, lock, () -&gt; {</span>
+<span class="fc bfc" id="L101" title="All 2 branches covered.">                if (!Files.isRegularFile(archive, LinkOption.NOFOLLOW_LINKS)) {</span>
+<span class="fc" id="L102">                    throw new IOException(&quot;training output is missing or is not a regular file&quot;);</span>
+                }
+<span class="fc" id="L104">                Path manifestFile = archive.resolveSibling(ArchiveManifest.FILE_NAME);</span>
+<span class="pc bpc" id="L105" title="1 of 2 branches missed.">                if (!Files.isRegularFile(manifestFile, LinkOption.NOFOLLOW_LINKS)) {</span>
+<span class="nc" id="L106">                    throw new IOException(&quot;training manifest is missing or is not a regular file&quot;);</span>
+                }
+<span class="fc" id="L108">                var manifestCopy = new java.io.ByteArrayOutputStream();</span>
+<span class="fc" id="L109">                copyBounded(manifestFile, manifestCopy, 8L &lt;&lt; 20, &quot;training manifest&quot;);</span>
+<span class="fc" id="L110">                byte[] manifestBytes = manifestCopy.toByteArray();</span>
+                final ArchiveManifest trained;
+                try {
+<span class="fc" id="L113">                    trained = ArchiveManifest.fromJson(new String(manifestBytes, java.nio.charset.StandardCharsets.UTF_8));</span>
+<span class="fc" id="L114">                } catch (RuntimeException e) {</span>
+<span class="fc" id="L115">                    throw new IOException(&quot;training manifest is invalid&quot;, e);</span>
+<span class="fc" id="L116">                }</span>
+<span class="pc bpc" id="L117" title="2 of 4 branches missed.">                if (!trained.mismatches(live).isEmpty() || !trained.modificationTimeMismatches(live).isEmpty()</span>
+<span class="pc bpc" id="L118" title="2 of 4 branches missed.">                        || !trained.locationMismatches(live).isEmpty() || trained.archive() == null</span>
+<span class="pc bpc" id="L119" title="1 of 2 branches missed.">                        || !archive.getFileName().toString().equals(trained.archive().file())) {</span>
+<span class="nc" id="L120">                    throw new IOException(&quot;training manifest does not match the intended workload&quot;);</span>
+                }
+                // The publisher's temporary directory is not shared with the training pod. Copying
+                // before hashing and uploading prevents the producer from changing bytes between them.
+<span class="fc" id="L124">                privateDirectory[0] = Files.createTempDirectory(&quot;mnemo-publish-&quot;);</span>
+<span class="fc" id="L125">                Path copy = privateDirectory[0].resolve(&quot;app.&quot; + live.cacheType().extension());</span>
+                long total;
+<span class="fc" id="L127">                try (var out = Files.newOutputStream(copy, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {</span>
+<span class="fc" id="L128">                    total = copyBounded(archive, out, maxArchiveBytes, &quot;training output&quot;);</span>
+                }
+<span class="pc bpc" id="L130" title="1 of 2 branches missed.">                if (total == 0) {</span>
+<span class="nc" id="L131">                    throw new IOException(&quot;training output is empty&quot;);</span>
+                }
+<span class="fc" id="L133">                ArchiveManifest.ArchiveInfo copied = live.withArchive(copy).archive();</span>
+<span class="pc bpc" id="L134" title="1 of 4 branches missed.">                if (copied.sizeBytes() != trained.archive().sizeBytes() || !copied.sha256().equals(trained.archive().sha256())) {</span>
+<span class="fc" id="L135">                    throw new IOException(&quot;training archive does not match its manifest&quot;);</span>
+                }
+<span class="fc" id="L137">                return copy;</span>
+            });
+        } finally {
+<span class="fc bfc" id="L140" title="All 2 branches covered.">            if (privateDirectory[0] != null) {</span>
+<span class="fc" id="L141">                try (var paths = Files.walk(privateDirectory[0])) {</span>
+<span class="fc" id="L142">                    paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -&gt; {</span>
+<span class="pc" id="L143">                        try { Files.deleteIfExists(path); } catch (IOException ignored) { /* best effort */ }</span>
+<span class="fc" id="L144">                    });</span>
+<span class="pc" id="L145">                } catch (IOException ignored) { /* best effort */ }</span>
+            }
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.16.202610240946</span></div></body></html>

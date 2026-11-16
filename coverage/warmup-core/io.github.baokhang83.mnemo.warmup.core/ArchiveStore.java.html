@@ -45,7 +45,7 @@ public interface ArchiveStore {
      * @throws StoreException if the store cannot be asked
      */
     default Inspection inspect(String fingerprint) {
-<span class="nc bnc" id="L48" title="All 2 branches missed.">        return exists(fingerprint) ? Inspection.usable() : Inspection.absent();</span>
+<span class="fc bfc" id="L48" title="All 2 branches covered.">        return exists(fingerprint) ? Inspection.usable() : Inspection.absent();</span>
     }
 
     /** Stores the archive and its manifest under the manifest's own fingerprint. */

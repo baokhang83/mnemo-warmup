@@ -38,7 +38,7 @@ final class Json {
 <span class="fc" id="L38">            sb.append(&quot;null&quot;);</span>
 <span class="fc bfc" id="L39" title="All 2 branches covered.">        } else if (value instanceof String s) {</span>
 <span class="fc" id="L40">            quote(sb, s);</span>
-<span class="pc bpc" id="L41" title="1 of 6 branches missed.">        } else if (value instanceof Boolean || value instanceof Long || value instanceof Integer) {</span>
+<span class="fc bfc" id="L41" title="All 6 branches covered.">        } else if (value instanceof Boolean || value instanceof Long || value instanceof Integer) {</span>
 <span class="fc" id="L42">            sb.append(value);</span>
 <span class="fc bfc" id="L43" title="All 2 branches covered.">        } else if (value instanceof Double d) {</span>
 <span class="pc bpc" id="L44" title="1 of 4 branches missed.">            if (d.isNaN() || d.isInfinite()) {</span>
@@ -168,12 +168,12 @@ final class Json {
 <span class="fc" id="L168">                throw error(&quot;Unexpected end of input&quot;);</span>
             }
 <span class="fc" id="L170">            char c = s.charAt(pos);</span>
-<span class="pc bpc" id="L171" title="1 of 7 branches missed.">            return switch (c) {</span>
+<span class="fc bfc" id="L171" title="All 7 branches covered.">            return switch (c) {</span>
 <span class="fc" id="L172">                case '{' -&gt; object(depth);</span>
 <span class="fc" id="L173">                case '[' -&gt; array(depth);</span>
 <span class="fc" id="L174">                case '&quot;' -&gt; string();</span>
 <span class="fc" id="L175">                case 't' -&gt; literal(&quot;true&quot;, Boolean.TRUE);</span>
-<span class="nc" id="L176">                case 'f' -&gt; literal(&quot;false&quot;, Boolean.FALSE);</span>
+<span class="fc" id="L176">                case 'f' -&gt; literal(&quot;false&quot;, Boolean.FALSE);</span>
 <span class="fc" id="L177">                case 'n' -&gt; literal(&quot;null&quot;, null);</span>
                 default -&gt; {
 <span class="pc bpc" id="L179" title="1 of 6 branches missed.">                    if (c == '-' || (c &gt;= '0' &amp;&amp; c &lt;= '9')) {</span>

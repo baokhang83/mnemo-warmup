@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>IsolatedTrainingPodRunner.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">IsolatedTrainingPodRunner.java</span></div><h1>IsolatedTrainingPodRunner.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Objects;
+
+/**
+ * Creates one isolated training pod, waits for completion, and deletes only the pod it created.
+ * The trusted caller constructs the pod and grants its service account no publishing privileges.
+ * Cluster admission and cloud identity configuration remain part of the security boundary.
+ */
+public final class IsolatedTrainingPodRunner {
+    @FunctionalInterface
+    interface Api {
+        KubeApi.Response request(String method, String path, Map&lt;String, Object&gt; body);
+    }
+
+<span class="fc" id="L19">    public enum Status { SUCCEEDED, FAILED, TIMED_OUT, API_ERROR }</span>
+<span class="fc" id="L20">    public record Outcome(Status status, String detail, boolean cleanupRequestFailed) {}</span>
+
+    private final Api api;
+
+<span class="fc" id="L24">    IsolatedTrainingPodRunner(Api api) { this.api = Objects.requireNonNull(api); }</span>
+
+    /** Uses the coordinator pod's projected service-account credentials. */
+    public static IsolatedTrainingPodRunner inCluster() {
+<span class="nc" id="L28">        KubeApi api = KubeApi.inCluster(Duration.ofSeconds(5));</span>
+<span class="nc" id="L29">        return new IsolatedTrainingPodRunner(api::request);</span>
+    }
+
+    /**
+     * Reads the bound coordinator token's subject so a training pod cannot be assigned the same
+     * service account. The API server authenticates this token when the coordinator makes requests;
+     * this local parsing is only an identity comparison, not JWT signature verification.
+     */
+    public static String coordinatorServiceAccount(String namespace) {
+<span class="nc" id="L38">        try (var in = java.nio.file.Files.newInputStream(KubeApi.SERVICE_ACCOUNT.resolve(&quot;token&quot;))) {</span>
+<span class="nc" id="L39">            byte[] bytes = in.readNBytes(64 * 1024 + 1);</span>
+<span class="nc bnc" id="L40" title="All 2 branches missed.">            if (bytes.length &gt; 64 * 1024) throw new IllegalArgumentException(&quot;service-account token is too large&quot;);</span>
+<span class="nc" id="L41">            return serviceAccountFromToken(new String(bytes, java.nio.charset.StandardCharsets.UTF_8).trim(), namespace);</span>
+<span class="nc" id="L42">        } catch (java.io.IOException | IllegalArgumentException e) {</span>
+<span class="nc" id="L43">            throw new StoreException(&quot;Cannot determine coordinator service account from its projected token&quot;, e);</span>
+        }
+    }
+
+    static String serviceAccountFromToken(String token, String namespace) {
+<span class="pc bpc" id="L48" title="3 of 6 branches missed.">        if (namespace == null || !namespace.matches(&quot;[a-z0-9]([-a-z0-9]*[a-z0-9])?&quot;) || namespace.length() &gt; 63) {</span>
+<span class="nc" id="L49">            throw new IllegalArgumentException(&quot;invalid coordinator namespace&quot;);</span>
+        }
+<span class="fc" id="L51">        String[] parts = token.split(&quot;\\.&quot;, -1);</span>
+<span class="fc bfc" id="L52" title="All 2 branches covered.">        if (parts.length != 3) throw new IllegalArgumentException(&quot;invalid projected token&quot;);</span>
+<span class="fc" id="L53">        Object decoded = Json.parse(new String(java.util.Base64.getUrlDecoder().decode(parts[1]), java.nio.charset.StandardCharsets.UTF_8));</span>
+<span class="fc" id="L54">        String subject = string(map(decoded).get(&quot;sub&quot;));</span>
+<span class="fc" id="L55">        String prefix = &quot;system:serviceaccount:&quot; + namespace + &quot;:&quot;;</span>
+<span class="pc bpc" id="L56" title="1 of 4 branches missed.">        if (subject == null || !subject.startsWith(prefix)) throw new IllegalArgumentException(&quot;coordinator token namespace mismatch&quot;);</span>
+<span class="fc" id="L57">        String account = subject.substring(prefix.length());</span>
+<span class="pc bpc" id="L58" title="2 of 4 branches missed.">        if (!account.matches(&quot;[a-z0-9]([-a-z0-9]*[a-z0-9])?&quot;) || account.length() &gt; 63) {</span>
+<span class="nc" id="L59">            throw new IllegalArgumentException(&quot;invalid coordinator service account&quot;);</span>
+        }
+<span class="fc" id="L61">        return account;</span>
+    }
+
+    /**
+     * Runs an explicitly named pod in one namespace. A successful create must return a UID so that
+     * cleanup cannot delete a replacement pod with the same name. The caller owns volume cleanup.
+     */
+    public Outcome run(String namespace, Map&lt;String, Object&gt; pod, Duration timeout, Duration pollInterval) {
+<span class="fc" id="L69">        Objects.requireNonNull(timeout, &quot;timeout&quot;);</span>
+<span class="fc" id="L70">        Objects.requireNonNull(pollInterval, &quot;pollInterval&quot;);</span>
+<span class="pc bpc" id="L71" title="4 of 8 branches missed.">        if (timeout.isZero() || timeout.isNegative() || pollInterval.isZero() || pollInterval.isNegative()</span>
+<span class="pc bpc" id="L72" title="1 of 2 branches missed.">                || pollInterval.compareTo(Duration.ofSeconds(5)) &gt; 0) {</span>
+<span class="nc" id="L73">            throw new IllegalArgumentException(&quot;training timeout must be positive and poll interval must be between zero and five seconds&quot;);</span>
+        }
+<span class="fc" id="L75">        String name = validate(namespace, pod);</span>
+<span class="fc" id="L76">        String collection = &quot;/api/v1/namespaces/&quot; + namespace + &quot;/pods&quot;;</span>
+<span class="fc" id="L77">        String item = collection + &quot;/&quot; + name;</span>
+<span class="fc" id="L78">        String uid = null;</span>
+<span class="fc" id="L79">        boolean createAttempted = false;</span>
+<span class="fc" id="L80">        boolean podCreated = false;</span>
+        Outcome result;
+        try {
+<span class="fc" id="L83">            createAttempted = true;</span>
+<span class="fc" id="L84">            KubeApi.Response created = api.request(&quot;POST&quot;, collection, pod);</span>
+<span class="fc bfc" id="L85" title="All 2 branches covered.">            if (created.status() != 201) {</span>
+<span class="fc" id="L86">                return new Outcome(Status.API_ERROR, &quot;Kubernetes refused to create the training pod (HTTP &quot; + created.status() + &quot;)&quot;,</span>
+<span class="pc bpc" id="L87" title="1 of 2 branches missed.">                        created.status() &gt;= 500);</span>
+            }
+<span class="fc" id="L89">            podCreated = true;</span>
+<span class="fc" id="L90">            uid = string(map(created.json().get(&quot;metadata&quot;)).get(&quot;uid&quot;));</span>
+<span class="pc bpc" id="L91" title="2 of 4 branches missed.">            if (uid == null || uid.isBlank()) {</span>
+                // Do not delete by name without an identity: it could already refer to a replacement.
+<span class="nc" id="L93">                return new Outcome(Status.API_ERROR, &quot;Created training pod has no UID; manual cleanup may be needed&quot;, true);</span>
+            }
+<span class="fc" id="L95">            long started = System.nanoTime();</span>
+<span class="fc" id="L96">            long timeoutNanos = timeout.toNanos();</span>
+<span class="fc" id="L97">            result = new Outcome(Status.TIMED_OUT, &quot;Training pod did not complete in time&quot;, false);</span>
+<span class="fc bfc" id="L98" title="All 2 branches covered.">            while (System.nanoTime() - started &lt; timeoutNanos) {</span>
+<span class="fc" id="L99">                KubeApi.Response current = api.request(&quot;GET&quot;, item, null);</span>
+<span class="pc bpc" id="L100" title="1 of 2 branches missed.">                if (current.status() != 200) {</span>
+<span class="nc" id="L101">                    result = new Outcome(Status.API_ERROR, &quot;Cannot read the training pod (HTTP &quot; + current.status() + &quot;)&quot;, false);</span>
+<span class="nc" id="L102">                    break;</span>
+                }
+<span class="fc" id="L104">                Map&lt;String, Object&gt; value = current.json();</span>
+<span class="fc bfc" id="L105" title="All 2 branches covered.">                if (!uid.equals(string(map(value.get(&quot;metadata&quot;)).get(&quot;uid&quot;)))) {</span>
+<span class="fc" id="L106">                    result = new Outcome(Status.API_ERROR, &quot;Training pod identity changed&quot;, false);</span>
+<span class="fc" id="L107">                    break;</span>
+                }
+<span class="fc" id="L109">                String phase = string(map(value.get(&quot;status&quot;)).get(&quot;phase&quot;));</span>
+<span class="fc bfc" id="L110" title="All 2 branches covered.">                if (&quot;Succeeded&quot;.equals(phase)) {</span>
+<span class="fc" id="L111">                    result = new Outcome(Status.SUCCEEDED, &quot;Training pod completed&quot;, false);</span>
+<span class="fc" id="L112">                    break;</span>
+                }
+<span class="fc bfc" id="L114" title="All 2 branches covered.">                if (&quot;Failed&quot;.equals(phase)) {</span>
+<span class="fc" id="L115">                    result = new Outcome(Status.FAILED, &quot;Training pod failed&quot;, false);</span>
+<span class="fc" id="L116">                    break;</span>
+                }
+<span class="fc" id="L118">                long remaining = timeoutNanos - (System.nanoTime() - started);</span>
+<span class="pc bpc" id="L119" title="1 of 2 branches missed.">                if (remaining &lt;= 0) break;</span>
+                try {
+<span class="fc" id="L121">                    java.util.concurrent.TimeUnit.NANOSECONDS.sleep(Math.min(remaining, pollInterval.toNanos()));</span>
+<span class="nc" id="L122">                } catch (InterruptedException e) {</span>
+<span class="nc" id="L123">                    Thread.currentThread().interrupt();</span>
+<span class="nc" id="L124">                    result = new Outcome(Status.FAILED, &quot;Interrupted while waiting for training&quot;, false);</span>
+<span class="nc" id="L125">                    break;</span>
+<span class="fc" id="L126">                }</span>
+<span class="fc" id="L127">            }</span>
+<span class="fc" id="L128">        } catch (RuntimeException e) {</span>
+<span class="pc bpc" id="L129" title="2 of 6 branches missed.">            result = new Outcome(Status.API_ERROR, &quot;Training pod API request failed&quot;, (podCreated || createAttempted) &amp;&amp; uid == null);</span>
+<span class="fc" id="L130">        }</span>
+<span class="fc bfc" id="L131" title="All 2 branches covered.">        if (uid == null) return result;</span>
+        boolean cleanupRequestFailed;
+        try {
+<span class="fc" id="L134">            Map&lt;String, Object&gt; options = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L135">            options.put(&quot;apiVersion&quot;, &quot;v1&quot;);</span>
+<span class="fc" id="L136">            options.put(&quot;kind&quot;, &quot;DeleteOptions&quot;);</span>
+<span class="fc" id="L137">            options.put(&quot;preconditions&quot;, Map.of(&quot;uid&quot;, uid));</span>
+<span class="fc" id="L138">            KubeApi.Response deleted = api.request(&quot;DELETE&quot;, item, options);</span>
+<span class="pc bpc" id="L139" title="1 of 6 branches missed.">            cleanupRequestFailed = deleted.status() != 200 &amp;&amp; deleted.status() != 202 &amp;&amp; deleted.status() != 404;</span>
+<span class="nc" id="L140">        } catch (RuntimeException e) {</span>
+<span class="nc" id="L141">            cleanupRequestFailed = true;</span>
+<span class="fc" id="L142">        }</span>
+<span class="fc" id="L143">        return new Outcome(result.status(), result.detail(), cleanupRequestFailed);</span>
+    }
+
+    private static String validate(String namespace, Map&lt;String, Object&gt; pod) {
+<span class="pc bpc" id="L147" title="3 of 6 branches missed.">        if (namespace == null || !namespace.matches(&quot;[a-z0-9]([-a-z0-9]*[a-z0-9])?&quot;) || namespace.length() &gt; 63) {</span>
+<span class="nc" id="L148">            throw new IllegalArgumentException(&quot;invalid training namespace&quot;);</span>
+        }
+<span class="fc" id="L150">        Map&lt;String, Object&gt; metadata = map(pod.get(&quot;metadata&quot;));</span>
+<span class="fc" id="L151">        Map&lt;String, Object&gt; spec = map(pod.get(&quot;spec&quot;));</span>
+<span class="fc" id="L152">        String name = string(metadata.get(&quot;name&quot;));</span>
+<span class="fc" id="L153">        String serviceAccount = string(spec.get(&quot;serviceAccountName&quot;));</span>
+<span class="pc bpc" id="L154" title="3 of 6 branches missed.">        if (name == null || !name.matches(&quot;[a-z0-9]([-a-z0-9]*[a-z0-9])?&quot;) || name.length() &gt; 63) {</span>
+<span class="nc" id="L155">            throw new IllegalArgumentException(&quot;training pod needs a valid explicit name&quot;);</span>
+        }
+<span class="fc" id="L157">        Object podNamespace = metadata.get(&quot;namespace&quot;);</span>
+<span class="pc bpc" id="L158" title="3 of 4 branches missed.">        if (podNamespace != null &amp;&amp; !namespace.equals(podNamespace)) throw new IllegalArgumentException(&quot;training namespace mismatch&quot;);</span>
+<span class="pc bpc" id="L159" title="2 of 4 branches missed.">        if (!&quot;v1&quot;.equals(pod.get(&quot;apiVersion&quot;)) || !&quot;Pod&quot;.equals(pod.get(&quot;kind&quot;))) throw new IllegalArgumentException(&quot;expected a Pod&quot;);</span>
+<span class="pc bpc" id="L160" title="2 of 6 branches missed.">        if (serviceAccount == null || serviceAccount.isBlank() || serviceAccount.equals(&quot;default&quot;)) {</span>
+<span class="fc" id="L161">            throw new IllegalArgumentException(&quot;training pod needs a dedicated service account&quot;);</span>
+        }
+<span class="fc bfc" id="L163" title="All 2 branches covered.">        if (!Boolean.FALSE.equals(spec.get(&quot;automountServiceAccountToken&quot;))) {</span>
+<span class="fc" id="L164">            throw new IllegalArgumentException(&quot;training pod must disable automatic service-account token mounting&quot;);</span>
+        }
+<span class="fc bfc" id="L166" title="All 2 branches covered.">        for (String key : new String[] {&quot;hostNetwork&quot;, &quot;hostPID&quot;, &quot;hostIPC&quot;, &quot;shareProcessNamespace&quot;}) {</span>
+<span class="fc bfc" id="L167" title="All 2 branches covered.">            if (Boolean.TRUE.equals(spec.get(key))) throw new IllegalArgumentException(&quot;training pod cannot enable &quot; + key);</span>
+        }
+<span class="fc" id="L169">        return name;</span>
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    private static Map&lt;String, Object&gt; map(Object value) {
+<span class="pc bpc" id="L174" title="1 of 2 branches missed.">        return value instanceof Map&lt;?, ?&gt; ? (Map&lt;String, Object&gt;) value : Map.of();</span>
+    }
+<span class="pc bpc" id="L176" title="1 of 2 branches missed.">    private static String string(Object value) { return value instanceof String s ? s : null; }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.16.202610240946</span></div></body></html>

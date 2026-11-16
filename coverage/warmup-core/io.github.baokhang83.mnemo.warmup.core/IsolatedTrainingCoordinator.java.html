@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>IsolatedTrainingCoordinator.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">IsolatedTrainingCoordinator.java</span></div><h1>IsolatedTrainingCoordinator.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.Objects;
+
+/** Coordinates one isolated training run. The training callback must run in a different pod. */
+<span class="fc" id="L8">public final class IsolatedTrainingCoordinator {</span>
+    @FunctionalInterface public interface TrainingStep {
+        IsolatedTrainingPodRunner.Outcome run(String handoffName);
+    }
+    @FunctionalInterface public interface PublisherStep {
+        TrainingOrchestrator.Outcome publish(Path handoffDirectory);
+    }
+<span class="fc" id="L15">    public enum Status { ALREADY_STORED, PUBLISHED, SKIPPED, FAILED }</span>
+    /** A retained handoff needs operator cleanup after the training pod is confirmed stopped. */
+<span class="fc" id="L17">    public record Outcome(Status status, String detail, String retainedHandoff) {}</span>
+
+    /**
+     * The check is an optimization; the publisher must recheck under its own lease. On any ambiguous
+     * training result the handoff is retained, because the training pod may still be writing it.
+     */
+    public Outcome run(ArchiveManifest live, ArchiveStore store, Path claimRoot,
+                       TrainingStep training, PublisherStep publisher) {
+<span class="fc" id="L25">        Objects.requireNonNull(live);</span>
+<span class="fc" id="L26">        Objects.requireNonNull(store);</span>
+<span class="fc" id="L27">        Objects.requireNonNull(training);</span>
+<span class="fc" id="L28">        Objects.requireNonNull(publisher);</span>
+        try {
+<span class="fc bfc" id="L30" title="All 2 branches covered.">            if (store.inspect(live.fingerprint()).presence() == ArchiveStore.Presence.USABLE) {</span>
+<span class="fc" id="L31">                return new Outcome(Status.ALREADY_STORED, &quot;A usable archive already exists&quot;, null);</span>
+            }
+<span class="nc" id="L33">        } catch (RuntimeException e) {</span>
+<span class="nc" id="L34">            return new Outcome(Status.FAILED, &quot;Cannot check the archive store&quot;, null);</span>
+<span class="fc" id="L35">        }</span>
+
+        final IsolatedHandoff handoff;
+        try {
+<span class="fc" id="L39">            handoff = IsolatedHandoff.create(claimRoot);</span>
+<span class="nc" id="L40">        } catch (IOException | RuntimeException e) {</span>
+<span class="nc" id="L41">            return new Outcome(Status.FAILED, &quot;Cannot create a handoff directory&quot;, null);</span>
+<span class="fc" id="L42">        }</span>
+        final IsolatedTrainingPodRunner.Outcome trained;
+        try {
+<span class="fc" id="L45">            trained = training.run(handoff.name());</span>
+<span class="nc" id="L46">        } catch (RuntimeException e) {</span>
+            // A request can fail after the API server created the pod. Do not remove its volume.
+<span class="nc" id="L48">            return new Outcome(Status.FAILED, &quot;Training state is unknown; verify the pod stopped before cleanup&quot;, handoff.name());</span>
+<span class="fc" id="L49">        }</span>
+<span class="pc bpc" id="L50" title="1 of 4 branches missed.">        if (trained == null || trained.status() != IsolatedTrainingPodRunner.Status.SUCCEEDED) {</span>
+<span class="fc" id="L51">            return new Outcome(Status.FAILED, &quot;Training did not complete successfully; verify the pod stopped before cleanup&quot;, handoff.name());</span>
+        }
+
+        Outcome result;
+        try {
+<span class="fc" id="L56">            TrainingOrchestrator.Outcome published = publisher.publish(handoff.directory());</span>
+<span class="pc bpc" id="L57" title="2 of 4 branches missed.">            if (published == null || published.status() == TrainingOrchestrator.Status.FAILED) {</span>
+<span class="nc" id="L58">                result = new Outcome(Status.FAILED, &quot;Archive publication failed&quot;, null);</span>
+<span class="pc bpc" id="L59" title="1 of 2 branches missed.">            } else if (published.status() == TrainingOrchestrator.Status.TRAINED) {</span>
+<span class="fc" id="L60">                result = new Outcome(Status.PUBLISHED, &quot;Archive published&quot;, null);</span>
+            } else {
+<span class="nc" id="L62">                result = new Outcome(Status.SKIPPED, &quot;Publication was skipped by the store or lease check&quot;, null);</span>
+            }
+<span class="fc" id="L64">        } catch (RuntimeException e) {</span>
+<span class="fc" id="L65">            result = new Outcome(Status.FAILED, &quot;Archive publication failed&quot;, null);</span>
+<span class="fc" id="L66">        }</span>
+        try {
+<span class="fc" id="L68">            handoff.close();</span>
+<span class="nc" id="L69">        } catch (IOException | RuntimeException e) {</span>
+<span class="nc" id="L70">            return new Outcome(result.status(), result.detail() + &quot;; handoff cleanup failed&quot;, handoff.name());</span>
+<span class="fc" id="L71">        }</span>
+<span class="pc bpc" id="L72" title="1 of 2 branches missed.">        if (trained.cleanupRequestFailed()) {</span>
+<span class="nc" id="L73">            return new Outcome(result.status(), result.detail() + &quot;; training pod cleanup request failed&quot;, null);</span>
+        }
+<span class="fc" id="L75">        return result;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.16.202610240946</span></div></body></html>

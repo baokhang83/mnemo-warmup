@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.regex.Pattern;
 import io.github.baokhang83.mnemo.warmup.core.AwsRegistryAuth;
+import io.github.baokhang83.mnemo.warmup.core.IsolatedTrainingPodFactory;
 import io.github.baokhang83.mnemo.warmup.core.ArchiveVerifier;
 import io.github.baokhang83.mnemo.warmup.core.OciImageConfigReader;
 import io.github.baokhang83.mnemo.warmup.core.SigningKey;
@@ -18,18 +19,18 @@ import io.github.baokhang83.mnemo.warmup.core.RegistryAuth;
 import io.github.baokhang83.mnemo.warmup.core.RegistryCredentials;
 
 /** Offline manifest transformation; all input is validated before output is returned. */
-<span class="nc" id="L21">final class OfflineInjector {</span>
-<span class="fc" id="L22">    private static final Pattern CACHE_OPTION = Pattern.compile(&quot;(?:^|\\s)-XX:(?:SharedArchiveFile|AOTCache|AOTCacheOutput)(?:=|\\s|$)&quot;);</span>
+<span class="nc" id="L22">final class OfflineInjector {</span>
+<span class="fc" id="L23">    private static final Pattern CACHE_OPTION = Pattern.compile(&quot;(?:^|\\s)-XX:(?:SharedArchiveFile|AOTCache|AOTCacheOutput)(?:=|\\s|$)&quot;);</span>
     private static final String MARKER = WorkloadDiscovery.PREFIX + &quot;injected-v1&quot;;
     private static final String OWNER = WorkloadDiscovery.PREFIX + &quot;owner&quot;;
     private static final String CHECKSUM = WorkloadDiscovery.PREFIX + &quot;generated-checksum&quot;;
     private static final String TOOLS_REPOSITORY = &quot;ghcr.io/baokhang83/mnemo-warmup-tools&quot;;
 
-<span class="fc" id="L28">    record Result(String yaml, List&lt;String&gt; notes) {}</span>
+<span class="fc" id="L29">    record Result(String yaml, List&lt;String&gt; notes) {}</span>
 
     /** Preview-only registry inspection. Errors are deliberately reduced to a generic note. */
     static List&lt;String&gt; previewImageWarnings(String input, java.util.Map&lt;String, String&gt; env) {
-<span class="pc" id="L32">        return previewImageWarnings(input, image -&gt; OciImageConfigReader.read(image, previewAuth(OciImageConfigReader.registryHost(image), env), Duration.ofSeconds(5)));</span>
+<span class="pc" id="L33">        return previewImageWarnings(input, image -&gt; OciImageConfigReader.read(image, previewAuth(OciImageConfigReader.registryHost(image), env), Duration.ofSeconds(5)));</span>
     }
 
     @FunctionalInterface
@@ -38,52 +39,52 @@ import io.github.baokhang83.mnemo.warmup.core.RegistryCredentials;
     }
 
     static List&lt;String&gt; previewImageWarnings(String input, ImageConfigInspector inspector) {
-<span class="fc" id="L41">        List&lt;String&gt; warnings = new ArrayList&lt;&gt;();</span>
-<span class="fc bfc" id="L42" title="All 2 branches covered.">        for (Map&lt;String, Object&gt; doc : ManifestStream.parse(input)) {</span>
-<span class="pc bpc" id="L43" title="1 of 4 branches missed.">            if (!&quot;Deployment&quot;.equals(doc.get(&quot;kind&quot;)) || !&quot;apps/v1&quot;.equals(doc.get(&quot;apiVersion&quot;))) continue;</span>
-<span class="fc" id="L44">            String workloadName = &quot;opted-in workload&quot;;</span>
+<span class="fc" id="L42">        List&lt;String&gt; warnings = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L43" title="All 2 branches covered.">        for (Map&lt;String, Object&gt; doc : ManifestStream.parse(input)) {</span>
+<span class="pc bpc" id="L44" title="1 of 4 branches missed.">            if (!&quot;Deployment&quot;.equals(doc.get(&quot;kind&quot;)) || !&quot;apps/v1&quot;.equals(doc.get(&quot;apiVersion&quot;))) continue;</span>
+<span class="fc" id="L45">            String workloadName = &quot;opted-in workload&quot;;</span>
             try {
-<span class="fc" id="L46">                Map&lt;String, Object&gt; template = map(map(doc.get(&quot;spec&quot;), &quot;spec&quot;).get(&quot;template&quot;), &quot;template&quot;);</span>
-<span class="pc bpc" id="L47" title="1 of 2 branches missed.">                if (!(template.get(&quot;metadata&quot;) instanceof Map&lt;?, ?&gt; metadata)</span>
-<span class="pc bpc" id="L48" title="1 of 2 branches missed.">                        || !(metadata.get(&quot;annotations&quot;) instanceof Map&lt;?, ?&gt; annotations)</span>
-<span class="fc bfc" id="L49" title="All 2 branches covered.">                        || !&quot;true&quot;.equals(annotations.get(WorkloadDiscovery.PREFIX + &quot;enabled&quot;))) continue;</span>
-<span class="fc" id="L50">                WorkloadDiscovery.Workload workload = WorkloadDiscovery.discover(doc);</span>
-<span class="pc bpc" id="L51" title="1 of 2 branches missed.">                if (workload == null) continue;</span>
-<span class="fc" id="L52">                workloadName = workload.namespace() + &quot;/&quot; + workload.name();</span>
-<span class="fc" id="L53">                List&lt;OciImageConfigReader.ImageConfig&gt; configs = inspector.inspect(workload.image());</span>
-<span class="fc" id="L54">                boolean marker = workload.command().stream().anyMatch(OfflineInjector::hasCacheOption);</span>
-<span class="fc bfc" id="L55" title="All 2 branches covered.">                for (OciImageConfigReader.ImageConfig config : configs) {</span>
-<span class="fc" id="L56">                    marker |= config.entrypoint().stream().anyMatch(OfflineInjector::hasCacheOption);</span>
-<span class="fc" id="L57">                    marker |= config.cmd().stream().anyMatch(OfflineInjector::hasCacheOption);</span>
-<span class="fc" id="L58">                    marker |= config.env().values().stream().anyMatch(OfflineInjector::hasCacheOption);</span>
-<span class="fc" id="L59">                    marker |= &quot;true&quot;.equalsIgnoreCase(config.env().get(&quot;BP_JVM_AOTCACHE_ENABLED&quot;));</span>
-<span class="pc" id="L60">                    marker |= config.labels().keySet().stream().anyMatch(key -&gt; key.toLowerCase(java.util.Locale.ROOT).contains(&quot;aotcache&quot;));</span>
-<span class="fc" id="L61">                }</span>
-<span class="pc bpc" id="L62" title="1 of 2 branches missed.">                if (marker) warnings.add(workload.namespace() + &quot;/&quot; + workload.name()</span>
+<span class="fc" id="L47">                Map&lt;String, Object&gt; template = map(map(doc.get(&quot;spec&quot;), &quot;spec&quot;).get(&quot;template&quot;), &quot;template&quot;);</span>
+<span class="pc bpc" id="L48" title="1 of 2 branches missed.">                if (!(template.get(&quot;metadata&quot;) instanceof Map&lt;?, ?&gt; metadata)</span>
+<span class="pc bpc" id="L49" title="1 of 2 branches missed.">                        || !(metadata.get(&quot;annotations&quot;) instanceof Map&lt;?, ?&gt; annotations)</span>
+<span class="fc bfc" id="L50" title="All 2 branches covered.">                        || !&quot;true&quot;.equals(annotations.get(WorkloadDiscovery.PREFIX + &quot;enabled&quot;))) continue;</span>
+<span class="fc" id="L51">                WorkloadDiscovery.Workload workload = WorkloadDiscovery.discover(doc);</span>
+<span class="pc bpc" id="L52" title="1 of 2 branches missed.">                if (workload == null) continue;</span>
+<span class="fc" id="L53">                workloadName = workload.namespace() + &quot;/&quot; + workload.name();</span>
+<span class="fc" id="L54">                List&lt;OciImageConfigReader.ImageConfig&gt; configs = inspector.inspect(workload.image());</span>
+<span class="fc" id="L55">                boolean marker = workload.command().stream().anyMatch(OfflineInjector::hasCacheOption);</span>
+<span class="fc bfc" id="L56" title="All 2 branches covered.">                for (OciImageConfigReader.ImageConfig config : configs) {</span>
+<span class="fc" id="L57">                    marker |= config.entrypoint().stream().anyMatch(OfflineInjector::hasCacheOption);</span>
+<span class="fc" id="L58">                    marker |= config.cmd().stream().anyMatch(OfflineInjector::hasCacheOption);</span>
+<span class="fc" id="L59">                    marker |= config.env().values().stream().anyMatch(OfflineInjector::hasCacheOption);</span>
+<span class="fc" id="L60">                    marker |= &quot;true&quot;.equalsIgnoreCase(config.env().get(&quot;BP_JVM_AOTCACHE_ENABLED&quot;));</span>
+<span class="pc" id="L61">                    marker |= config.labels().keySet().stream().anyMatch(key -&gt; key.toLowerCase(java.util.Locale.ROOT).contains(&quot;aotcache&quot;));</span>
+<span class="fc" id="L62">                }</span>
+<span class="pc bpc" id="L63" title="1 of 2 branches missed.">                if (marker) warnings.add(workload.namespace() + &quot;/&quot; + workload.name()</span>
                         + &quot;: image appears to carry a build-time JVM cache; check its JVM cache flags for compatibility with the cluster-trained archive&quot;);
-<span class="fc" id="L64">            } catch (RuntimeException e) {</span>
+<span class="fc" id="L65">            } catch (RuntimeException e) {</span>
                 // A preview must remain useful when an image is private, missing, malformed, or unreachable.
-<span class="fc" id="L66">                warnings.add(workloadName + &quot;: image metadata could not be inspected; cache presence is unknown&quot;);</span>
-<span class="fc" id="L67">            }</span>
-<span class="fc" id="L68">        }</span>
-<span class="fc" id="L69">        return List.copyOf(warnings);</span>
+<span class="fc" id="L67">                warnings.add(workloadName + &quot;: image metadata could not be inspected; cache presence is unknown&quot;);</span>
+<span class="fc" id="L68">            }</span>
+<span class="fc" id="L69">        }</span>
+<span class="fc" id="L70">        return List.copyOf(warnings);</span>
     }
 
-<span class="fc" id="L72">    private static boolean hasCacheOption(String value) { return CACHE_OPTION.matcher(value).find(); }</span>
+<span class="fc" id="L73">    private static boolean hasCacheOption(String value) { return CACHE_OPTION.matcher(value).find(); }</span>
 
     private static RegistryAuth previewAuth(String host, java.util.Map&lt;String, String&gt; env) {
-<span class="nc" id="L75">        String configured = env.get(&quot;DOCKER_CONFIG&quot;);</span>
-<span class="nc bnc" id="L76" title="All 4 branches missed.">        Path config = configured == null || configured.isBlank()</span>
-<span class="nc" id="L77">                ? Path.of(System.getProperty(&quot;user.home&quot;), &quot;.docker&quot;, &quot;config.json&quot;)</span>
-<span class="nc" id="L78">                : Path.of(configured).resolve(&quot;config.json&quot;);</span>
-<span class="nc" id="L79">        RegistryCredentials credentials = null;</span>
-<span class="nc bnc" id="L80" title="All 2 branches missed.">        if (Files.isRegularFile(config)) {</span>
-<span class="nc" id="L81">            credentials = RegistryCredentials.fromDockerConfig(config, host).orElse(null);</span>
-<span class="nc bnc" id="L82" title="All 4 branches missed.">            if (credentials == null &amp;&amp; host.equals(&quot;registry-1.docker.io&quot;))</span>
-<span class="nc" id="L83">                credentials = RegistryCredentials.fromDockerConfig(config, &quot;index.docker.io&quot;).orElse(null);</span>
+<span class="nc" id="L76">        String configured = env.get(&quot;DOCKER_CONFIG&quot;);</span>
+<span class="nc bnc" id="L77" title="All 4 branches missed.">        Path config = configured == null || configured.isBlank()</span>
+<span class="nc" id="L78">                ? Path.of(System.getProperty(&quot;user.home&quot;), &quot;.docker&quot;, &quot;config.json&quot;)</span>
+<span class="nc" id="L79">                : Path.of(configured).resolve(&quot;config.json&quot;);</span>
+<span class="nc" id="L80">        RegistryCredentials credentials = null;</span>
+<span class="nc bnc" id="L81" title="All 2 branches missed.">        if (Files.isRegularFile(config)) {</span>
+<span class="nc" id="L82">            credentials = RegistryCredentials.fromDockerConfig(config, host).orElse(null);</span>
+<span class="nc bnc" id="L83" title="All 4 branches missed.">            if (credentials == null &amp;&amp; host.equals(&quot;registry-1.docker.io&quot;))</span>
+<span class="nc" id="L84">                credentials = RegistryCredentials.fromDockerConfig(config, &quot;index.docker.io&quot;).orElse(null);</span>
         }
-<span class="nc bnc" id="L85" title="All 2 branches missed.">        return credentials != null ? RegistryAuth.fixed(credentials)</span>
-<span class="nc" id="L86">                : AwsRegistryAuth.fromEnvironment(host, env).orElse(RegistryAuth.anonymous());</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">        return credentials != null ? RegistryAuth.fixed(credentials)</span>
+<span class="nc" id="L87">                : AwsRegistryAuth.fromEnvironment(host, env).orElse(RegistryAuth.anonymous());</span>
     }
 
     /**
@@ -91,219 +92,330 @@ import io.github.baokhang83.mnemo.warmup.core.RegistryCredentials;
      * build has no release version; it must be told which image to use rather than silently pinning a tag that goes stale.
      */
     static String defaultToolsImage() {
-<span class="fc" id="L94">        String version = Main.class.getPackage().getImplementationVersion();</span>
-<span class="pc bpc" id="L95" title="5 of 6 branches missed.">        if (version == null || version.isBlank() || version.endsWith(&quot;-SNAPSHOT&quot;))</span>
-<span class="fc" id="L96">            throw new IllegalArgumentException(&quot;this build has no release version; pass --tools-image &lt;image&gt; (for example &quot; + TOOLS_REPOSITORY + &quot;:&lt;release&gt;)&quot;);</span>
-<span class="nc" id="L97">        return TOOLS_REPOSITORY + &quot;:&quot; + version;</span>
+<span class="fc" id="L95">        String version = Main.class.getPackage().getImplementationVersion();</span>
+<span class="pc bpc" id="L96" title="5 of 6 branches missed.">        if (version == null || version.isBlank() || version.endsWith(&quot;-SNAPSHOT&quot;))</span>
+<span class="fc" id="L97">            throw new IllegalArgumentException(&quot;this build has no release version; pass --tools-image &lt;image&gt; (for example &quot; + TOOLS_REPOSITORY + &quot;:&lt;release&gt;)&quot;);</span>
+<span class="nc" id="L98">        return TOOLS_REPOSITORY + &quot;:&quot; + version;</span>
     }
 
     static Result inject(String input, String namespace, String tools) {
-<span class="fc" id="L101">        return inject(input, namespace, () -&gt; tools);</span>
+<span class="fc" id="L102">        return inject(input, namespace, () -&gt; tools);</span>
     }
 
     /** The tools image is resolved only when a workload actually needs it, so a stream with nothing opted in passes through untouched. */
     static Result inject(String input, String namespace, java.util.function.Supplier&lt;String&gt; toolsImage) {
-<span class="fc" id="L106">        List&lt;Map&lt;String, Object&gt;&gt; docs = ManifestStream.parse(input);</span>
-<span class="fc" id="L107">        List&lt;Map&lt;String, Object&gt;&gt; output = new ArrayList&lt;&gt;();</span>
-<span class="fc" id="L108">        List&lt;Map&lt;String, Object&gt;&gt; generated = new ArrayList&lt;&gt;();</span>
-<span class="fc" id="L109">        List&lt;String&gt; notes = new ArrayList&lt;&gt;();</span>
-<span class="fc bfc" id="L110" title="All 2 branches covered.">        for (Map&lt;String, Object&gt; doc : docs) {</span>
-<span class="fc bfc" id="L111" title="All 2 branches covered.">            if (isGenerated(doc)) continue;</span>
-<span class="pc bpc" id="L112" title="1 of 4 branches missed.">            if (!&quot;Deployment&quot;.equals(doc.get(&quot;kind&quot;)) || !&quot;apps/v1&quot;.equals(doc.get(&quot;apiVersion&quot;))) {</span>
-<span class="fc" id="L113">                output.add(doc); continue;</span>
+<span class="fc" id="L107">        List&lt;Map&lt;String, Object&gt;&gt; docs = ManifestStream.parse(input);</span>
+<span class="fc" id="L108">        List&lt;Map&lt;String, Object&gt;&gt; output = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L109">        List&lt;Map&lt;String, Object&gt;&gt; generated = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L110">        List&lt;String&gt; notes = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L111" title="All 2 branches covered.">        for (Map&lt;String, Object&gt; doc : docs) {</span>
+<span class="fc bfc" id="L112" title="All 2 branches covered.">            if (isGenerated(doc)) continue;</span>
+<span class="pc bpc" id="L113" title="1 of 4 branches missed.">            if (!&quot;Deployment&quot;.equals(doc.get(&quot;kind&quot;)) || !&quot;apps/v1&quot;.equals(doc.get(&quot;apiVersion&quot;))) {</span>
+<span class="fc" id="L114">                output.add(doc); continue;</span>
             }
-<span class="fc" id="L115">            Map&lt;String, Object&gt; template = map(map(doc.get(&quot;spec&quot;), &quot;spec&quot;).get(&quot;template&quot;), &quot;template&quot;);</span>
-<span class="fc bfc" id="L116" title="All 2 branches covered.">            if (template.get(&quot;metadata&quot;) == null) { output.add(doc); continue; }</span>
-<span class="pc bpc" id="L117" title="1 of 2 branches missed.">            if (map(template.get(&quot;metadata&quot;), &quot;metadata&quot;).get(&quot;annotations&quot;) == null) { output.add(doc); continue; }</span>
-<span class="fc" id="L118">            Map&lt;String, Object&gt; meta = ensureMap(template, &quot;metadata&quot;);</span>
-<span class="fc" id="L119">            Map&lt;String, Object&gt; ann = ensureMap(meta, &quot;annotations&quot;);</span>
-<span class="fc bfc" id="L120" title="All 2 branches covered.">            if (ann.containsKey(MARKER)) restore(template, ann);</span>
-<span class="fc bfc" id="L121" title="All 4 branches covered.">            if (&quot;true&quot;.equals(ann.get(WorkloadDiscovery.PREFIX + &quot;enabled&quot;)) &amp;&amp; namespace != null) {</span>
-<span class="fc" id="L122">                Map&lt;String, Object&gt; resourceMeta = map(doc.get(&quot;metadata&quot;), &quot;metadata&quot;);</span>
-<span class="pc bpc" id="L123" title="1 of 2 branches missed.">                if (!resourceMeta.containsKey(&quot;namespace&quot;)) resourceMeta.put(&quot;namespace&quot;, namespace);</span>
+<span class="fc" id="L116">            Map&lt;String, Object&gt; template = map(map(doc.get(&quot;spec&quot;), &quot;spec&quot;).get(&quot;template&quot;), &quot;template&quot;);</span>
+<span class="fc bfc" id="L117" title="All 2 branches covered.">            if (template.get(&quot;metadata&quot;) == null) { output.add(doc); continue; }</span>
+<span class="pc bpc" id="L118" title="1 of 2 branches missed.">            if (map(template.get(&quot;metadata&quot;), &quot;metadata&quot;).get(&quot;annotations&quot;) == null) { output.add(doc); continue; }</span>
+<span class="fc" id="L119">            Map&lt;String, Object&gt; meta = ensureMap(template, &quot;metadata&quot;);</span>
+<span class="fc" id="L120">            Map&lt;String, Object&gt; ann = ensureMap(meta, &quot;annotations&quot;);</span>
+<span class="fc bfc" id="L121" title="All 2 branches covered.">            if (ann.containsKey(MARKER)) restore(template, ann);</span>
+<span class="fc bfc" id="L122" title="All 4 branches covered.">            if (&quot;true&quot;.equals(ann.get(WorkloadDiscovery.PREFIX + &quot;enabled&quot;)) &amp;&amp; namespace != null) {</span>
+<span class="fc" id="L123">                Map&lt;String, Object&gt; resourceMeta = map(doc.get(&quot;metadata&quot;), &quot;metadata&quot;);</span>
+<span class="pc bpc" id="L124" title="1 of 2 branches missed.">                if (!resourceMeta.containsKey(&quot;namespace&quot;)) resourceMeta.put(&quot;namespace&quot;, namespace);</span>
             }
-<span class="fc" id="L125">            WorkloadDiscovery.Workload w = WorkloadDiscovery.discover(doc);</span>
-<span class="fc bfc" id="L126" title="All 2 branches covered.">            if (w == null) { output.add(doc); continue; }</span>
-<span class="fc" id="L127">            String tools = toolsImage.get();</span>
-<span class="pc bpc" id="L128" title="2 of 6 branches missed.">            if (tools == null || tools.isBlank() || tools.chars().anyMatch(Character::isWhitespace)) throw new IllegalArgumentException(&quot;invalid tools image&quot;);</span>
-<span class="fc" id="L129">            Map&lt;String, Object&gt; pod = map(template.get(&quot;spec&quot;), &quot;pod spec&quot;);</span>
-<span class="fc" id="L130">            Map&lt;String, Object&gt; app = selected(pod, w.container());</span>
-<span class="fc" id="L131">            List&lt;String&gt; managedVolumes = new ArrayList&lt;&gt;(List.of(&quot;mnemo-tools&quot;, &quot;mnemo-cache&quot;, &quot;mnemo-work&quot;));</span>
-<span class="fc bfc" id="L132" title="All 2 branches covered.">            if (w.pullSecret() != null) managedVolumes.add(&quot;mnemo-registry-pull&quot;);</span>
-<span class="fc bfc" id="L133" title="All 2 branches covered.">            if (w.nodeCacheUrl() != null) managedVolumes.addAll(List.of(&quot;mnemo-nodecache-identity&quot;, &quot;mnemo-nodecache-ca&quot;));</span>
-<span class="fc" id="L134">            requireFree(pod, &quot;volumes&quot;, managedVolumes);</span>
-<span class="fc" id="L135">            requireFree(pod, &quot;initContainers&quot;, List.of(&quot;mnemo-warmup-install&quot;, &quot;mnemo-warmup-fetch&quot;));</span>
-<span class="fc" id="L136">            boolean imageVolume = w.imageVolume();</span>
-<span class="fc bfc" id="L137" title="All 6 branches covered.">            boolean inline = imageVolume &amp;&amp; w.pullSecret() == null &amp;&amp; w.nodeCacheUrl() == null;</span>
-<span class="fc" id="L138">            String launcher = launcherPath(imageVolume);</span>
-<span class="fc" id="L139">            List&lt;String&gt; appMounts = appMountNames(inline);</span>
-<span class="fc" id="L140">            requireFree(app, &quot;volumeMounts&quot;, appMounts);</span>
-<span class="fc" id="L141">            List&lt;String&gt; appEnv = appEnvNames(w);</span>
-<span class="fc" id="L142">            requireFree(app, &quot;env&quot;, appEnv);</span>
-<span class="fc" id="L143">            requireFree(app, &quot;env&quot;, List.of(&quot;POD_NAMESPACE&quot;));</span>
-<span class="fc bfc" id="L144" title="All 2 branches covered.">            if (w.signingKeySecret() != null) {</span>
-<span class="fc" id="L145">                requireFree(pod, &quot;volumes&quot;, List.of(SIGNING_VOLUME));</span>
-<span class="fc" id="L146">                requireReadableSigningKey(pod, app);</span>
+<span class="fc" id="L126">            WorkloadDiscovery.Workload w = WorkloadDiscovery.discover(doc);</span>
+<span class="fc bfc" id="L127" title="All 2 branches covered.">            if (w == null) { output.add(doc); continue; }</span>
+<span class="fc" id="L128">            String tools = toolsImage.get();</span>
+<span class="pc bpc" id="L129" title="2 of 6 branches missed.">            if (tools == null || tools.isBlank() || tools.chars().anyMatch(Character::isWhitespace)) throw new IllegalArgumentException(&quot;invalid tools image&quot;);</span>
+<span class="fc" id="L130">            Map&lt;String, Object&gt; pod = map(template.get(&quot;spec&quot;), &quot;pod spec&quot;);</span>
+<span class="fc" id="L131">            Map&lt;String, Object&gt; app = selected(pod, w.container());</span>
+<span class="fc" id="L132">            IsolatedConfig isolation = isolatedConfig(ann, w, tools);</span>
+<span class="fc bfc" id="L133" title="All 2 branches covered.">            Map&lt;String, Object&gt; originalPod = isolation == null ? null : ManifestStream.parse(ManifestStream.render(List.of(pod))).get(0);</span>
+<span class="fc" id="L134">            List&lt;String&gt; managedVolumes = new ArrayList&lt;&gt;(List.of(&quot;mnemo-tools&quot;, &quot;mnemo-cache&quot;, &quot;mnemo-work&quot;));</span>
+<span class="fc bfc" id="L135" title="All 2 branches covered.">            if (w.pullSecret() != null) managedVolumes.add(&quot;mnemo-registry-pull&quot;);</span>
+<span class="fc bfc" id="L136" title="All 2 branches covered.">            if (w.nodeCacheUrl() != null) managedVolumes.addAll(List.of(&quot;mnemo-nodecache-identity&quot;, &quot;mnemo-nodecache-ca&quot;));</span>
+<span class="fc" id="L137">            requireFree(pod, &quot;volumes&quot;, managedVolumes);</span>
+<span class="fc" id="L138">            requireFree(pod, &quot;initContainers&quot;, List.of(&quot;mnemo-warmup-install&quot;, &quot;mnemo-warmup-fetch&quot;));</span>
+<span class="fc" id="L139">            boolean imageVolume = w.imageVolume();</span>
+<span class="fc bfc" id="L140" title="All 6 branches covered.">            boolean inline = imageVolume &amp;&amp; w.pullSecret() == null &amp;&amp; w.nodeCacheUrl() == null;</span>
+<span class="fc" id="L141">            String launcher = launcherPath(imageVolume);</span>
+<span class="fc" id="L142">            List&lt;String&gt; appMounts = appMountNames(inline);</span>
+<span class="fc" id="L143">            requireFree(app, &quot;volumeMounts&quot;, appMounts);</span>
+<span class="fc" id="L144">            List&lt;String&gt; appEnv = appEnvNames(w);</span>
+<span class="fc" id="L145">            requireFree(app, &quot;env&quot;, appEnv);</span>
+<span class="fc" id="L146">            requireFree(app, &quot;env&quot;, List.of(&quot;POD_NAMESPACE&quot;));</span>
+<span class="fc bfc" id="L147" title="All 2 branches covered.">            if (w.signingKeySecret() != null) {</span>
+<span class="fc" id="L148">                requireFree(pod, &quot;volumes&quot;, List.of(SIGNING_VOLUME));</span>
+<span class="fc bfc" id="L149" title="All 2 branches covered.">                if (isolation == null) requireReadableSigningKey(pod, app);</span>
             }
-<span class="fc" id="L148">            requireFreePaths(app, List.of(&quot;/mnemo-tools&quot;, &quot;/mnemo-cache&quot;, &quot;/tmp/mnemo-warmup&quot;, &quot;/var/run/mnemo-warmup/registry&quot;));</span>
-<span class="fc bfc" id="L149" title="All 2 branches covered.">            if (w.nodeCacheUrl() != null) requireFreePaths(app, List.of(&quot;/var/run/mnemo-warmup/nodecache/identity&quot;, &quot;/var/run/mnemo-warmup/nodecache/ca&quot;));</span>
-<span class="fc" id="L150">            String copies = describeCopies(pod, app, w);</span>
-<span class="fc" id="L151">            Map&lt;String, Object&gt; saved = new LinkedHashMap&lt;&gt;();</span>
-<span class="fc" id="L152">            saved.put(&quot;container&quot;, w.container());</span>
-<span class="fc" id="L153">            saved.put(&quot;commandPresent&quot;, app.containsKey(&quot;command&quot;)); saved.put(&quot;command&quot;, app.get(&quot;command&quot;));</span>
-<span class="fc" id="L154">            saved.put(&quot;argsPresent&quot;, app.containsKey(&quot;args&quot;)); saved.put(&quot;args&quot;, app.get(&quot;args&quot;));</span>
-<span class="fc" id="L155">            List&lt;Object&gt; commonArgs = commonArgs(w);</span>
+<span class="fc" id="L151">            requireFreePaths(app, List.of(&quot;/mnemo-tools&quot;, &quot;/mnemo-cache&quot;, &quot;/tmp/mnemo-warmup&quot;, &quot;/var/run/mnemo-warmup/registry&quot;));</span>
+<span class="fc bfc" id="L152" title="All 2 branches covered.">            if (w.nodeCacheUrl() != null) requireFreePaths(app, List.of(&quot;/var/run/mnemo-warmup/nodecache/identity&quot;, &quot;/var/run/mnemo-warmup/nodecache/ca&quot;));</span>
+<span class="fc" id="L153">            String copies = describeCopies(pod, app, w);</span>
+<span class="fc" id="L154">            Map&lt;String, Object&gt; saved = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L155">            saved.put(&quot;container&quot;, w.container());</span>
+<span class="fc" id="L156">            saved.put(&quot;commandPresent&quot;, app.containsKey(&quot;command&quot;)); saved.put(&quot;command&quot;, app.get(&quot;command&quot;));</span>
+<span class="fc" id="L157">            saved.put(&quot;argsPresent&quot;, app.containsKey(&quot;args&quot;)); saved.put(&quot;args&quot;, app.get(&quot;args&quot;));</span>
+<span class="fc" id="L158">            List&lt;Object&gt; commonArgs = commonArgs(w);</span>
             // Without a pull secret, image-volume mode fetches in the application entrypoint before the &quot;--&quot;.
-<span class="fc" id="L157">            List&lt;Object&gt; inlineFetch = new ArrayList&lt;&gt;();</span>
-<span class="fc bfc" id="L158" title="All 2 branches covered.">            if (inline) { inlineFetch.addAll(List.of(&quot;--out&quot;, &quot;/mnemo-cache&quot;)); inlineFetch.addAll(commonArgs); }</span>
-<span class="fc" id="L159">            saved.put(&quot;delivery&quot;, w.toolsDelivery());</span>
-<span class="fc" id="L160">            saved.put(&quot;launcher&quot;, launcher);</span>
-<span class="fc" id="L161">            saved.put(&quot;injectedArgs&quot;, launcherExecArgs(w.command(), inlineFetch));</span>
-<span class="fc" id="L162">            saved.put(&quot;volumesPresent&quot;, pod.containsKey(&quot;volumes&quot;));</span>
-<span class="fc" id="L163">            saved.put(&quot;initContainersPresent&quot;, pod.containsKey(&quot;initContainers&quot;));</span>
-<span class="fc" id="L164">            saved.put(&quot;volumeMountsPresent&quot;, app.containsKey(&quot;volumeMounts&quot;));</span>
-<span class="fc" id="L165">            saved.put(&quot;envPresent&quot;, app.containsKey(&quot;env&quot;));</span>
-<span class="fc" id="L166">            append(pod, &quot;volumes&quot;, toolsVolume(imageVolume, tools), obj(&quot;name&quot;, &quot;mnemo-cache&quot;, &quot;emptyDir&quot;, obj()), obj(&quot;name&quot;, &quot;mnemo-work&quot;, &quot;emptyDir&quot;, obj()));</span>
-<span class="fc bfc" id="L167" title="All 2 branches covered.">            if (w.pullSecret() != null) append(pod, &quot;volumes&quot;, secretVolume(&quot;mnemo-registry-pull&quot;, w.pullSecret()));</span>
-<span class="fc bfc" id="L168" title="All 2 branches covered.">            if (w.nodeCacheUrl() != null) {</span>
-<span class="fc" id="L169">                append(pod, &quot;volumes&quot;, obj(&quot;name&quot;, &quot;mnemo-nodecache-identity&quot;, &quot;projected&quot;, obj(&quot;sources&quot;, List.of(</span>
-<span class="fc" id="L170">                    obj(&quot;serviceAccountToken&quot;, obj(&quot;audience&quot;, w.nodeCacheAudience(), &quot;expirationSeconds&quot;, 600, &quot;path&quot;, &quot;token&quot;))))),</span>
-<span class="fc" id="L171">                    obj(&quot;name&quot;, &quot;mnemo-nodecache-ca&quot;, &quot;configMap&quot;, obj(&quot;name&quot;, w.nodeCacheCAConfigMap(), &quot;optional&quot;, true,</span>
-<span class="fc" id="L172">                        &quot;items&quot;, List.of(obj(&quot;key&quot;, &quot;ca.crt&quot;, &quot;path&quot;, &quot;ca.crt&quot;)))));</span>
+<span class="fc" id="L160">            List&lt;Object&gt; inlineFetch = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L161" title="All 2 branches covered.">            if (inline) { inlineFetch.addAll(List.of(&quot;--out&quot;, &quot;/mnemo-cache&quot;)); inlineFetch.addAll(commonArgs); }</span>
+<span class="fc" id="L162">            saved.put(&quot;delivery&quot;, w.toolsDelivery());</span>
+<span class="fc" id="L163">            saved.put(&quot;launcher&quot;, launcher);</span>
+<span class="fc" id="L164">            saved.put(&quot;injectedArgs&quot;, launcherExecArgs(w.command(), inlineFetch));</span>
+<span class="fc" id="L165">            saved.put(&quot;volumesPresent&quot;, pod.containsKey(&quot;volumes&quot;));</span>
+<span class="fc" id="L166">            saved.put(&quot;initContainersPresent&quot;, pod.containsKey(&quot;initContainers&quot;));</span>
+<span class="fc" id="L167">            saved.put(&quot;volumeMountsPresent&quot;, app.containsKey(&quot;volumeMounts&quot;));</span>
+<span class="fc" id="L168">            saved.put(&quot;envPresent&quot;, app.containsKey(&quot;env&quot;));</span>
+<span class="fc" id="L169">            append(pod, &quot;volumes&quot;, toolsVolume(imageVolume, tools), obj(&quot;name&quot;, &quot;mnemo-cache&quot;, &quot;emptyDir&quot;, obj()), obj(&quot;name&quot;, &quot;mnemo-work&quot;, &quot;emptyDir&quot;, obj()));</span>
+<span class="fc bfc" id="L170" title="All 2 branches covered.">            if (w.pullSecret() != null) append(pod, &quot;volumes&quot;, secretVolume(&quot;mnemo-registry-pull&quot;, w.pullSecret()));</span>
+<span class="fc bfc" id="L171" title="All 2 branches covered.">            if (w.nodeCacheUrl() != null) {</span>
+<span class="fc" id="L172">                append(pod, &quot;volumes&quot;, obj(&quot;name&quot;, &quot;mnemo-nodecache-identity&quot;, &quot;projected&quot;, obj(&quot;sources&quot;, List.of(</span>
+<span class="fc" id="L173">                    obj(&quot;serviceAccountToken&quot;, obj(&quot;audience&quot;, w.nodeCacheAudience(), &quot;expirationSeconds&quot;, 600, &quot;path&quot;, &quot;token&quot;))))),</span>
+<span class="fc" id="L174">                    obj(&quot;name&quot;, &quot;mnemo-nodecache-ca&quot;, &quot;configMap&quot;, obj(&quot;name&quot;, w.nodeCacheCAConfigMap(), &quot;optional&quot;, true,</span>
+<span class="fc" id="L175">                        &quot;items&quot;, List.of(obj(&quot;key&quot;, &quot;ca.crt&quot;, &quot;path&quot;, &quot;ca.crt&quot;)))));</span>
             }
-<span class="fc bfc" id="L174" title="All 2 branches covered.">            if (!inline) {</span>
-<span class="fc" id="L175">                List&lt;Object&gt; fetchArgs = new ArrayList&lt;&gt;(List.of(&quot;fetch&quot;, &quot;--out&quot;, &quot;/mnemo-cache&quot;)); fetchArgs.addAll(commonArgs);</span>
-<span class="fc" id="L176">                Map&lt;String, Object&gt; fetch = obj(&quot;name&quot;, &quot;mnemo-warmup-fetch&quot;, &quot;image&quot;, w.image(), &quot;command&quot;, List.of(launcher), &quot;args&quot;, fetchArgs,</span>
-<span class="fc" id="L177">                    &quot;volumeMounts&quot;, new ArrayList&lt;&gt;(List.of(mount(&quot;mnemo-tools&quot;, &quot;/mnemo-tools&quot;, true), mount(&quot;mnemo-cache&quot;, &quot;/mnemo-cache&quot;, false), mount(&quot;mnemo-work&quot;, &quot;/tmp/mnemo-warmup&quot;, false))));</span>
-<span class="fc" id="L178">                copyMounts(app, fetch);</span>
-<span class="fc" id="L179">                copyIfPresent(app, fetch, &quot;env&quot;, &quot;envFrom&quot;, &quot;imagePullPolicy&quot;, &quot;securityContext&quot;);</span>
-<span class="fc bfc" id="L180" title="All 2 branches covered.">                if (w.signingPublicKeys() != null) append(fetch, &quot;env&quot;, publicKeysEnv(w));</span>
-<span class="fc bfc" id="L181" title="All 2 branches covered.">                if (w.pullSecret() != null) {</span>
-<span class="fc" id="L182">                    requireFree(fetch, &quot;env&quot;, List.of(&quot;MNEMO_WARMUP_REGISTRY_AUTH&quot;));</span>
-<span class="fc" id="L183">                    append(fetch, &quot;env&quot;, obj(&quot;name&quot;, &quot;MNEMO_WARMUP_REGISTRY_AUTH&quot;, &quot;value&quot;, &quot;/var/run/mnemo-warmup/registry/config.json&quot;));</span>
-<span class="fc" id="L184">                    append(fetch, &quot;volumeMounts&quot;, mount(&quot;mnemo-registry-pull&quot;, &quot;/var/run/mnemo-warmup/registry&quot;, true));</span>
+<span class="fc bfc" id="L177" title="All 2 branches covered.">            if (!inline) {</span>
+<span class="fc" id="L178">                List&lt;Object&gt; fetchArgs = new ArrayList&lt;&gt;(List.of(&quot;fetch&quot;, &quot;--out&quot;, &quot;/mnemo-cache&quot;)); fetchArgs.addAll(commonArgs);</span>
+<span class="fc" id="L179">                Map&lt;String, Object&gt; fetch = obj(&quot;name&quot;, &quot;mnemo-warmup-fetch&quot;, &quot;image&quot;, w.image(), &quot;command&quot;, List.of(launcher), &quot;args&quot;, fetchArgs,</span>
+<span class="fc" id="L180">                    &quot;volumeMounts&quot;, new ArrayList&lt;&gt;(List.of(mount(&quot;mnemo-tools&quot;, &quot;/mnemo-tools&quot;, true), mount(&quot;mnemo-cache&quot;, &quot;/mnemo-cache&quot;, false), mount(&quot;mnemo-work&quot;, &quot;/tmp/mnemo-warmup&quot;, false))));</span>
+<span class="fc" id="L181">                copyMounts(app, fetch);</span>
+<span class="fc" id="L182">                copyIfPresent(app, fetch, &quot;env&quot;, &quot;envFrom&quot;, &quot;imagePullPolicy&quot;, &quot;securityContext&quot;);</span>
+<span class="fc bfc" id="L183" title="All 2 branches covered.">                if (w.signingPublicKeys() != null) append(fetch, &quot;env&quot;, publicKeysEnv(w));</span>
+<span class="fc bfc" id="L184" title="All 2 branches covered.">                if (w.pullSecret() != null) {</span>
+<span class="fc" id="L185">                    requireFree(fetch, &quot;env&quot;, List.of(&quot;MNEMO_WARMUP_REGISTRY_AUTH&quot;));</span>
+<span class="fc" id="L186">                    append(fetch, &quot;env&quot;, obj(&quot;name&quot;, &quot;MNEMO_WARMUP_REGISTRY_AUTH&quot;, &quot;value&quot;, &quot;/var/run/mnemo-warmup/registry/config.json&quot;));</span>
+<span class="fc" id="L187">                    append(fetch, &quot;volumeMounts&quot;, mount(&quot;mnemo-registry-pull&quot;, &quot;/var/run/mnemo-warmup/registry&quot;, true));</span>
                 }
-<span class="fc bfc" id="L186" title="All 2 branches covered.">                if (w.nodeCacheUrl() != null) {</span>
-<span class="fc" id="L187">                    requireFree(fetch, &quot;env&quot;, List.of(&quot;MNEMO_WARMUP_NODECACHE_URL&quot;, &quot;MNEMO_WARMUP_NODECACHE_CA_FILE&quot;, &quot;MNEMO_WARMUP_NODECACHE_TOKEN_FILE&quot;));</span>
-<span class="fc" id="L188">                    append(fetch, &quot;env&quot;, obj(&quot;name&quot;, &quot;MNEMO_WARMUP_NODECACHE_URL&quot;, &quot;value&quot;, w.nodeCacheUrl()),</span>
-<span class="fc" id="L189">                        obj(&quot;name&quot;, &quot;MNEMO_WARMUP_NODECACHE_CA_FILE&quot;, &quot;value&quot;, &quot;/var/run/mnemo-warmup/nodecache/ca/ca.crt&quot;),</span>
-<span class="fc" id="L190">                        obj(&quot;name&quot;, &quot;MNEMO_WARMUP_NODECACHE_TOKEN_FILE&quot;, &quot;value&quot;, &quot;/var/run/mnemo-warmup/nodecache/identity/token&quot;));</span>
-<span class="fc" id="L191">                    append(fetch, &quot;volumeMounts&quot;, mount(&quot;mnemo-nodecache-identity&quot;, &quot;/var/run/mnemo-warmup/nodecache/identity&quot;, true),</span>
-<span class="fc" id="L192">                        mount(&quot;mnemo-nodecache-ca&quot;, &quot;/var/run/mnemo-warmup/nodecache/ca&quot;, true));</span>
+<span class="fc bfc" id="L189" title="All 2 branches covered.">                if (w.nodeCacheUrl() != null) {</span>
+<span class="fc" id="L190">                    requireFree(fetch, &quot;env&quot;, List.of(&quot;MNEMO_WARMUP_NODECACHE_URL&quot;, &quot;MNEMO_WARMUP_NODECACHE_CA_FILE&quot;, &quot;MNEMO_WARMUP_NODECACHE_TOKEN_FILE&quot;));</span>
+<span class="fc" id="L191">                    append(fetch, &quot;env&quot;, obj(&quot;name&quot;, &quot;MNEMO_WARMUP_NODECACHE_URL&quot;, &quot;value&quot;, w.nodeCacheUrl()),</span>
+<span class="fc" id="L192">                        obj(&quot;name&quot;, &quot;MNEMO_WARMUP_NODECACHE_CA_FILE&quot;, &quot;value&quot;, &quot;/var/run/mnemo-warmup/nodecache/ca/ca.crt&quot;),</span>
+<span class="fc" id="L193">                        obj(&quot;name&quot;, &quot;MNEMO_WARMUP_NODECACHE_TOKEN_FILE&quot;, &quot;value&quot;, &quot;/var/run/mnemo-warmup/nodecache/identity/token&quot;));</span>
+<span class="fc" id="L194">                    append(fetch, &quot;volumeMounts&quot;, mount(&quot;mnemo-nodecache-identity&quot;, &quot;/var/run/mnemo-warmup/nodecache/identity&quot;, true),</span>
+<span class="fc" id="L195">                        mount(&quot;mnemo-nodecache-ca&quot;, &quot;/var/run/mnemo-warmup/nodecache/ca&quot;, true));</span>
                 }
-<span class="fc bfc" id="L194" title="All 2 branches covered.">                if (!imageVolume) append(pod, &quot;initContainers&quot;, install(tools));</span>
-<span class="fc" id="L195">                append(pod, &quot;initContainers&quot;, fetch);</span>
-<span class="fc" id="L196">                append(app, &quot;volumeMounts&quot;, mount(&quot;mnemo-tools&quot;, &quot;/mnemo-tools&quot;, true), mount(&quot;mnemo-cache&quot;, &quot;/mnemo-cache&quot;, true));</span>
-<span class="fc" id="L197">            } else {</span>
+<span class="fc bfc" id="L197" title="All 2 branches covered.">                if (!imageVolume) append(pod, &quot;initContainers&quot;, install(tools));</span>
+<span class="fc" id="L198">                append(pod, &quot;initContainers&quot;, fetch);</span>
+<span class="fc" id="L199">                append(app, &quot;volumeMounts&quot;, mount(&quot;mnemo-tools&quot;, &quot;/mnemo-tools&quot;, true), mount(&quot;mnemo-cache&quot;, &quot;/mnemo-cache&quot;, true));</span>
+<span class="fc" id="L200">            } else {</span>
                 // Inline fetch writes the application container's cache and scratch volumes.
-<span class="fc" id="L199">                append(app, &quot;volumeMounts&quot;, mount(&quot;mnemo-tools&quot;, &quot;/mnemo-tools&quot;, true), mount(&quot;mnemo-cache&quot;, &quot;/mnemo-cache&quot;, false), mount(&quot;mnemo-work&quot;, &quot;/tmp/mnemo-warmup&quot;, false));</span>
+<span class="fc" id="L202">                append(app, &quot;volumeMounts&quot;, mount(&quot;mnemo-tools&quot;, &quot;/mnemo-tools&quot;, true), mount(&quot;mnemo-cache&quot;, &quot;/mnemo-cache&quot;, false), mount(&quot;mnemo-work&quot;, &quot;/tmp/mnemo-warmup&quot;, false));</span>
             }
-<span class="fc" id="L201">            append(app, &quot;env&quot;, obj(&quot;name&quot;, &quot;MNEMO_WARMUP_CACHE_DIR&quot;, &quot;value&quot;, &quot;/mnemo-cache&quot;));</span>
-<span class="fc bfc" id="L202" title="All 2 branches covered.">            if (w.signingPublicKeys() != null) append(app, &quot;env&quot;, publicKeysEnv(w));</span>
-<span class="fc" id="L203">            app.put(&quot;command&quot;, List.of(launcher)); app.put(&quot;args&quot;, launcherExecArgs(w.command(), inlineFetch));</span>
-<span class="fc" id="L204">            saved.put(&quot;volumeNames&quot;, managedVolumes);</span>
-<span class="fc" id="L205">            saved.put(&quot;volumesManaged&quot;, managed(pod, &quot;volumes&quot;, managedVolumes));</span>
-<span class="fc bfc" id="L206" title="All 4 branches covered.">            if (!inline) saved.put(&quot;initContainersManaged&quot;, managed(pod, &quot;initContainers&quot;, imageVolume ? List.of(&quot;mnemo-warmup-fetch&quot;) : List.of(&quot;mnemo-warmup-install&quot;, &quot;mnemo-warmup-fetch&quot;)));</span>
-<span class="fc" id="L207">            saved.put(&quot;volumeMountsManaged&quot;, managed(app, &quot;volumeMounts&quot;, appMounts));</span>
-<span class="fc" id="L208">            saved.put(&quot;envNames&quot;, appEnv);</span>
-<span class="fc" id="L209">            saved.put(&quot;envManaged&quot;, managed(app, &quot;env&quot;, appEnv));</span>
-<span class="fc" id="L210">            String savedYaml = ManifestStream.render(List.of(saved));</span>
-<span class="fc" id="L211">            ann.put(MARKER, Base64.getEncoder().encodeToString(savedYaml.getBytes(StandardCharsets.UTF_8)));</span>
-<span class="fc" id="L212">            output.add(doc);</span>
-<span class="fc" id="L213">            generated.addAll(trainer(w, pod, app, commonArgs, tools));</span>
-<span class="fc" id="L214">            notes.add(w.namespace() + &quot;/&quot; + w.name() + &quot;: container=&quot; + w.container() + &quot;, image=&quot; + w.image() + &quot;, jar=&quot; + w.jar() + &quot;, store=&quot; + w.store() + &quot;, trainer=&quot; + w.exitMode() + &quot;, tools=&quot; + tools</span>
-<span class="fc" id="L215">                    + &quot;, tools-delivery=&quot; + w.toolsDelivery());</span>
-<span class="fc bfc" id="L216" title="All 2 branches covered.">            if (imageVolume) notes.add(&quot;  image-volume support cannot be verified offline; check the feature gate and runtime on every eligible node, or use init-container&quot;);</span>
-<span class="fc bfc" id="L217" title="All 2 branches covered.">            if (w.nodeCacheUrl() != null) notes.add(&quot;  node cache uses a projected service-account token in the fetch init container; cache failure falls back to the registry&quot;);</span>
-<span class="fc" id="L218">            notes.addAll(signingNotes(w));</span>
-<span class="pc bpc" id="L219" title="1 of 6 branches missed.">            if (w.signingKeySecret() != null &amp;&amp; nonRootTrainer(pod, app) == null &amp;&amp; !hasFsGroup(pod))</span>
-<span class="fc" id="L220">                notes.add(&quot;  signing: the trainer's user is decided by the image; if it is not root, add fsGroup to the pod securityContext or it cannot read the signing key (mode 0440)&quot;);</span>
-<span class="fc" id="L221">            notes.add(&quot;  trainer &quot; + trainerName(w.name()) + &quot; (CronJob, ServiceAccount, Role: leases only) copies from the workload, names only: &quot; + copies);</span>
-<span class="fc" id="L222">        }</span>
-<span class="fc" id="L223">        output.addAll(generated);</span>
-<span class="fc" id="L224">        checkUnique(output, namespace);</span>
-<span class="fc" id="L225">        return new Result(ManifestStream.render(output), List.copyOf(notes));</span>
+<span class="fc" id="L204">            append(app, &quot;env&quot;, obj(&quot;name&quot;, &quot;MNEMO_WARMUP_CACHE_DIR&quot;, &quot;value&quot;, &quot;/mnemo-cache&quot;));</span>
+<span class="fc bfc" id="L205" title="All 2 branches covered.">            if (w.signingPublicKeys() != null) append(app, &quot;env&quot;, publicKeysEnv(w));</span>
+<span class="fc" id="L206">            app.put(&quot;command&quot;, List.of(launcher)); app.put(&quot;args&quot;, launcherExecArgs(w.command(), inlineFetch));</span>
+<span class="fc" id="L207">            saved.put(&quot;volumeNames&quot;, managedVolumes);</span>
+<span class="fc" id="L208">            saved.put(&quot;volumesManaged&quot;, managed(pod, &quot;volumes&quot;, managedVolumes));</span>
+<span class="fc bfc" id="L209" title="All 4 branches covered.">            if (!inline) saved.put(&quot;initContainersManaged&quot;, managed(pod, &quot;initContainers&quot;, imageVolume ? List.of(&quot;mnemo-warmup-fetch&quot;) : List.of(&quot;mnemo-warmup-install&quot;, &quot;mnemo-warmup-fetch&quot;)));</span>
+<span class="fc" id="L210">            saved.put(&quot;volumeMountsManaged&quot;, managed(app, &quot;volumeMounts&quot;, appMounts));</span>
+<span class="fc" id="L211">            saved.put(&quot;envNames&quot;, appEnv);</span>
+<span class="fc" id="L212">            saved.put(&quot;envManaged&quot;, managed(app, &quot;env&quot;, appEnv));</span>
+<span class="fc" id="L213">            String savedYaml = ManifestStream.render(List.of(saved));</span>
+<span class="fc" id="L214">            ann.put(MARKER, Base64.getEncoder().encodeToString(savedYaml.getBytes(StandardCharsets.UTF_8)));</span>
+<span class="fc" id="L215">            output.add(doc);</span>
+<span class="fc bfc" id="L216" title="All 2 branches covered.">            generated.addAll(isolation == null ? trainer(w, pod, app, commonArgs, tools)</span>
+<span class="fc" id="L217">                    : isolatedTrainer(w, originalPod, selected(originalPod, w.container()), commonArgs, tools, isolation));</span>
+<span class="fc" id="L218">            notes.add(w.namespace() + &quot;/&quot; + w.name() + &quot;: container=&quot; + w.container() + &quot;, image=&quot; + w.image() + &quot;, jar=&quot; + w.jar() + &quot;, store=&quot; + w.store() + &quot;, trainer=&quot; + w.exitMode() + &quot;, tools=&quot; + tools</span>
+<span class="fc" id="L219">                    + &quot;, tools-delivery=&quot; + w.toolsDelivery());</span>
+<span class="fc bfc" id="L220" title="All 2 branches covered.">            if (imageVolume) notes.add(&quot;  image-volume support cannot be verified offline; check the feature gate and runtime on every eligible node, or use init-container&quot;);</span>
+<span class="fc bfc" id="L221" title="All 2 branches covered.">            if (w.nodeCacheUrl() != null) notes.add(&quot;  node cache uses a projected service-account token in the fetch init container; cache failure falls back to the registry&quot;);</span>
+<span class="fc bfc" id="L222" title="All 2 branches covered.">            notes.addAll(isolation == null ? signingNotes(w) : isolationNotes(w, isolation));</span>
+<span class="pc bpc" id="L223" title="1 of 8 branches missed.">            if (isolation == null &amp;&amp; w.signingKeySecret() != null &amp;&amp; nonRootTrainer(pod, app) == null &amp;&amp; !hasFsGroup(pod))</span>
+<span class="fc" id="L224">                notes.add(&quot;  signing: the trainer's user is decided by the image; if it is not root, add fsGroup to the pod securityContext or it cannot read the signing key (mode 0440)&quot;);</span>
+<span class="fc bfc" id="L225" title="All 2 branches covered.">            notes.add(&quot;  trainer &quot; + trainerName(w.name()) + (isolation == null ? &quot; (CronJob, ServiceAccount, Role: leases only)&quot; : &quot; (isolated training and coordinator; coordinator can create pods)&quot;) + &quot; copies from the workload, names only: &quot; + copies);</span>
+<span class="fc" id="L226">        }</span>
+<span class="fc" id="L227">        output.addAll(generated);</span>
+<span class="fc" id="L228">        checkUnique(output, namespace);</span>
+<span class="fc" id="L229">        return new Result(ManifestStream.render(output), List.copyOf(notes));</span>
     }
 
     /** What the trainer and fetch containers inherit from the workload, by name only: never a value, never a Secret's content. */
     private static String describeCopies(Map&lt;String, Object&gt; pod, Map&lt;String, Object&gt; app, WorkloadDiscovery.Workload w) {
-<span class="fc" id="L230">        List&lt;String&gt; env = new ArrayList&lt;&gt;(), envFrom = new ArrayList&lt;&gt;(), volumes = new ArrayList&lt;&gt;(), mounts = new ArrayList&lt;&gt;();</span>
-<span class="pc bpc" id="L231" title="2 of 8 branches missed.">        if (app.get(&quot;env&quot;) instanceof List&lt;?&gt; list) for (Object e : list) if (e instanceof Map&lt;?, ?&gt; m &amp;&amp; m.get(&quot;name&quot;) != null) env.add(String.valueOf(m.get(&quot;name&quot;)));</span>
-<span class="pc bpc" id="L232" title="1 of 6 branches missed.">        if (app.get(&quot;envFrom&quot;) instanceof List&lt;?&gt; list) for (Object e : list) if (e instanceof Map&lt;?, ?&gt; m) {</span>
-<span class="pc bpc" id="L233" title="1 of 2 branches missed.">            if (m.get(&quot;secretRef&quot;) instanceof Map&lt;?, ?&gt; r) envFrom.add(&quot;secret/&quot; + r.get(&quot;name&quot;));</span>
-<span class="nc bnc" id="L234" title="All 2 branches missed.">            else if (m.get(&quot;configMapRef&quot;) instanceof Map&lt;?, ?&gt; r) envFrom.add(&quot;configMap/&quot; + r.get(&quot;name&quot;));</span>
+<span class="fc" id="L234">        List&lt;String&gt; env = new ArrayList&lt;&gt;(), envFrom = new ArrayList&lt;&gt;(), volumes = new ArrayList&lt;&gt;(), mounts = new ArrayList&lt;&gt;();</span>
+<span class="pc bpc" id="L235" title="2 of 8 branches missed.">        if (app.get(&quot;env&quot;) instanceof List&lt;?&gt; list) for (Object e : list) if (e instanceof Map&lt;?, ?&gt; m &amp;&amp; m.get(&quot;name&quot;) != null) env.add(String.valueOf(m.get(&quot;name&quot;)));</span>
+<span class="pc bpc" id="L236" title="1 of 6 branches missed.">        if (app.get(&quot;envFrom&quot;) instanceof List&lt;?&gt; list) for (Object e : list) if (e instanceof Map&lt;?, ?&gt; m) {</span>
+<span class="pc bpc" id="L237" title="1 of 2 branches missed.">            if (m.get(&quot;secretRef&quot;) instanceof Map&lt;?, ?&gt; r) envFrom.add(&quot;secret/&quot; + r.get(&quot;name&quot;));</span>
+<span class="nc bnc" id="L238" title="All 2 branches missed.">            else if (m.get(&quot;configMapRef&quot;) instanceof Map&lt;?, ?&gt; r) envFrom.add(&quot;configMap/&quot; + r.get(&quot;name&quot;));</span>
         }
-<span class="pc bpc" id="L236" title="1 of 6 branches missed.">        if (pod.get(&quot;volumes&quot;) instanceof List&lt;?&gt; list) for (Object v : list) if (v instanceof Map&lt;?, ?&gt; m) {</span>
-<span class="fc bfc" id="L237" title="All 2 branches covered.">            String kind = m.keySet().stream().map(String::valueOf).filter(k -&gt; !k.equals(&quot;name&quot;)).findFirst().orElse(&quot;?&quot;);</span>
-<span class="fc" id="L238">            volumes.add(m.get(&quot;name&quot;) + &quot; (&quot; + kind + &quot;)&quot;);</span>
+<span class="pc bpc" id="L240" title="1 of 6 branches missed.">        if (pod.get(&quot;volumes&quot;) instanceof List&lt;?&gt; list) for (Object v : list) if (v instanceof Map&lt;?, ?&gt; m) {</span>
+<span class="fc bfc" id="L241" title="All 2 branches covered.">            String kind = m.keySet().stream().map(String::valueOf).filter(k -&gt; !k.equals(&quot;name&quot;)).findFirst().orElse(&quot;?&quot;);</span>
+<span class="fc" id="L242">            volumes.add(m.get(&quot;name&quot;) + &quot; (&quot; + kind + &quot;)&quot;);</span>
         }
-<span class="pc bpc" id="L240" title="1 of 6 branches missed.">        if (app.get(&quot;volumeMounts&quot;) instanceof List&lt;?&gt; list) for (Object v : list) if (v instanceof Map&lt;?, ?&gt; m) mounts.add(String.valueOf(m.get(&quot;mountPath&quot;)));</span>
-<span class="fc" id="L241">        return &quot;env=&quot; + env + &quot;, envFrom=&quot; + envFrom + &quot;, volumes=&quot; + volumes + &quot;, mounts=&quot; + mounts</span>
-<span class="fc bfc" id="L242" title="All 2 branches covered.">                + &quot;; archive credentials: pull=&quot; + (w.pullSecret() == null ? &quot;none&quot; : &quot;secret/&quot; + w.pullSecret())</span>
-<span class="fc bfc" id="L243" title="All 2 branches covered.">                + &quot;, push=&quot; + (w.pushSecret() == null ? &quot;none&quot; : &quot;secret/&quot; + w.pushSecret());</span>
+<span class="pc bpc" id="L244" title="1 of 6 branches missed.">        if (app.get(&quot;volumeMounts&quot;) instanceof List&lt;?&gt; list) for (Object v : list) if (v instanceof Map&lt;?, ?&gt; m) mounts.add(String.valueOf(m.get(&quot;mountPath&quot;)));</span>
+<span class="fc" id="L245">        return &quot;env=&quot; + env + &quot;, envFrom=&quot; + envFrom + &quot;, volumes=&quot; + volumes + &quot;, mounts=&quot; + mounts</span>
+<span class="fc bfc" id="L246" title="All 2 branches covered.">                + &quot;; archive credentials: pull=&quot; + (w.pullSecret() == null ? &quot;none&quot; : &quot;secret/&quot; + w.pullSecret())</span>
+<span class="fc bfc" id="L247" title="All 2 branches covered.">                + &quot;, push=&quot; + (w.pushSecret() == null ? &quot;none&quot; : &quot;secret/&quot; + w.pushSecret());</span>
     }
 
     private static List&lt;Map&lt;String, Object&gt;&gt; trainer(WorkloadDiscovery.Workload w, Map&lt;String, Object&gt; pod, Map&lt;String, Object&gt; app, List&lt;Object&gt; common, String tools) {
-<span class="fc" id="L247">        String name = trainerName(w.name());</span>
-<span class="fc" id="L248">        Map&lt;String, Object&gt; labels = obj(OWNER, w.name());</span>
-<span class="fc" id="L249">        List&lt;Object&gt; args = new ArrayList&lt;&gt;(List.of(&quot;jar&quot;, &quot;train&quot;)); args.addAll(common); args.addAll(List.of(&quot;--exit-mode&quot;, w.exitMode()));</span>
-<span class="pc bpc" id="L250" title="1 of 2 branches missed.">        if (w.probeUrl() != null) args.addAll(List.of(&quot;--url&quot;, w.probeUrl()));</span>
-<span class="fc" id="L251">        Map&lt;String, Object&gt; trainer = obj(&quot;name&quot;, &quot;trainer&quot;, &quot;image&quot;, w.image(), &quot;command&quot;, List.of(launcherPath(w.imageVolume())), &quot;args&quot;, args,</span>
-<span class="fc" id="L252">                &quot;volumeMounts&quot;, new ArrayList&lt;&gt;(List.of(mount(&quot;mnemo-tools&quot;, &quot;/mnemo-tools&quot;, true), mount(&quot;mnemo-work&quot;, &quot;/tmp/mnemo-warmup&quot;, false))));</span>
-<span class="fc" id="L253">        copyMounts(app, trainer);</span>
-<span class="fc" id="L254">        copyIfPresent(app, trainer, &quot;envFrom&quot;, &quot;imagePullPolicy&quot;, &quot;securityContext&quot;);</span>
-<span class="fc" id="L255">        List&lt;Object&gt; env = new ArrayList&lt;&gt;();</span>
-<span class="pc bpc" id="L256" title="1 of 4 branches missed.">        if (app.get(&quot;env&quot;) instanceof List&lt;?&gt; existing) for (Object e : existing) {</span>
-<span class="pc bpc" id="L257" title="1 of 4 branches missed.">            if (e instanceof Map&lt;?, ?&gt; m &amp;&amp; !appEnvNames(w).contains(m.get(&quot;name&quot;))) env.add(e);</span>
-<span class="fc" id="L258">        }</span>
-<span class="fc" id="L259">        env.add(obj(&quot;name&quot;, &quot;POD_NAMESPACE&quot;, &quot;valueFrom&quot;, obj(&quot;fieldRef&quot;, obj(&quot;fieldPath&quot;, &quot;metadata.namespace&quot;)))); trainer.put(&quot;env&quot;, env);</span>
-<span class="fc bfc" id="L260" title="All 2 branches covered.">        if (w.pushSecret() != null) {</span>
-<span class="fc" id="L261">            requireFree(trainer, &quot;env&quot;, List.of(&quot;MNEMO_WARMUP_REGISTRY_AUTH&quot;));</span>
-<span class="fc" id="L262">            append(trainer, &quot;env&quot;, obj(&quot;name&quot;, &quot;MNEMO_WARMUP_REGISTRY_AUTH&quot;, &quot;value&quot;, &quot;/var/run/mnemo-warmup/registry/config.json&quot;));</span>
-<span class="fc" id="L263">            append(trainer, &quot;volumeMounts&quot;, mount(&quot;mnemo-registry-push&quot;, &quot;/var/run/mnemo-warmup/registry&quot;, true));</span>
+<span class="fc" id="L251">        String name = trainerName(w.name());</span>
+<span class="fc" id="L252">        Map&lt;String, Object&gt; labels = obj(OWNER, w.name());</span>
+<span class="fc" id="L253">        List&lt;Object&gt; args = new ArrayList&lt;&gt;(List.of(&quot;jar&quot;, &quot;train&quot;)); args.addAll(common); args.addAll(List.of(&quot;--exit-mode&quot;, w.exitMode()));</span>
+<span class="pc bpc" id="L254" title="1 of 2 branches missed.">        if (w.probeUrl() != null) args.addAll(List.of(&quot;--url&quot;, w.probeUrl()));</span>
+<span class="fc" id="L255">        Map&lt;String, Object&gt; trainer = obj(&quot;name&quot;, &quot;trainer&quot;, &quot;image&quot;, w.image(), &quot;command&quot;, List.of(launcherPath(w.imageVolume())), &quot;args&quot;, args,</span>
+<span class="fc" id="L256">                &quot;volumeMounts&quot;, new ArrayList&lt;&gt;(List.of(mount(&quot;mnemo-tools&quot;, &quot;/mnemo-tools&quot;, true), mount(&quot;mnemo-work&quot;, &quot;/tmp/mnemo-warmup&quot;, false))));</span>
+<span class="fc" id="L257">        copyMounts(app, trainer);</span>
+<span class="fc" id="L258">        copyIfPresent(app, trainer, &quot;envFrom&quot;, &quot;imagePullPolicy&quot;, &quot;securityContext&quot;);</span>
+<span class="fc" id="L259">        List&lt;Object&gt; env = new ArrayList&lt;&gt;();</span>
+<span class="pc bpc" id="L260" title="1 of 4 branches missed.">        if (app.get(&quot;env&quot;) instanceof List&lt;?&gt; existing) for (Object e : existing) {</span>
+<span class="pc bpc" id="L261" title="1 of 4 branches missed.">            if (e instanceof Map&lt;?, ?&gt; m &amp;&amp; !appEnvNames(w).contains(m.get(&quot;name&quot;))) env.add(e);</span>
+<span class="fc" id="L262">        }</span>
+<span class="fc" id="L263">        env.add(obj(&quot;name&quot;, &quot;POD_NAMESPACE&quot;, &quot;valueFrom&quot;, obj(&quot;fieldRef&quot;, obj(&quot;fieldPath&quot;, &quot;metadata.namespace&quot;)))); trainer.put(&quot;env&quot;, env);</span>
+<span class="fc bfc" id="L264" title="All 2 branches covered.">        if (w.pushSecret() != null) {</span>
+<span class="fc" id="L265">            requireFree(trainer, &quot;env&quot;, List.of(&quot;MNEMO_WARMUP_REGISTRY_AUTH&quot;));</span>
+<span class="fc" id="L266">            append(trainer, &quot;env&quot;, obj(&quot;name&quot;, &quot;MNEMO_WARMUP_REGISTRY_AUTH&quot;, &quot;value&quot;, &quot;/var/run/mnemo-warmup/registry/config.json&quot;));</span>
+<span class="fc" id="L267">            append(trainer, &quot;volumeMounts&quot;, mount(&quot;mnemo-registry-push&quot;, &quot;/var/run/mnemo-warmup/registry&quot;, true));</span>
         }
-<span class="fc bfc" id="L265" title="All 2 branches covered.">        if (w.signingKeySecret() != null) {</span>
-<span class="fc" id="L266">            requireFree(trainer, &quot;env&quot;, List.of(SigningKey.ENV_KEY_FILE));</span>
-<span class="fc" id="L267">            append(trainer, &quot;env&quot;, obj(&quot;name&quot;, SigningKey.ENV_KEY_FILE, &quot;value&quot;, SIGNING_KEY_PATH));</span>
+<span class="fc bfc" id="L269" title="All 2 branches covered.">        if (w.signingKeySecret() != null) {</span>
+<span class="fc" id="L270">            requireFree(trainer, &quot;env&quot;, List.of(SigningKey.ENV_KEY_FILE));</span>
+<span class="fc" id="L271">            append(trainer, &quot;env&quot;, obj(&quot;name&quot;, SigningKey.ENV_KEY_FILE, &quot;value&quot;, SIGNING_KEY_PATH));</span>
             // the pods' trusted list: the trainer re-publishes only what pods would refuse, and refuses to sign with a key not on it
-<span class="fc bfc" id="L269" title="All 2 branches covered.">            if (w.signingPublicKeys() != null) append(trainer, &quot;env&quot;, publicKeysEnv(w));</span>
-<span class="fc" id="L270">            append(trainer, &quot;volumeMounts&quot;, mount(SIGNING_VOLUME, SIGNING_KEY_DIR, true));</span>
+<span class="fc bfc" id="L273" title="All 2 branches covered.">            if (w.signingPublicKeys() != null) append(trainer, &quot;env&quot;, publicKeysEnv(w));</span>
+<span class="fc" id="L274">            append(trainer, &quot;volumeMounts&quot;, mount(SIGNING_VOLUME, SIGNING_KEY_DIR, true));</span>
         }
-<span class="fc" id="L272">        Map&lt;String, Object&gt; trainerPod = obj(&quot;restartPolicy&quot;, &quot;Never&quot;, &quot;serviceAccountName&quot;, name, &quot;automountServiceAccountToken&quot;, true,</span>
-<span class="fc" id="L273">            &quot;containers&quot;, List.of(trainer), &quot;volumes&quot;, new ArrayList&lt;&gt;(List.of(toolsVolume(w.imageVolume(), tools), obj(&quot;name&quot;, &quot;mnemo-work&quot;, &quot;emptyDir&quot;, obj()))));</span>
-<span class="fc bfc" id="L274" title="All 2 branches covered.">        if (!w.imageVolume()) trainerPod.put(&quot;initContainers&quot;, List.of(install(tools)));</span>
-<span class="pc bpc" id="L275" title="1 of 4 branches missed.">        if (pod.get(&quot;volumes&quot;) instanceof List&lt;?&gt; volumes) for (Object volume : volumes) {</span>
-<span class="pc bpc" id="L276" title="1 of 4 branches missed.">            if (volume instanceof Map&lt;?, ?&gt; v &amp;&amp; !List.of(&quot;mnemo-tools&quot;, &quot;mnemo-work&quot;, &quot;mnemo-cache&quot;, &quot;mnemo-registry-pull&quot;, &quot;mnemo-nodecache-identity&quot;, &quot;mnemo-nodecache-ca&quot;).contains(v.get(&quot;name&quot;))) append(trainerPod, &quot;volumes&quot;, volume);</span>
-<span class="fc" id="L277">        }</span>
-<span class="fc bfc" id="L278" title="All 2 branches covered.">        if (w.pushSecret() != null) append(trainerPod, &quot;volumes&quot;, secretVolume(&quot;mnemo-registry-push&quot;, w.pushSecret()));</span>
-<span class="fc bfc" id="L279" title="All 2 branches covered.">        if (w.signingKeySecret() != null) append(trainerPod, &quot;volumes&quot;, obj(&quot;name&quot;, SIGNING_VOLUME, &quot;secret&quot;,</span>
-<span class="fc" id="L280">                obj(&quot;secretName&quot;, w.signingKeySecret(), &quot;defaultMode&quot;, 0440, &quot;items&quot;, List.of(obj(&quot;key&quot;, &quot;signing.key&quot;, &quot;path&quot;, &quot;signing.key&quot;)))));</span>
-<span class="fc" id="L281">        copyIfPresent(pod, trainerPod, &quot;imagePullSecrets&quot;, &quot;nodeSelector&quot;, &quot;tolerations&quot;, &quot;affinity&quot;, &quot;securityContext&quot;);</span>
-<span class="fc" id="L282">        Map&lt;String, Object&gt; metadata = obj(&quot;name&quot;, name, &quot;namespace&quot;, w.namespace(), &quot;labels&quot;, labels, &quot;annotations&quot;, obj(MARKER, &quot;generated&quot;));</span>
-<span class="fc" id="L283">        Map&lt;String, Object&gt; cron = obj(&quot;apiVersion&quot;, &quot;batch/v1&quot;, &quot;kind&quot;, &quot;CronJob&quot;, &quot;metadata&quot;, metadata, &quot;spec&quot;, obj(&quot;schedule&quot;, &quot;*/10 * * * *&quot;, &quot;concurrencyPolicy&quot;, &quot;Forbid&quot;, &quot;jobTemplate&quot;, obj(&quot;spec&quot;, obj(&quot;backoffLimit&quot;, 0, &quot;activeDeadlineSeconds&quot;, 3600, &quot;template&quot;, obj(&quot;spec&quot;, trainerPod)))));</span>
-<span class="fc" id="L284">        Map&lt;String, Object&gt; sa = obj(&quot;apiVersion&quot;, &quot;v1&quot;, &quot;kind&quot;, &quot;ServiceAccount&quot;, &quot;metadata&quot;, metadata);</span>
-<span class="fc" id="L285">        Map&lt;String, Object&gt; role = obj(&quot;apiVersion&quot;, &quot;rbac.authorization.k8s.io/v1&quot;, &quot;kind&quot;, &quot;Role&quot;, &quot;metadata&quot;, metadata, &quot;rules&quot;, List.of(obj(&quot;apiGroups&quot;, List.of(&quot;coordination.k8s.io&quot;), &quot;resources&quot;, List.of(&quot;leases&quot;), &quot;verbs&quot;, List.of(&quot;get&quot;, &quot;create&quot;, &quot;update&quot;, &quot;delete&quot;))));</span>
-<span class="fc" id="L286">        Map&lt;String, Object&gt; binding = obj(&quot;apiVersion&quot;, &quot;rbac.authorization.k8s.io/v1&quot;, &quot;kind&quot;, &quot;RoleBinding&quot;, &quot;metadata&quot;, metadata, &quot;roleRef&quot;, obj(&quot;apiGroup&quot;, &quot;rbac.authorization.k8s.io&quot;, &quot;kind&quot;, &quot;Role&quot;, &quot;name&quot;, name), &quot;subjects&quot;, List.of(obj(&quot;kind&quot;, &quot;ServiceAccount&quot;, &quot;name&quot;, name, &quot;namespace&quot;, w.namespace())));</span>
-<span class="fc" id="L287">        List&lt;Map&lt;String, Object&gt;&gt; resources = List.of(sa, role, binding, cron);</span>
-<span class="fc" id="L288">        List&lt;Map&lt;String, Object&gt;&gt; marked = new ArrayList&lt;&gt;();</span>
-<span class="fc bfc" id="L289" title="All 2 branches covered.">        for (Map&lt;String, Object&gt; resource : resources) {</span>
-<span class="fc" id="L290">            Map&lt;String, Object&gt; copy = ManifestStream.parse(ManifestStream.render(List.of(resource))).get(0);</span>
-<span class="fc" id="L291">            Map&lt;String, Object&gt; annotations = map(map(copy.get(&quot;metadata&quot;), &quot;metadata&quot;).get(&quot;annotations&quot;), &quot;annotations&quot;);</span>
-<span class="fc" id="L292">            annotations.put(CHECKSUM, checksum(copy));</span>
-<span class="fc" id="L293">            marked.add(copy);</span>
-<span class="fc" id="L294">        }</span>
-<span class="fc" id="L295">        return marked;</span>
+<span class="fc" id="L276">        Map&lt;String, Object&gt; trainerPod = obj(&quot;restartPolicy&quot;, &quot;Never&quot;, &quot;serviceAccountName&quot;, name, &quot;automountServiceAccountToken&quot;, true,</span>
+<span class="fc" id="L277">            &quot;containers&quot;, List.of(trainer), &quot;volumes&quot;, new ArrayList&lt;&gt;(List.of(toolsVolume(w.imageVolume(), tools), obj(&quot;name&quot;, &quot;mnemo-work&quot;, &quot;emptyDir&quot;, obj()))));</span>
+<span class="fc bfc" id="L278" title="All 2 branches covered.">        if (!w.imageVolume()) trainerPod.put(&quot;initContainers&quot;, List.of(install(tools)));</span>
+<span class="pc bpc" id="L279" title="1 of 4 branches missed.">        if (pod.get(&quot;volumes&quot;) instanceof List&lt;?&gt; volumes) for (Object volume : volumes) {</span>
+<span class="pc bpc" id="L280" title="1 of 4 branches missed.">            if (volume instanceof Map&lt;?, ?&gt; v &amp;&amp; !List.of(&quot;mnemo-tools&quot;, &quot;mnemo-work&quot;, &quot;mnemo-cache&quot;, &quot;mnemo-registry-pull&quot;, &quot;mnemo-nodecache-identity&quot;, &quot;mnemo-nodecache-ca&quot;).contains(v.get(&quot;name&quot;))) append(trainerPod, &quot;volumes&quot;, volume);</span>
+<span class="fc" id="L281">        }</span>
+<span class="fc bfc" id="L282" title="All 2 branches covered.">        if (w.pushSecret() != null) append(trainerPod, &quot;volumes&quot;, secretVolume(&quot;mnemo-registry-push&quot;, w.pushSecret()));</span>
+<span class="fc bfc" id="L283" title="All 2 branches covered.">        if (w.signingKeySecret() != null) append(trainerPod, &quot;volumes&quot;, obj(&quot;name&quot;, SIGNING_VOLUME, &quot;secret&quot;,</span>
+<span class="fc" id="L284">                obj(&quot;secretName&quot;, w.signingKeySecret(), &quot;defaultMode&quot;, 0440, &quot;items&quot;, List.of(obj(&quot;key&quot;, &quot;signing.key&quot;, &quot;path&quot;, &quot;signing.key&quot;)))));</span>
+<span class="fc" id="L285">        copyIfPresent(pod, trainerPod, &quot;imagePullSecrets&quot;, &quot;nodeSelector&quot;, &quot;tolerations&quot;, &quot;affinity&quot;, &quot;securityContext&quot;);</span>
+<span class="fc" id="L286">        Map&lt;String, Object&gt; metadata = obj(&quot;name&quot;, name, &quot;namespace&quot;, w.namespace(), &quot;labels&quot;, labels, &quot;annotations&quot;, obj(MARKER, &quot;generated&quot;));</span>
+<span class="fc" id="L287">        Map&lt;String, Object&gt; cron = obj(&quot;apiVersion&quot;, &quot;batch/v1&quot;, &quot;kind&quot;, &quot;CronJob&quot;, &quot;metadata&quot;, metadata, &quot;spec&quot;, obj(&quot;schedule&quot;, &quot;*/10 * * * *&quot;, &quot;concurrencyPolicy&quot;, &quot;Forbid&quot;, &quot;jobTemplate&quot;, obj(&quot;spec&quot;, obj(&quot;backoffLimit&quot;, 0, &quot;activeDeadlineSeconds&quot;, 3600, &quot;template&quot;, obj(&quot;spec&quot;, trainerPod)))));</span>
+<span class="fc" id="L288">        Map&lt;String, Object&gt; sa = obj(&quot;apiVersion&quot;, &quot;v1&quot;, &quot;kind&quot;, &quot;ServiceAccount&quot;, &quot;metadata&quot;, metadata);</span>
+<span class="fc" id="L289">        Map&lt;String, Object&gt; role = obj(&quot;apiVersion&quot;, &quot;rbac.authorization.k8s.io/v1&quot;, &quot;kind&quot;, &quot;Role&quot;, &quot;metadata&quot;, metadata, &quot;rules&quot;, List.of(obj(&quot;apiGroups&quot;, List.of(&quot;coordination.k8s.io&quot;), &quot;resources&quot;, List.of(&quot;leases&quot;), &quot;verbs&quot;, List.of(&quot;get&quot;, &quot;create&quot;, &quot;update&quot;, &quot;delete&quot;))));</span>
+<span class="fc" id="L290">        Map&lt;String, Object&gt; binding = obj(&quot;apiVersion&quot;, &quot;rbac.authorization.k8s.io/v1&quot;, &quot;kind&quot;, &quot;RoleBinding&quot;, &quot;metadata&quot;, metadata, &quot;roleRef&quot;, obj(&quot;apiGroup&quot;, &quot;rbac.authorization.k8s.io&quot;, &quot;kind&quot;, &quot;Role&quot;, &quot;name&quot;, name), &quot;subjects&quot;, List.of(obj(&quot;kind&quot;, &quot;ServiceAccount&quot;, &quot;name&quot;, name, &quot;namespace&quot;, w.namespace())));</span>
+<span class="fc" id="L291">        List&lt;Map&lt;String, Object&gt;&gt; resources = List.of(sa, role, binding, cron);</span>
+<span class="fc" id="L292">        List&lt;Map&lt;String, Object&gt;&gt; marked = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L293" title="All 2 branches covered.">        for (Map&lt;String, Object&gt; resource : resources) {</span>
+<span class="fc" id="L294">            Map&lt;String, Object&gt; copy = ManifestStream.parse(ManifestStream.render(List.of(resource))).get(0);</span>
+<span class="fc" id="L295">            Map&lt;String, Object&gt; annotations = map(map(copy.get(&quot;metadata&quot;), &quot;metadata&quot;).get(&quot;annotations&quot;), &quot;annotations&quot;);</span>
+<span class="fc" id="L296">            annotations.put(CHECKSUM, checksum(copy));</span>
+<span class="fc" id="L297">            marked.add(copy);</span>
+<span class="fc" id="L298">        }</span>
+<span class="fc" id="L299">        return marked;</span>
     }
+<span class="fc" id="L301">    private record IsolatedConfig(String publisher, String java, String claim, long group, List&lt;String&gt; allowedSecrets) {}</span>
+    private static final String ALLOWED_SECRETS = &quot;training-allowed-secrets&quot;;
+    /** The coordinator's private copy holds at most --max-archive-bytes (1 GiB by default), plus the JVM's own temporary files. */
+    private static final String PUBLISHER_TMP_LIMIT = &quot;1280Mi&quot;;
+
+    private static IsolatedConfig isolatedConfig(Map&lt;String, Object&gt; annotations, WorkloadDiscovery.Workload w, String tools) {
+<span class="fc" id="L307">        Object enabled = annotations.get(WorkloadDiscovery.PREFIX + &quot;isolated-training&quot;);</span>
+<span class="fc bfc" id="L308" title="All 4 branches covered.">        if (enabled == null || &quot;false&quot;.equals(enabled)) {</span>
+<span class="fc bfc" id="L309" title="All 2 branches covered.">            for (String key : List.of(&quot;publisher-image&quot;, &quot;publisher-java&quot;, &quot;handoff-claim&quot;, &quot;handoff-fs-group&quot;, ALLOWED_SECRETS))</span>
+<span class="fc bfc" id="L310" title="All 2 branches covered.">                if (annotations.containsKey(WorkloadDiscovery.PREFIX + key))</span>
+<span class="fc" id="L311">                    throw new IllegalArgumentException(key + &quot; is only valid with isolated-training: \&quot;true\&quot;&quot;);</span>
+<span class="fc" id="L312">            return null;</span>
+        }
+<span class="pc bpc" id="L314" title="1 of 2 branches missed.">        if (!enabled.equals(&quot;true&quot;)) throw new IllegalArgumentException(&quot;isolated-training must be true or false&quot;);</span>
+<span class="fc" id="L315">        String publisher = WorkloadDiscovery.required(annotations, WorkloadDiscovery.PREFIX + &quot;publisher-image&quot;);</span>
+<span class="fc" id="L316">        String java = WorkloadDiscovery.required(annotations, WorkloadDiscovery.PREFIX + &quot;publisher-java&quot;);</span>
+<span class="fc" id="L317">        String claim = WorkloadDiscovery.required(annotations, WorkloadDiscovery.PREFIX + &quot;handoff-claim&quot;);</span>
+<span class="fc bfc" id="L318" title="All 4 branches covered.">        if (!publisher.matches(&quot;\\S+@sha256:[0-9a-f]{64}&quot;) || !tools.matches(&quot;\\S+@sha256:[0-9a-f]{64}&quot;))</span>
+<span class="fc" id="L319">            throw new IllegalArgumentException(&quot;isolated training requires digest-pinned publisher and tools images&quot;);</span>
+<span class="fc bfc" id="L320" title="All 2 branches covered.">        if (!java.startsWith(&quot;/&quot;)) throw new IllegalArgumentException(&quot;publisher-java must be absolute&quot;);</span>
+<span class="pc bpc" id="L321" title="2 of 4 branches missed.">        if (w.signingKeySecret() == null || w.signingPublicKeys() == null)</span>
+<span class="nc" id="L322">            throw new IllegalArgumentException(&quot;isolated training requires signing-key-secret and signing-public-keys&quot;);</span>
+<span class="fc bfc" id="L323" title="All 2 branches covered.">        if (w.imageVolume()) throw new IllegalArgumentException(&quot;isolated training currently requires init-container tools delivery&quot;);</span>
+        long group;
+<span class="fc" id="L325">        try { group = Long.parseLong(String.valueOf(annotations.getOrDefault(WorkloadDiscovery.PREFIX + &quot;handoff-fs-group&quot;, &quot;65532&quot;))); }</span>
+<span class="pc" id="L326">        catch (NumberFormatException e) { throw new IllegalArgumentException(&quot;handoff-fs-group must be a positive integer&quot;, e); }</span>
+<span class="pc bpc" id="L327" title="1 of 4 branches missed.">        if (group &lt;= 0 || group &gt; Integer.MAX_VALUE) throw new IllegalArgumentException(&quot;handoff-fs-group must be a positive integer&quot;);</span>
+<span class="fc" id="L328">        List&lt;String&gt; allowed = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L329">        Object listed = annotations.get(WorkloadDiscovery.PREFIX + ALLOWED_SECRETS);</span>
+<span class="pc bpc" id="L330" title="1 of 6 branches missed.">        if (listed != null) for (String name : String.valueOf(listed).split(&quot;,&quot;)) if (!name.isBlank()) allowed.add(name.trim());</span>
+<span class="fc" id="L331">        return new IsolatedConfig(publisher, java, claim, group, List.copyOf(allowed));</span>
+    }
+
+    private static List&lt;Map&lt;String, Object&gt;&gt; isolatedTrainer(WorkloadDiscovery.Workload w, Map&lt;String, Object&gt; pod,
+            Map&lt;String, Object&gt; app, List&lt;Object&gt; common, String tools, IsolatedConfig config) {
+<span class="fc bfc" id="L336" title="All 2 branches covered.">        if (app.containsKey(&quot;envFrom&quot;)) throw new IllegalArgumentException(&quot;isolated training requires explicit JVM option env entries; envFrom is not supported&quot;);</span>
+<span class="fc" id="L337">        String name = trainerName(w.name()), trainingName = name + &quot;-training&quot;;</span>
+<span class="fc" id="L338">        Map&lt;String, Object&gt; labels = obj(OWNER, w.name());</span>
+<span class="fc" id="L339">        Map&lt;String, Object&gt; metadata = obj(&quot;name&quot;, name, &quot;namespace&quot;, w.namespace(), &quot;labels&quot;, labels, &quot;annotations&quot;, obj(MARKER, &quot;generated&quot;));</span>
+<span class="fc" id="L340">        List&lt;Object&gt; buildArgs = new ArrayList&lt;&gt;(List.of(&quot;jar&quot;, &quot;build&quot;, &quot;--jar&quot;, w.jar(), &quot;--work-dir&quot;, &quot;/mnemo-handoff&quot;, &quot;--group-readable-output&quot;, &quot;--cache-type&quot;, &quot;auto&quot;, &quot;--exit-mode&quot;, w.exitMode()));</span>
+<span class="pc bpc" id="L341" title="1 of 2 branches missed.">        for (String arg : w.jvmArgs()) buildArgs.add(&quot;--jvm-arg=&quot; + arg);</span>
+<span class="pc bpc" id="L342" title="1 of 2 branches missed.">        if (w.probeUrl() != null) buildArgs.addAll(List.of(&quot;--url&quot;, w.probeUrl()));</span>
+<span class="fc" id="L343">        Map&lt;String, Object&gt; training = obj(&quot;name&quot;, &quot;trainer&quot;, &quot;image&quot;, w.image(), &quot;command&quot;, List.of(LAUNCHER), &quot;args&quot;, buildArgs,</span>
+<span class="fc" id="L344">                &quot;volumeMounts&quot;, new ArrayList&lt;&gt;(List.of(mount(&quot;mnemo-tools&quot;, &quot;/mnemo-tools&quot;, true))));</span>
+<span class="fc" id="L345">        copyMounts(app, training);</span>
+<span class="fc" id="L346">        copyIfPresent(app, training, &quot;env&quot;, &quot;imagePullPolicy&quot;, &quot;securityContext&quot;, &quot;resources&quot;, &quot;workingDir&quot;);</span>
+<span class="fc" id="L347">        Map&lt;String, Object&gt; trainingPod = obj(&quot;containers&quot;, List.of(training), &quot;initContainers&quot;, List.of(install(tools)),</span>
+<span class="fc" id="L348">                &quot;volumes&quot;, new ArrayList&lt;&gt;(List.of(toolsVolume(false, tools))));</span>
+<span class="fc bfc" id="L349" title="All 4 branches covered.">        if (pod.get(&quot;volumes&quot;) instanceof List&lt;?&gt; volumes) for (Object volume : volumes) append(trainingPod, &quot;volumes&quot;, volume);</span>
+<span class="fc" id="L350">        copyIfPresent(pod, trainingPod, &quot;imagePullSecrets&quot;, &quot;nodeSelector&quot;, &quot;tolerations&quot;, &quot;affinity&quot;, &quot;securityContext&quot;);</span>
+<span class="pc bpc" id="L351" title="1 of 2 branches missed.">        Map&lt;String, Object&gt; security = trainingPod.containsKey(&quot;securityContext&quot;) ? map(trainingPod.get(&quot;securityContext&quot;), &quot;securityContext&quot;) : new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L352">        security.put(&quot;fsGroup&quot;, config.group()); trainingPod.put(&quot;securityContext&quot;, security);</span>
+<span class="fc" id="L353">        var protectedSecrets = new java.util.HashSet&lt;String&gt;(); protectedSecrets.add(w.signingKeySecret());</span>
+<span class="pc bpc" id="L354" title="1 of 2 branches missed.">        if (w.pushSecret() != null) protectedSecrets.add(w.pushSecret());</span>
+        try {
+<span class="fc" id="L356">            IsolatedTrainingPodFactory.build(trainingPod, w.namespace(), &quot;mnemo-train-check&quot;, trainingName, config.claim(), &quot;mnemo-run-check&quot;,</span>
+<span class="fc" id="L357">                    protectedSecrets, new java.util.HashSet&lt;&gt;(config.allowedSecrets()), 1800, null);</span>
+<span class="fc" id="L358">        } catch (IllegalArgumentException e) {</span>
+<span class="fc bfc" id="L359" title="All 2 branches covered.">            throw new IllegalArgumentException(e.getMessage().contains(&quot;allowed training Secrets&quot;)</span>
+<span class="fc" id="L360">                    ? e.getMessage() + &quot;; list the Secrets the application needs in &quot; + WorkloadDiscovery.PREFIX + ALLOWED_SECRETS : e.getMessage(), e);</span>
+<span class="fc" id="L361">        }</span>
+<span class="fc" id="L362">        String trainingYaml = ManifestStream.render(List.of(trainingPod));</span>
+<span class="fc" id="L363">        String templateSha = sha256(trainingYaml);</span>
+        // immutable, so named after its content: a changed template is a new ConfigMap, and the coordinator checks the digest anyway
+<span class="fc" id="L365">        String templateName = name + &quot;-template-&quot; + templateSha.substring(0, 10);</span>
+<span class="fc" id="L366">        Map&lt;String, Object&gt; template = obj(&quot;apiVersion&quot;, &quot;v1&quot;, &quot;kind&quot;, &quot;ConfigMap&quot;, &quot;metadata&quot;, obj(&quot;name&quot;, templateName, &quot;namespace&quot;, w.namespace(), &quot;labels&quot;, labels, &quot;annotations&quot;, obj(MARKER, &quot;generated&quot;)),</span>
+<span class="fc" id="L367">                &quot;immutable&quot;, true, &quot;data&quot;, obj(&quot;training.yaml&quot;, trainingYaml));</span>
+<span class="fc" id="L368">        List&lt;Object&gt; args = new ArrayList&lt;&gt;(List.of(&quot;jar-isolated&quot;, config.java(), &quot;coordinate-isolated&quot;)); args.addAll(common);</span>
+<span class="fc" id="L369">        args.addAll(List.of(&quot;--training-template&quot;, &quot;/etc/mnemo-training/training.yaml&quot;, &quot;--training-template-sha256&quot;, templateSha, &quot;--training-service-account&quot;, trainingName,</span>
+<span class="fc" id="L370">                &quot;--handoff-claim&quot;, config.claim(), &quot;--handoff-root&quot;, &quot;/mnemo-shared&quot;, &quot;--signing-secret-name&quot;, w.signingKeySecret(), &quot;--training-timeout-seconds&quot;, &quot;1800&quot;));</span>
+<span class="pc bpc" id="L371" title="1 of 2 branches missed.">        if (w.pushSecret() != null) args.addAll(List.of(&quot;--push-secret-name&quot;, w.pushSecret()));</span>
+<span class="fc bfc" id="L372" title="All 2 branches covered.">        for (String secret : config.allowedSecrets()) args.add(&quot;--allowed-secret=&quot; + secret);</span>
+<span class="fc" id="L373">        List&lt;Object&gt; env = new ArrayList&lt;&gt;(List.of(obj(&quot;name&quot;, &quot;POD_NAMESPACE&quot;, &quot;valueFrom&quot;, obj(&quot;fieldRef&quot;, obj(&quot;fieldPath&quot;, &quot;metadata.namespace&quot;))),</span>
+<span class="fc" id="L374">                obj(&quot;name&quot;, &quot;POD_NAME&quot;, &quot;valueFrom&quot;, obj(&quot;fieldRef&quot;, obj(&quot;fieldPath&quot;, &quot;metadata.name&quot;))),</span>
+<span class="fc" id="L375">                obj(&quot;name&quot;, &quot;POD_UID&quot;, &quot;valueFrom&quot;, obj(&quot;fieldRef&quot;, obj(&quot;fieldPath&quot;, &quot;metadata.uid&quot;))),</span>
+<span class="fc" id="L376">                obj(&quot;name&quot;, SigningKey.ENV_KEY_FILE, &quot;value&quot;, SIGNING_KEY_PATH), publicKeysEnv(w)));</span>
+<span class="fc bfc" id="L377" title="All 4 branches covered.">        if (app.get(&quot;env&quot;) instanceof List&lt;?&gt; entries) for (Object raw : entries) {</span>
+<span class="fc" id="L378">            Map&lt;String, Object&gt; entry = map(raw, &quot;env&quot;);</span>
+<span class="fc bfc" id="L379" title="All 2 branches covered.">            if (List.of(&quot;JAVA_TOOL_OPTIONS&quot;, &quot;JDK_JAVA_OPTIONS&quot;).contains(entry.get(&quot;name&quot;))) {</span>
+<span class="fc" id="L380">                Map&lt;String, Object&gt; target = new LinkedHashMap&lt;&gt;(entry); target.put(&quot;name&quot;, &quot;MNEMO_TARGET_&quot; + entry.get(&quot;name&quot;)); env.add(target);</span>
+            }
+<span class="fc" id="L382">        }</span>
+<span class="fc" id="L383">        List&lt;Object&gt; volumes = new ArrayList&lt;&gt;(List.of(toolsVolume(false, tools), obj(&quot;name&quot;, &quot;mnemo-work&quot;, &quot;emptyDir&quot;, obj()),</span>
+<span class="fc" id="L384">                obj(&quot;name&quot;, &quot;mnemo-publisher-tmp&quot;, &quot;emptyDir&quot;, obj(&quot;sizeLimit&quot;, PUBLISHER_TMP_LIMIT)), obj(&quot;name&quot;, &quot;mnemo-shared&quot;, &quot;persistentVolumeClaim&quot;, obj(&quot;claimName&quot;, config.claim())),</span>
+<span class="fc" id="L385">                obj(&quot;name&quot;, &quot;mnemo-template&quot;, &quot;configMap&quot;, obj(&quot;name&quot;, templateName)), obj(&quot;name&quot;, SIGNING_VOLUME, &quot;secret&quot;, obj(&quot;secretName&quot;, w.signingKeySecret(), &quot;defaultMode&quot;, 0440, &quot;items&quot;, List.of(obj(&quot;key&quot;, &quot;signing.key&quot;, &quot;path&quot;, &quot;signing.key&quot;))))));</span>
+<span class="fc" id="L386">        List&lt;Object&gt; mounts = new ArrayList&lt;&gt;(List.of(mount(&quot;mnemo-tools&quot;, &quot;/mnemo-tools&quot;, true), mount(&quot;mnemo-work&quot;, &quot;/tmp/mnemo-warmup&quot;, false),</span>
+<span class="fc" id="L387">                mount(&quot;mnemo-publisher-tmp&quot;, &quot;/tmp&quot;, false), mount(&quot;mnemo-shared&quot;, &quot;/mnemo-shared&quot;, false), mount(&quot;mnemo-template&quot;, &quot;/etc/mnemo-training&quot;, true), mount(SIGNING_VOLUME, SIGNING_KEY_DIR, true)));</span>
+<span class="pc bpc" id="L388" title="1 of 2 branches missed.">        if (w.pushSecret() != null) { env.add(obj(&quot;name&quot;, &quot;MNEMO_WARMUP_REGISTRY_AUTH&quot;, &quot;value&quot;, &quot;/var/run/mnemo-warmup/registry/config.json&quot;)); volumes.add(secretVolume(&quot;mnemo-registry-push&quot;, w.pushSecret())); mounts.add(mount(&quot;mnemo-registry-push&quot;, &quot;/var/run/mnemo-warmup/registry&quot;, true)); }</span>
+<span class="fc" id="L389">        Map&lt;String, Object&gt; publisher = obj(&quot;name&quot;, &quot;publisher&quot;, &quot;image&quot;, config.publisher(), &quot;command&quot;, List.of(LAUNCHER), &quot;args&quot;, args, &quot;env&quot;, env, &quot;volumeMounts&quot;, mounts,</span>
+<span class="fc" id="L390">                &quot;securityContext&quot;, obj(&quot;runAsNonRoot&quot;, true, &quot;runAsUser&quot;, 65532, &quot;allowPrivilegeEscalation&quot;, false, &quot;readOnlyRootFilesystem&quot;, true, &quot;capabilities&quot;, obj(&quot;drop&quot;, List.of(&quot;ALL&quot;)), &quot;seccompProfile&quot;, obj(&quot;type&quot;, &quot;RuntimeDefault&quot;)));</span>
+<span class="fc" id="L391">        Map&lt;String, Object&gt; publisherPod = obj(&quot;restartPolicy&quot;, &quot;Never&quot;, &quot;serviceAccountName&quot;, name, &quot;automountServiceAccountToken&quot;, true,</span>
+<span class="fc" id="L392">                &quot;securityContext&quot;, obj(&quot;fsGroup&quot;, config.group()), &quot;initContainers&quot;, List.of(install(tools)), &quot;containers&quot;, List.of(publisher), &quot;volumes&quot;, volumes);</span>
+<span class="fc" id="L393">        copyIfPresent(pod, publisherPod, &quot;imagePullSecrets&quot;);</span>
+<span class="fc" id="L394">        Map&lt;String, Object&gt; cron = obj(&quot;apiVersion&quot;, &quot;batch/v1&quot;, &quot;kind&quot;, &quot;CronJob&quot;, &quot;metadata&quot;, metadata, &quot;spec&quot;, obj(&quot;schedule&quot;, &quot;*/10 * * * *&quot;, &quot;concurrencyPolicy&quot;, &quot;Forbid&quot;, &quot;jobTemplate&quot;, obj(&quot;spec&quot;, obj(&quot;backoffLimit&quot;, 0, &quot;activeDeadlineSeconds&quot;, 3600, &quot;template&quot;, obj(&quot;spec&quot;, publisherPod)))));</span>
+<span class="fc" id="L395">        Map&lt;String, Object&gt; sa = obj(&quot;apiVersion&quot;, &quot;v1&quot;, &quot;kind&quot;, &quot;ServiceAccount&quot;, &quot;metadata&quot;, metadata);</span>
+<span class="fc" id="L396">        Map&lt;String, Object&gt; trainSa = obj(&quot;apiVersion&quot;, &quot;v1&quot;, &quot;kind&quot;, &quot;ServiceAccount&quot;, &quot;metadata&quot;, obj(&quot;name&quot;, trainingName, &quot;namespace&quot;, w.namespace(), &quot;labels&quot;, labels, &quot;annotations&quot;, obj(MARKER, &quot;generated&quot;)), &quot;automountServiceAccountToken&quot;, false);</span>
+<span class="fc" id="L397">        Map&lt;String, Object&gt; role = obj(&quot;apiVersion&quot;, &quot;rbac.authorization.k8s.io/v1&quot;, &quot;kind&quot;, &quot;Role&quot;, &quot;metadata&quot;, metadata, &quot;rules&quot;, List.of(</span>
+<span class="fc" id="L398">                obj(&quot;apiGroups&quot;, List.of(&quot;coordination.k8s.io&quot;), &quot;resources&quot;, List.of(&quot;leases&quot;), &quot;verbs&quot;, List.of(&quot;get&quot;, &quot;create&quot;, &quot;update&quot;, &quot;delete&quot;)),</span>
+<span class="fc" id="L399">                obj(&quot;apiGroups&quot;, List.of(&quot;&quot;), &quot;resources&quot;, List.of(&quot;pods&quot;), &quot;verbs&quot;, List.of(&quot;get&quot;, &quot;create&quot;, &quot;delete&quot;))));</span>
+<span class="fc" id="L400">        Map&lt;String, Object&gt; binding = obj(&quot;apiVersion&quot;, &quot;rbac.authorization.k8s.io/v1&quot;, &quot;kind&quot;, &quot;RoleBinding&quot;, &quot;metadata&quot;, metadata, &quot;roleRef&quot;, obj(&quot;apiGroup&quot;, &quot;rbac.authorization.k8s.io&quot;, &quot;kind&quot;, &quot;Role&quot;, &quot;name&quot;, name), &quot;subjects&quot;, List.of(obj(&quot;kind&quot;, &quot;ServiceAccount&quot;, &quot;name&quot;, name, &quot;namespace&quot;, w.namespace())));</span>
+<span class="fc" id="L401">        List&lt;Map&lt;String, Object&gt;&gt; result = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L402" title="All 2 branches covered.">        for (Map&lt;String, Object&gt; resource : List.of(sa, trainSa, role, binding, template, cron)) {</span>
+<span class="fc" id="L403">            Map&lt;String, Object&gt; copy = ManifestStream.parse(ManifestStream.render(List.of(resource))).get(0);</span>
+<span class="fc" id="L404">            map(map(copy.get(&quot;metadata&quot;), &quot;metadata&quot;).get(&quot;annotations&quot;), &quot;annotations&quot;).put(CHECKSUM, checksum(copy)); result.add(copy);</span>
+<span class="fc" id="L405">        }</span>
+<span class="fc" id="L406">        return result;</span>
+    }
+
     /** Signed archives (docs/adr/0013): the key list goes to the pods, the private key only to the trainer. */
     private static final String SIGNING_VOLUME = &quot;mnemo-signing-key&quot;;
     private static final String SIGNING_KEY_DIR = &quot;/var/run/mnemo-warmup/signing&quot;;
     private static final String SIGNING_KEY_PATH = SIGNING_KEY_DIR + &quot;/signing.key&quot;;
     /** The environment variables on the application container that this tool owns. */
     private static List&lt;String&gt; appEnvNames(WorkloadDiscovery.Workload w) {
-<span class="fc bfc" id="L303" title="All 2 branches covered.">        return w.signingPublicKeys() == null ? List.of(&quot;MNEMO_WARMUP_CACHE_DIR&quot;) : List.of(&quot;MNEMO_WARMUP_CACHE_DIR&quot;, ArchiveVerifier.ENV_PUBLIC_KEYS);</span>
+<span class="fc bfc" id="L415" title="All 2 branches covered.">        return w.signingPublicKeys() == null ? List.of(&quot;MNEMO_WARMUP_CACHE_DIR&quot;) : List.of(&quot;MNEMO_WARMUP_CACHE_DIR&quot;, ArchiveVerifier.ENV_PUBLIC_KEYS);</span>
     }
     private static Map&lt;String, Object&gt; publicKeysEnv(WorkloadDiscovery.Workload w) {
-<span class="fc" id="L306">        return obj(&quot;name&quot;, ArchiveVerifier.ENV_PUBLIC_KEYS, &quot;value&quot;, w.signingPublicKeys());</span>
+<span class="fc" id="L418">        return obj(&quot;name&quot;, ArchiveVerifier.ENV_PUBLIC_KEYS, &quot;value&quot;, w.signingPublicKeys());</span>
     }
     /**
      * A Secret file is owned by root and, with mode 0440, readable by its group only. A trainer that runs as a non-root user can read it
@@ -312,169 +424,190 @@ import io.github.baokhang83.mnemo.warmup.core.RegistryCredentials;
      * decides) a note says what to check.
      */
     private static void requireReadableSigningKey(Map&lt;String, Object&gt; pod, Map&lt;String, Object&gt; app) {
-<span class="fc bfc" id="L315" title="All 4 branches covered.">        if (nonRootTrainer(pod, app) == Boolean.TRUE &amp;&amp; !hasFsGroup(pod)) {</span>
-<span class="fc" id="L316">            throw new IllegalArgumentException(&quot;signing-key-secret: the trainer runs as a non-root user but the pod has no fsGroup, so it could not read &quot;</span>
+<span class="fc bfc" id="L427" title="All 4 branches covered.">        if (nonRootTrainer(pod, app) == Boolean.TRUE &amp;&amp; !hasFsGroup(pod)) {</span>
+<span class="fc" id="L428">            throw new IllegalArgumentException(&quot;signing-key-secret: the trainer runs as a non-root user but the pod has no fsGroup, so it could not read &quot;</span>
                     + &quot;the signing key (mode 0440). Add fsGroup to the Deployment's pod securityContext (it is copied to the trainer pod), or run as root&quot;);
         }
-<span class="fc" id="L319">    }</span>
+<span class="fc" id="L431">    }</span>
     private static boolean hasFsGroup(Map&lt;String, Object&gt; pod) {
-<span class="fc bfc" id="L321" title="All 4 branches covered.">        return pod.get(&quot;securityContext&quot;) instanceof Map&lt;?, ?&gt; sc &amp;&amp; sc.get(&quot;fsGroup&quot;) != null;</span>
+<span class="fc bfc" id="L433" title="All 4 branches covered.">        return pod.get(&quot;securityContext&quot;) instanceof Map&lt;?, ?&gt; sc &amp;&amp; sc.get(&quot;fsGroup&quot;) != null;</span>
     }
     /** TRUE when the trainer is known to run as a non-root user, FALSE when known to run as root, null when the image decides. */
     private static Boolean nonRootTrainer(Map&lt;String, Object&gt; pod, Map&lt;String, Object&gt; app) {
-<span class="fc" id="L325">        Object user = null, nonRoot = null;</span>
-<span class="fc bfc" id="L326" title="All 2 branches covered.">        for (Object scope : new Object[] {pod.get(&quot;securityContext&quot;), app.get(&quot;securityContext&quot;)}) { // the container's setting wins</span>
-<span class="fc bfc" id="L327" title="All 2 branches covered.">            if (scope instanceof Map&lt;?, ?&gt; sc) {</span>
-<span class="fc bfc" id="L328" title="All 2 branches covered.">                if (sc.get(&quot;runAsUser&quot;) != null) user = sc.get(&quot;runAsUser&quot;);</span>
-<span class="fc bfc" id="L329" title="All 2 branches covered.">                if (sc.get(&quot;runAsNonRoot&quot;) != null) nonRoot = sc.get(&quot;runAsNonRoot&quot;);</span>
+<span class="fc" id="L437">        Object user = null, nonRoot = null;</span>
+<span class="fc bfc" id="L438" title="All 2 branches covered.">        for (Object scope : new Object[] {pod.get(&quot;securityContext&quot;), app.get(&quot;securityContext&quot;)}) { // the container's setting wins</span>
+<span class="fc bfc" id="L439" title="All 2 branches covered.">            if (scope instanceof Map&lt;?, ?&gt; sc) {</span>
+<span class="fc bfc" id="L440" title="All 2 branches covered.">                if (sc.get(&quot;runAsUser&quot;) != null) user = sc.get(&quot;runAsUser&quot;);</span>
+<span class="fc bfc" id="L441" title="All 2 branches covered.">                if (sc.get(&quot;runAsNonRoot&quot;) != null) nonRoot = sc.get(&quot;runAsNonRoot&quot;);</span>
             }
         }
-<span class="fc bfc" id="L332" title="All 4 branches covered.">        if (user instanceof Number n) return n.longValue() != 0;</span>
-<span class="fc bfc" id="L333" title="All 2 branches covered.">        if (Boolean.TRUE.equals(nonRoot)) return true;</span>
-<span class="fc" id="L334">        return null;</span>
+<span class="fc bfc" id="L444" title="All 4 branches covered.">        if (user instanceof Number n) return n.longValue() != 0;</span>
+<span class="fc bfc" id="L445" title="All 2 branches covered.">        if (Boolean.TRUE.equals(nonRoot)) return true;</span>
+<span class="fc" id="L446">        return null;</span>
     }
     private static List&lt;String&gt; signingNotes(WorkloadDiscovery.Workload w) {
-<span class="fc" id="L337">        List&lt;String&gt; notes = new ArrayList&lt;&gt;();</span>
-<span class="fc bfc" id="L338" title="All 4 branches covered.">        if (w.signingPublicKeys() != null &amp;&amp; w.signingKeySecret() != null) {</span>
-<span class="fc" id="L339">            notes.add(&quot;  signing: pods require archives signed by key &quot; + WorkloadDiscovery.keyIds(w.signingPublicKeys())</span>
-<span class="fc" id="L340">                    + &quot;; the trainer signs with secret/&quot; + w.signingKeySecret());</span>
-<span class="fc" id="L341">            notes.add(&quot;  signing: until the trainer is split (ADR 0013, stage B), application code running in the trainer can read that key&quot;);</span>
-<span class="fc bfc" id="L342" title="All 2 branches covered.">        } else if (w.signingPublicKeys() != null) {</span>
-<span class="fc" id="L343">            notes.add(&quot;  signing: pods require signed archives, but no signing-key-secret is given, so the trainer publishes unsigned archives and every archive is refused&quot;);</span>
-<span class="fc bfc" id="L344" title="All 2 branches covered.">        } else if (w.signingKeySecret() != null) {</span>
-<span class="fc" id="L345">            notes.add(&quot;  signing: the trainer signs with secret/&quot; + w.signingKeySecret() + &quot;, but no signing-public-keys is given, so pods do not check signatures&quot;);</span>
+<span class="fc" id="L449">        List&lt;String&gt; notes = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L450" title="All 4 branches covered.">        if (w.signingPublicKeys() != null &amp;&amp; w.signingKeySecret() != null) {</span>
+<span class="fc" id="L451">            notes.add(&quot;  signing: pods require archives signed by key &quot; + WorkloadDiscovery.keyIds(w.signingPublicKeys())</span>
+<span class="fc" id="L452">                    + &quot;; the trainer signs with secret/&quot; + w.signingKeySecret());</span>
+<span class="fc" id="L453">            notes.add(&quot;  signing: until the trainer is split (ADR 0013, stage B), application code running in the trainer can read that key&quot;);</span>
+<span class="fc bfc" id="L454" title="All 2 branches covered.">        } else if (w.signingPublicKeys() != null) {</span>
+<span class="fc" id="L455">            notes.add(&quot;  signing: pods require signed archives, but no signing-key-secret is given, so the trainer publishes unsigned archives and every archive is refused&quot;);</span>
+<span class="fc bfc" id="L456" title="All 2 branches covered.">        } else if (w.signingKeySecret() != null) {</span>
+<span class="fc" id="L457">            notes.add(&quot;  signing: the trainer signs with secret/&quot; + w.signingKeySecret() + &quot;, but no signing-public-keys is given, so pods do not check signatures&quot;);</span>
         }
-<span class="fc" id="L347">        return notes;</span>
+<span class="fc" id="L459">        return notes;</span>
     }
-<span class="fc bfc" id="L349" title="All 2 branches covered.">    private static String trainerName(String name) { return (name.length() &gt; 42 ? name.substring(0, 42).replaceAll(&quot;-+$&quot;, &quot;&quot;) : name) + &quot;-mw-&quot; + Integer.toUnsignedString(name.hashCode(), 36); }</span>
+    private static List&lt;String&gt; isolationNotes(WorkloadDiscovery.Workload w, IsolatedConfig config) {
+<span class="fc" id="L462">        return List.of(</span>
+<span class="fc" id="L463">            &quot;  signing: pods require archives signed by key &quot; + WorkloadDiscovery.keyIds(w.signingPublicKeys())</span>
+<span class="pc bpc" id="L464" title="1 of 2 branches missed.">                + &quot;; only the coordinator pod mounts secret/&quot; + w.signingKeySecret() + (w.pushSecret() == null ? &quot;&quot; : &quot; and secret/&quot; + w.pushSecret()),</span>
+<span class="fc" id="L465">            &quot;  isolation: training runs in a separate pod as serviceaccount/&quot; + trainerName(w.name()) + &quot;-training with no API token; it writes to pvc/&quot;</span>
+<span class="fc" id="L466">                + config.claim() + &quot; (fsGroup &quot; + config.group() + &quot;), which must already exist and support POSIX group permissions&quot;,</span>
+<span class="fc" id="L467">            &quot;  isolation: publisher &quot; + config.publisher() + &quot; must contain the application JAR at &quot; + w.jar() + &quot; and the exact target JDK at &quot; + config.java(),</span>
+<span class="fc" id="L468">            &quot;  isolation: the coordinator can create pods in &quot; + w.namespace() + &quot;; restrict the namespace with admission policy (see the chart README)&quot;,</span>
+<span class="fc bfc" id="L469" title="All 2 branches covered.">            &quot;  isolation: training may reference only these Secrets: &quot; + (config.allowedSecrets().isEmpty() ? &quot;none&quot; : config.allowedSecrets())</span>
+                + &quot;; it runs with runAsNonRoot, so the image must not run as root (or set runAsUser)&quot;,
+            &quot;  isolation: JAVA_TOOL_OPTIONS/JDK_JAVA_OPTIONS set by the image itself are not visible offline; set them as container env if the target uses them&quot;,
+            &quot;  isolation: a signature proves which publisher signed the bytes, not that the application that trained them is benign&quot;);
+    }
+<span class="fc bfc" id="L474" title="All 2 branches covered.">    private static String trainerName(String name) { return (name.length() &gt; 42 ? name.substring(0, 42).replaceAll(&quot;-+$&quot;, &quot;&quot;) : name) + &quot;-mw-&quot; + Integer.toUnsignedString(name.hashCode(), 36); }</span>
     private static List&lt;Object&gt; commonArgs(WorkloadDiscovery.Workload w) {
-<span class="fc" id="L351">        List&lt;Object&gt; args = new ArrayList&lt;&gt;(List.of(&quot;--jar&quot;, w.jar(), &quot;--work-dir&quot;, &quot;/tmp/mnemo-warmup&quot;, &quot;--store&quot;, w.store(), &quot;--cache-type&quot;, &quot;auto&quot;));</span>
-<span class="pc bpc" id="L352" title="1 of 2 branches missed.">        for (String arg : w.jvmArgs()) args.add(&quot;--jvm-arg=&quot; + arg);</span>
-<span class="pc bpc" id="L353" title="1 of 2 branches missed.">        if (w.plainHttp()) args.add(&quot;--plain-http&quot;);</span>
-<span class="fc" id="L354">        return args;</span>
+<span class="fc" id="L476">        List&lt;Object&gt; args = new ArrayList&lt;&gt;(List.of(&quot;--jar&quot;, w.jar(), &quot;--work-dir&quot;, &quot;/tmp/mnemo-warmup&quot;, &quot;--store&quot;, w.store(), &quot;--cache-type&quot;, &quot;auto&quot;));</span>
+<span class="pc bpc" id="L477" title="1 of 2 branches missed.">        for (String arg : w.jvmArgs()) args.add(&quot;--jvm-arg=&quot; + arg);</span>
+<span class="pc bpc" id="L478" title="1 of 2 branches missed.">        if (w.plainHttp()) args.add(&quot;--plain-http&quot;);</span>
+<span class="fc" id="L479">        return args;</span>
     }
     /** The shell-free launcher: works in distroless images, unlike the sh scripts the Helm chart still uses. */
     private static final String LAUNCHER = &quot;/mnemo-tools/bin/mnemo-launcher&quot;;
     /** An image volume holds the whole tools image, and the tools sit under /opt/mnemo-warmup in it (docs/adr/0012). */
     private static final String LAUNCHER_IMAGE_VOLUME = &quot;/mnemo-tools/opt/mnemo-warmup/bin/mnemo-launcher&quot;;
-<span class="fc bfc" id="L360" title="All 2 branches covered.">    private static String launcherPath(boolean imageVolume) { return imageVolume ? LAUNCHER_IMAGE_VOLUME : LAUNCHER; }</span>
+<span class="fc bfc" id="L485" title="All 2 branches covered.">    private static String launcherPath(boolean imageVolume) { return imageVolume ? LAUNCHER_IMAGE_VOLUME : LAUNCHER; }</span>
     /** The application container's volume mounts that this tool owns. */
-<span class="fc bfc" id="L362" title="All 2 branches covered.">    private static List&lt;String&gt; appMountNames(boolean inlineFetch) { return inlineFetch ? List.of(&quot;mnemo-tools&quot;, &quot;mnemo-cache&quot;, &quot;mnemo-work&quot;) : List.of(&quot;mnemo-tools&quot;, &quot;mnemo-cache&quot;); }</span>
+<span class="fc bfc" id="L487" title="All 2 branches covered.">    private static List&lt;String&gt; appMountNames(boolean inlineFetch) { return inlineFetch ? List.of(&quot;mnemo-tools&quot;, &quot;mnemo-cache&quot;, &quot;mnemo-work&quot;) : List.of(&quot;mnemo-tools&quot;, &quot;mnemo-cache&quot;); }</span>
     private static Map&lt;String, Object&gt; toolsVolume(boolean imageVolume, String tools) {
-<span class="fc bfc" id="L364" title="All 2 branches covered.">        return imageVolume ? obj(&quot;name&quot;, &quot;mnemo-tools&quot;, &quot;image&quot;, obj(&quot;reference&quot;, tools, &quot;pullPolicy&quot;, &quot;IfNotPresent&quot;)) : obj(&quot;name&quot;, &quot;mnemo-tools&quot;, &quot;emptyDir&quot;, obj());</span>
+<span class="fc bfc" id="L489" title="All 2 branches covered.">        return imageVolume ? obj(&quot;name&quot;, &quot;mnemo-tools&quot;, &quot;image&quot;, obj(&quot;reference&quot;, tools, &quot;pullPolicy&quot;, &quot;IfNotPresent&quot;)) : obj(&quot;name&quot;, &quot;mnemo-tools&quot;, &quot;emptyDir&quot;, obj());</span>
     }
     /** {@code exec [fetch options] -- command}: with fetch options the launcher fetches first (image-volume mode). */
     private static List&lt;Object&gt; launcherExecArgs(List&lt;String&gt; command, List&lt;Object&gt; fetchOptions) {
-<span class="fc" id="L368">        List&lt;Object&gt; args = new ArrayList&lt;&gt;(List.of(&quot;exec&quot;));</span>
-<span class="fc" id="L369">        args.addAll(fetchOptions);</span>
-<span class="fc" id="L370">        args.add(&quot;--&quot;);</span>
-<span class="fc" id="L371">        args.addAll(command);</span>
-<span class="fc" id="L372">        return args;</span>
+<span class="fc" id="L493">        List&lt;Object&gt; args = new ArrayList&lt;&gt;(List.of(&quot;exec&quot;));</span>
+<span class="fc" id="L494">        args.addAll(fetchOptions);</span>
+<span class="fc" id="L495">        args.add(&quot;--&quot;);</span>
+<span class="fc" id="L496">        args.addAll(command);</span>
+<span class="fc" id="L497">        return args;</span>
     }
     private static Map&lt;String, Object&gt; install(String tools) {
-<span class="fc" id="L375">        return obj(&quot;name&quot;, &quot;mnemo-warmup-install&quot;, &quot;image&quot;, tools,</span>
-<span class="fc" id="L376">                &quot;command&quot;, List.of(&quot;/opt/mnemo-warmup/bin/mnemo-launcher&quot;, &quot;install&quot;, &quot;/mnemo-tools&quot;),</span>
-<span class="fc" id="L377">                &quot;securityContext&quot;, obj(&quot;runAsNonRoot&quot;, true, &quot;runAsUser&quot;, 65532, &quot;allowPrivilegeEscalation&quot;, false,</span>
-<span class="fc" id="L378">                        &quot;readOnlyRootFilesystem&quot;, true, &quot;capabilities&quot;, obj(&quot;drop&quot;, List.of(&quot;ALL&quot;)),</span>
-<span class="fc" id="L379">                        &quot;seccompProfile&quot;, obj(&quot;type&quot;, &quot;RuntimeDefault&quot;)),</span>
-<span class="fc" id="L380">                &quot;volumeMounts&quot;, List.of(mount(&quot;mnemo-tools&quot;, &quot;/mnemo-tools&quot;, false)));</span>
+<span class="fc" id="L500">        return obj(&quot;name&quot;, &quot;mnemo-warmup-install&quot;, &quot;image&quot;, tools,</span>
+<span class="fc" id="L501">                &quot;command&quot;, List.of(&quot;/opt/mnemo-warmup/bin/mnemo-launcher&quot;, &quot;install&quot;, &quot;/mnemo-tools&quot;),</span>
+<span class="fc" id="L502">                &quot;securityContext&quot;, obj(&quot;runAsNonRoot&quot;, true, &quot;runAsUser&quot;, 65532, &quot;allowPrivilegeEscalation&quot;, false,</span>
+<span class="fc" id="L503">                        &quot;readOnlyRootFilesystem&quot;, true, &quot;capabilities&quot;, obj(&quot;drop&quot;, List.of(&quot;ALL&quot;)),</span>
+<span class="fc" id="L504">                        &quot;seccompProfile&quot;, obj(&quot;type&quot;, &quot;RuntimeDefault&quot;)),</span>
+<span class="fc" id="L505">                &quot;volumeMounts&quot;, List.of(mount(&quot;mnemo-tools&quot;, &quot;/mnemo-tools&quot;, false)));</span>
     }
-<span class="fc" id="L382">    private static Map&lt;String, Object&gt; mount(String name, String path, boolean readOnly) { return obj(&quot;name&quot;, name, &quot;mountPath&quot;, path, &quot;readOnly&quot;, readOnly); }</span>
+<span class="fc" id="L507">    private static Map&lt;String, Object&gt; mount(String name, String path, boolean readOnly) { return obj(&quot;name&quot;, name, &quot;mountPath&quot;, path, &quot;readOnly&quot;, readOnly); }</span>
     private static Map&lt;String, Object&gt; secretVolume(String name, String secret) {
-<span class="fc" id="L384">        return obj(&quot;name&quot;, name, &quot;secret&quot;, obj(&quot;secretName&quot;, secret, &quot;items&quot;, List.of(obj(&quot;key&quot;, &quot;.dockerconfigjson&quot;, &quot;path&quot;, &quot;config.json&quot;))));</span>
+<span class="fc" id="L509">        return obj(&quot;name&quot;, name, &quot;secret&quot;, obj(&quot;secretName&quot;, secret, &quot;items&quot;, List.of(obj(&quot;key&quot;, &quot;.dockerconfigjson&quot;, &quot;path&quot;, &quot;config.json&quot;))));</span>
     }
     private static void copyMounts(Map&lt;String, Object&gt; from, Map&lt;String, Object&gt; to) {
-<span class="fc bfc" id="L387" title="All 4 branches covered.">        if (from.get(&quot;volumeMounts&quot;) instanceof List&lt;?&gt; mounts) for (Object mount : mounts) {</span>
-<span class="pc bpc" id="L388" title="1 of 2 branches missed.">            if (!(mount instanceof Map&lt;?, ?&gt; m)) throw new IllegalArgumentException(&quot;invalid volume mount&quot;);</span>
-<span class="fc bfc" id="L389" title="All 2 branches covered.">            if (!List.of(&quot;mnemo-tools&quot;, &quot;mnemo-work&quot;, &quot;mnemo-cache&quot;).contains(m.get(&quot;name&quot;))) append(to, &quot;volumeMounts&quot;, mount);</span>
-<span class="fc" id="L390">        }</span>
-<span class="fc" id="L391">    }</span>
+<span class="fc bfc" id="L512" title="All 4 branches covered.">        if (from.get(&quot;volumeMounts&quot;) instanceof List&lt;?&gt; mounts) for (Object mount : mounts) {</span>
+<span class="pc bpc" id="L513" title="1 of 2 branches missed.">            if (!(mount instanceof Map&lt;?, ?&gt; m)) throw new IllegalArgumentException(&quot;invalid volume mount&quot;);</span>
+<span class="fc bfc" id="L514" title="All 2 branches covered.">            if (!List.of(&quot;mnemo-tools&quot;, &quot;mnemo-work&quot;, &quot;mnemo-cache&quot;).contains(m.get(&quot;name&quot;))) append(to, &quot;volumeMounts&quot;, mount);</span>
+<span class="fc" id="L515">        }</span>
+<span class="fc" id="L516">    }</span>
     private static boolean isGenerated(Map&lt;String, Object&gt; doc) {
-<span class="pc bpc" id="L393" title="1 of 2 branches missed.">        Object metadata = doc.get(&quot;metadata&quot;); if (!(metadata instanceof Map&lt;?, ?&gt; m)) return false;</span>
-<span class="fc" id="L394">        Object labels = m.get(&quot;labels&quot;);</span>
-<span class="fc" id="L395">        Object annotations = m.get(&quot;annotations&quot;);</span>
-<span class="pc bpc" id="L396" title="1 of 6 branches missed.">        if (!(labels instanceof Map&lt;?, ?&gt; l) || !(l.get(OWNER) instanceof String owner)</span>
-<span class="pc bpc" id="L397" title="1 of 2 branches missed.">                || !(annotations instanceof Map&lt;?, ?&gt; a) || !&quot;generated&quot;.equals(a.get(MARKER))) return false;</span>
-<span class="pc bpc" id="L398" title="2 of 4 branches missed.">        if (!trainerName(owner).equals(m.get(&quot;name&quot;)) || !List.of(&quot;ServiceAccount&quot;, &quot;Role&quot;, &quot;RoleBinding&quot;, &quot;CronJob&quot;).contains(doc.get(&quot;kind&quot;)))</span>
-<span class="nc" id="L399">            throw new IllegalArgumentException(&quot;invalid generated resource marker&quot;);</span>
-<span class="fc" id="L400">        Map&lt;String, Object&gt; annotationsMap = map(annotations, &quot;annotations&quot;);</span>
-<span class="fc" id="L401">        Object expected = annotationsMap.remove(CHECKSUM);</span>
-<span class="fc" id="L402">        String actual = checksum(doc);</span>
-<span class="pc bpc" id="L403" title="1 of 4 branches missed.">        if (!(expected instanceof String) || !expected.equals(actual)) throw new IllegalArgumentException(&quot;generated resource was changed: &quot; + doc.get(&quot;kind&quot;) + &quot;/&quot; + m.get(&quot;name&quot;));</span>
-<span class="fc" id="L404">        return true;</span>
+<span class="pc bpc" id="L518" title="1 of 2 branches missed.">        Object metadata = doc.get(&quot;metadata&quot;); if (!(metadata instanceof Map&lt;?, ?&gt; m)) return false;</span>
+<span class="fc" id="L519">        Object labels = m.get(&quot;labels&quot;);</span>
+<span class="fc" id="L520">        Object annotations = m.get(&quot;annotations&quot;);</span>
+<span class="pc bpc" id="L521" title="1 of 6 branches missed.">        if (!(labels instanceof Map&lt;?, ?&gt; l) || !(l.get(OWNER) instanceof String owner)</span>
+<span class="pc bpc" id="L522" title="1 of 2 branches missed.">                || !(annotations instanceof Map&lt;?, ?&gt; a) || !&quot;generated&quot;.equals(a.get(MARKER))) return false;</span>
+<span class="fc" id="L523">        String generatedName = String.valueOf(m.get(&quot;name&quot;));</span>
+<span class="fc bfc" id="L524" title="All 4 branches covered.">        boolean known = trainerName(owner).equals(generatedName) || (trainerName(owner) + &quot;-training&quot;).equals(generatedName)</span>
+<span class="pc bpc" id="L525" title="2 of 4 branches missed.">                || (&quot;ConfigMap&quot;.equals(doc.get(&quot;kind&quot;)) &amp;&amp; generatedName.matches(Pattern.quote(trainerName(owner) + &quot;-template-&quot;) + &quot;[0-9a-f]{10}&quot;));</span>
+<span class="pc bpc" id="L526" title="2 of 4 branches missed.">        if (!known || !List.of(&quot;ServiceAccount&quot;, &quot;Role&quot;, &quot;RoleBinding&quot;, &quot;CronJob&quot;, &quot;ConfigMap&quot;).contains(doc.get(&quot;kind&quot;)))</span>
+<span class="nc" id="L527">            throw new IllegalArgumentException(&quot;invalid generated resource marker&quot;);</span>
+<span class="fc" id="L528">        Map&lt;String, Object&gt; annotationsMap = map(annotations, &quot;annotations&quot;);</span>
+<span class="fc" id="L529">        Object expected = annotationsMap.remove(CHECKSUM);</span>
+<span class="fc" id="L530">        String actual = checksum(doc);</span>
+<span class="pc bpc" id="L531" title="1 of 4 branches missed.">        if (!(expected instanceof String) || !expected.equals(actual)) throw new IllegalArgumentException(&quot;generated resource was changed: &quot; + doc.get(&quot;kind&quot;) + &quot;/&quot; + m.get(&quot;name&quot;));</span>
+<span class="fc" id="L532">        return true;</span>
+    }
+    private static String sha256(String text) {
+        try {
+<span class="fc" id="L536">            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance(&quot;SHA-256&quot;).digest(text.getBytes(StandardCharsets.UTF_8)));</span>
+<span class="nc" id="L537">        } catch (java.security.NoSuchAlgorithmException e) { throw new IllegalStateException(e); }</span>
     }
     private static String checksum(Map&lt;String, Object&gt; resource) {
         try {
-<span class="fc" id="L408">            byte[] bytes = ManifestStream.render(List.of(resource)).getBytes(StandardCharsets.UTF_8);</span>
-<span class="fc" id="L409">            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance(&quot;SHA-256&quot;).digest(bytes));</span>
-<span class="nc" id="L410">        } catch (java.security.NoSuchAlgorithmException e) { throw new IllegalStateException(e); }</span>
+<span class="fc" id="L541">            byte[] bytes = ManifestStream.render(List.of(resource)).getBytes(StandardCharsets.UTF_8);</span>
+<span class="fc" id="L542">            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance(&quot;SHA-256&quot;).digest(bytes));</span>
+<span class="nc" id="L543">        } catch (java.security.NoSuchAlgorithmException e) { throw new IllegalStateException(e); }</span>
     }
     private static void restore(Map&lt;String, Object&gt; template, Map&lt;String, Object&gt; ann) {
-<span class="fc" id="L413">        Object encoded = ann.remove(MARKER);</span>
-<span class="pc bpc" id="L414" title="1 of 2 branches missed.">        if (!(encoded instanceof String s)) throw new IllegalArgumentException(&quot;invalid injector marker&quot;);</span>
+<span class="fc" id="L546">        Object encoded = ann.remove(MARKER);</span>
+<span class="pc bpc" id="L547" title="1 of 2 branches missed.">        if (!(encoded instanceof String s)) throw new IllegalArgumentException(&quot;invalid injector marker&quot;);</span>
         Map&lt;String, Object&gt; saved;
-<span class="fc" id="L416">        try { saved = ManifestStream.parse(new String(Base64.getDecoder().decode(s), StandardCharsets.UTF_8)).get(0); }</span>
-<span class="pc" id="L417">        catch (RuntimeException e) { throw new IllegalArgumentException(&quot;invalid injector marker&quot;, e); }</span>
-<span class="fc" id="L418">        Map&lt;String, Object&gt; pod = map(template.get(&quot;spec&quot;), &quot;pod spec&quot;); Map&lt;String, Object&gt; app = selected(pod, String.valueOf(saved.get(&quot;container&quot;)));</span>
-<span class="fc" id="L419">        boolean imageVolume = WorkloadDiscovery.IMAGE_VOLUME.equals(saved.get(&quot;delivery&quot;));</span>
-<span class="fc bfc" id="L420" title="All 4 branches covered.">        boolean inline = imageVolume &amp;&amp; !saved.containsKey(&quot;initContainersManaged&quot;);</span>
-<span class="fc" id="L421">        List&lt;String&gt; appMounts = appMountNames(inline);</span>
-<span class="fc bfc" id="L422" title="All 2 branches covered.">        List&lt;String&gt; initNames = imageVolume ? List.of(&quot;mnemo-warmup-fetch&quot;) : List.of(&quot;mnemo-warmup-install&quot;, &quot;mnemo-warmup-fetch&quot;);</span>
-<span class="fc bfc" id="L423" title="All 2 branches covered.">        if (!List.of(launcherPath(imageVolume)).equals(app.get(&quot;command&quot;))) throw new IllegalArgumentException(&quot;managed command was changed&quot;);</span>
-<span class="pc bpc" id="L424" title="1 of 2 branches missed.">        if (!java.util.Objects.equals(saved.get(&quot;injectedArgs&quot;), app.get(&quot;args&quot;))) throw new IllegalArgumentException(&quot;managed arguments were changed&quot;);</span>
-<span class="fc" id="L425">        List&lt;String&gt; volumeNames = WorkloadDiscovery.strings(saved.get(&quot;volumeNames&quot;), &quot;managed volume names&quot;);</span>
-<span class="fc" id="L426">        verifyManaged(pod, saved, &quot;volumes&quot;, volumeNames);</span>
-<span class="fc bfc" id="L427" title="All 2 branches covered.">        if (!inline) verifyManaged(pod, saved, &quot;initContainers&quot;, initNames);</span>
-<span class="fc" id="L428">        verifyManaged(app, saved, &quot;volumeMounts&quot;, appMounts);</span>
-<span class="pc bpc" id="L429" title="1 of 2 branches missed.">        List&lt;String&gt; envNames = saved.containsKey(&quot;envNames&quot;) ? WorkloadDiscovery.strings(saved.get(&quot;envNames&quot;), &quot;managed env names&quot;) : List.of(&quot;MNEMO_WARMUP_CACHE_DIR&quot;);</span>
-<span class="fc" id="L430">        verifyManaged(app, saved, &quot;env&quot;, envNames);</span>
-<span class="fc" id="L431">        restoreField(app, saved, &quot;command&quot;); restoreField(app, saved, &quot;args&quot;);</span>
-<span class="fc" id="L432">        removeNamed(pod, &quot;volumes&quot;, volumeNames, Boolean.TRUE.equals(saved.get(&quot;volumesPresent&quot;)));</span>
-<span class="fc bfc" id="L433" title="All 2 branches covered.">        if (!inline) removeNamed(pod, &quot;initContainers&quot;, initNames, Boolean.TRUE.equals(saved.get(&quot;initContainersPresent&quot;)));</span>
-<span class="fc" id="L434">        removeNamed(app, &quot;volumeMounts&quot;, appMounts, Boolean.TRUE.equals(saved.get(&quot;volumeMountsPresent&quot;)));</span>
-<span class="fc" id="L435">        removeNamed(app, &quot;env&quot;, envNames, Boolean.TRUE.equals(saved.get(&quot;envPresent&quot;)));</span>
-<span class="fc" id="L436">    }</span>
-<span class="fc bfc" id="L437" title="All 2 branches covered.">    private static void restoreField(Map&lt;String, Object&gt; target, Map&lt;String, Object&gt; saved, String key) { if (Boolean.TRUE.equals(saved.get(key + &quot;Present&quot;))) target.put(key, saved.get(key)); else target.remove(key); }</span>
+<span class="fc" id="L549">        try { saved = ManifestStream.parse(new String(Base64.getDecoder().decode(s), StandardCharsets.UTF_8)).get(0); }</span>
+<span class="pc" id="L550">        catch (RuntimeException e) { throw new IllegalArgumentException(&quot;invalid injector marker&quot;, e); }</span>
+<span class="fc" id="L551">        Map&lt;String, Object&gt; pod = map(template.get(&quot;spec&quot;), &quot;pod spec&quot;); Map&lt;String, Object&gt; app = selected(pod, String.valueOf(saved.get(&quot;container&quot;)));</span>
+<span class="fc" id="L552">        boolean imageVolume = WorkloadDiscovery.IMAGE_VOLUME.equals(saved.get(&quot;delivery&quot;));</span>
+<span class="fc bfc" id="L553" title="All 4 branches covered.">        boolean inline = imageVolume &amp;&amp; !saved.containsKey(&quot;initContainersManaged&quot;);</span>
+<span class="fc" id="L554">        List&lt;String&gt; appMounts = appMountNames(inline);</span>
+<span class="fc bfc" id="L555" title="All 2 branches covered.">        List&lt;String&gt; initNames = imageVolume ? List.of(&quot;mnemo-warmup-fetch&quot;) : List.of(&quot;mnemo-warmup-install&quot;, &quot;mnemo-warmup-fetch&quot;);</span>
+<span class="fc bfc" id="L556" title="All 2 branches covered.">        if (!List.of(launcherPath(imageVolume)).equals(app.get(&quot;command&quot;))) throw new IllegalArgumentException(&quot;managed command was changed&quot;);</span>
+<span class="pc bpc" id="L557" title="1 of 2 branches missed.">        if (!java.util.Objects.equals(saved.get(&quot;injectedArgs&quot;), app.get(&quot;args&quot;))) throw new IllegalArgumentException(&quot;managed arguments were changed&quot;);</span>
+<span class="fc" id="L558">        List&lt;String&gt; volumeNames = WorkloadDiscovery.strings(saved.get(&quot;volumeNames&quot;), &quot;managed volume names&quot;);</span>
+<span class="fc" id="L559">        verifyManaged(pod, saved, &quot;volumes&quot;, volumeNames);</span>
+<span class="fc bfc" id="L560" title="All 2 branches covered.">        if (!inline) verifyManaged(pod, saved, &quot;initContainers&quot;, initNames);</span>
+<span class="fc" id="L561">        verifyManaged(app, saved, &quot;volumeMounts&quot;, appMounts);</span>
+<span class="pc bpc" id="L562" title="1 of 2 branches missed.">        List&lt;String&gt; envNames = saved.containsKey(&quot;envNames&quot;) ? WorkloadDiscovery.strings(saved.get(&quot;envNames&quot;), &quot;managed env names&quot;) : List.of(&quot;MNEMO_WARMUP_CACHE_DIR&quot;);</span>
+<span class="fc" id="L563">        verifyManaged(app, saved, &quot;env&quot;, envNames);</span>
+<span class="fc" id="L564">        restoreField(app, saved, &quot;command&quot;); restoreField(app, saved, &quot;args&quot;);</span>
+<span class="fc" id="L565">        removeNamed(pod, &quot;volumes&quot;, volumeNames, Boolean.TRUE.equals(saved.get(&quot;volumesPresent&quot;)));</span>
+<span class="fc bfc" id="L566" title="All 2 branches covered.">        if (!inline) removeNamed(pod, &quot;initContainers&quot;, initNames, Boolean.TRUE.equals(saved.get(&quot;initContainersPresent&quot;)));</span>
+<span class="fc" id="L567">        removeNamed(app, &quot;volumeMounts&quot;, appMounts, Boolean.TRUE.equals(saved.get(&quot;volumeMountsPresent&quot;)));</span>
+<span class="fc" id="L568">        removeNamed(app, &quot;env&quot;, envNames, Boolean.TRUE.equals(saved.get(&quot;envPresent&quot;)));</span>
+<span class="fc" id="L569">    }</span>
+<span class="fc bfc" id="L570" title="All 2 branches covered.">    private static void restoreField(Map&lt;String, Object&gt; target, Map&lt;String, Object&gt; saved, String key) { if (Boolean.TRUE.equals(saved.get(key + &quot;Present&quot;))) target.put(key, saved.get(key)); else target.remove(key); }</span>
     private static List&lt;Object&gt; managed(Map&lt;String, Object&gt; owner, String key, List&lt;String&gt; names) {
-<span class="pc bpc" id="L439" title="1 of 2 branches missed.">        if (!(owner.get(key) instanceof List&lt;?&gt; list)) throw new IllegalArgumentException(&quot;managed &quot; + key + &quot; missing&quot;);</span>
-<span class="fc" id="L440">        List&lt;Object&gt; result = new ArrayList&lt;&gt;();</span>
-<span class="pc bpc" id="L441" title="1 of 6 branches missed.">        for (Object item : list) if (item instanceof Map&lt;?, ?&gt; m &amp;&amp; names.contains(m.get(&quot;name&quot;))) result.add(item);</span>
-<span class="fc" id="L442">        return result;</span>
+<span class="pc bpc" id="L572" title="1 of 2 branches missed.">        if (!(owner.get(key) instanceof List&lt;?&gt; list)) throw new IllegalArgumentException(&quot;managed &quot; + key + &quot; missing&quot;);</span>
+<span class="fc" id="L573">        List&lt;Object&gt; result = new ArrayList&lt;&gt;();</span>
+<span class="pc bpc" id="L574" title="1 of 6 branches missed.">        for (Object item : list) if (item instanceof Map&lt;?, ?&gt; m &amp;&amp; names.contains(m.get(&quot;name&quot;))) result.add(item);</span>
+<span class="fc" id="L575">        return result;</span>
     }
     private static void verifyManaged(Map&lt;String, Object&gt; owner, Map&lt;String, Object&gt; saved, String key, List&lt;String&gt; names) {
-<span class="fc bfc" id="L445" title="All 2 branches covered.">        if (!managed(owner, key, names).equals(saved.get(key + &quot;Managed&quot;))) throw new IllegalArgumentException(&quot;managed &quot; + key + &quot; was changed&quot;);</span>
-<span class="fc" id="L446">    }</span>
+<span class="fc bfc" id="L578" title="All 2 branches covered.">        if (!managed(owner, key, names).equals(saved.get(key + &quot;Managed&quot;))) throw new IllegalArgumentException(&quot;managed &quot; + key + &quot; was changed&quot;);</span>
+<span class="fc" id="L579">    }</span>
     private static void removeNamed(Map&lt;String, Object&gt; owner, String key, List&lt;String&gt; names, boolean wasPresent) {
-<span class="pc bpc" id="L448" title="1 of 2 branches missed.">        Object v = owner.get(key); if (!(v instanceof List&lt;?&gt; list)) throw new IllegalArgumentException(&quot;managed &quot; + key + &quot; missing&quot;);</span>
-<span class="pc bpc" id="L449" title="1 of 6 branches missed.">        List&lt;Object&gt; remaining = new ArrayList&lt;&gt;(); for (Object e : list) if (!(e instanceof Map&lt;?, ?&gt; m) || !names.contains(m.get(&quot;name&quot;))) remaining.add(e);</span>
-<span class="pc bpc" id="L450" title="1 of 4 branches missed.">        if (remaining.isEmpty() &amp;&amp; !wasPresent) owner.remove(key); else owner.put(key, remaining);</span>
-<span class="fc" id="L451">    }</span>
+<span class="pc bpc" id="L581" title="1 of 2 branches missed.">        Object v = owner.get(key); if (!(v instanceof List&lt;?&gt; list)) throw new IllegalArgumentException(&quot;managed &quot; + key + &quot; missing&quot;);</span>
+<span class="pc bpc" id="L582" title="1 of 6 branches missed.">        List&lt;Object&gt; remaining = new ArrayList&lt;&gt;(); for (Object e : list) if (!(e instanceof Map&lt;?, ?&gt; m) || !names.contains(m.get(&quot;name&quot;))) remaining.add(e);</span>
+<span class="pc bpc" id="L583" title="1 of 4 branches missed.">        if (remaining.isEmpty() &amp;&amp; !wasPresent) owner.remove(key); else owner.put(key, remaining);</span>
+<span class="fc" id="L584">    }</span>
     private static void requireFree(Map&lt;String, Object&gt; owner, String key, List&lt;String&gt; names) {
-<span class="pc bpc" id="L453" title="1 of 8 branches missed.">        if (owner.get(key) instanceof List&lt;?&gt; list) for (Object item : list) if (item instanceof Map&lt;?, ?&gt; m &amp;&amp; names.contains(m.get(&quot;name&quot;))) throw new IllegalArgumentException(&quot;name collision in &quot; + key + &quot;: &quot; + m.get(&quot;name&quot;));</span>
-<span class="fc" id="L454">    }</span>
+<span class="pc bpc" id="L586" title="1 of 8 branches missed.">        if (owner.get(key) instanceof List&lt;?&gt; list) for (Object item : list) if (item instanceof Map&lt;?, ?&gt; m &amp;&amp; names.contains(m.get(&quot;name&quot;))) throw new IllegalArgumentException(&quot;name collision in &quot; + key + &quot;: &quot; + m.get(&quot;name&quot;));</span>
+<span class="fc" id="L587">    }</span>
     private static void requireFreePaths(Map&lt;String, Object&gt; owner, List&lt;String&gt; paths) {
-<span class="fc bfc" id="L456" title="All 4 branches covered.">        if (owner.get(&quot;volumeMounts&quot;) instanceof List&lt;?&gt; mounts) for (Object mount : mounts) {</span>
-<span class="pc bpc" id="L457" title="2 of 4 branches missed.">            if (mount instanceof Map&lt;?, ?&gt; m &amp;&amp; paths.contains(m.get(&quot;mountPath&quot;))) throw new IllegalArgumentException(&quot;mount path collision: &quot; + m.get(&quot;mountPath&quot;));</span>
-<span class="fc" id="L458">        }</span>
-<span class="fc" id="L459">    }</span>
+<span class="fc bfc" id="L589" title="All 4 branches covered.">        if (owner.get(&quot;volumeMounts&quot;) instanceof List&lt;?&gt; mounts) for (Object mount : mounts) {</span>
+<span class="pc bpc" id="L590" title="2 of 4 branches missed.">            if (mount instanceof Map&lt;?, ?&gt; m &amp;&amp; paths.contains(m.get(&quot;mountPath&quot;))) throw new IllegalArgumentException(&quot;mount path collision: &quot; + m.get(&quot;mountPath&quot;));</span>
+<span class="fc" id="L591">        }</span>
+<span class="fc" id="L592">    }</span>
     private static Map&lt;String, Object&gt; selected(Map&lt;String, Object&gt; pod, String name) {
-<span class="pc bpc" id="L461" title="1 of 4 branches missed.">        for (Object c : (List&lt;?&gt;) pod.get(&quot;containers&quot;)) { Map&lt;String, Object&gt; m = map(c, &quot;container&quot;); if (name.equals(m.get(&quot;name&quot;))) return m; }</span>
-<span class="nc" id="L462">        throw new IllegalArgumentException(&quot;container missing: &quot; + name);</span>
+<span class="pc bpc" id="L594" title="1 of 4 branches missed.">        for (Object c : (List&lt;?&gt;) pod.get(&quot;containers&quot;)) { Map&lt;String, Object&gt; m = map(c, &quot;container&quot;); if (name.equals(m.get(&quot;name&quot;))) return m; }</span>
+<span class="nc" id="L595">        throw new IllegalArgumentException(&quot;container missing: &quot; + name);</span>
     }
     private static void checkUnique(List&lt;Map&lt;String, Object&gt;&gt; docs, String defaultNamespace) {
-<span class="fc" id="L465">        java.util.Set&lt;String&gt; keys = new java.util.HashSet&lt;&gt;();</span>
-<span class="pc bpc" id="L466" title="2 of 6 branches missed.">        for (Map&lt;String, Object&gt; doc : docs) if (doc.get(&quot;metadata&quot;) instanceof Map&lt;?, ?&gt; meta &amp;&amp; meta.get(&quot;name&quot;) != null) {</span>
-<span class="fc bfc" id="L467" title="All 2 branches covered.">            Object namespace = meta.containsKey(&quot;namespace&quot;) ? meta.get(&quot;namespace&quot;) : defaultNamespace;</span>
-<span class="fc" id="L468">            String key = doc.get(&quot;apiVersion&quot;) + &quot;/&quot; + doc.get(&quot;kind&quot;) + &quot;/&quot; + namespace + &quot;/&quot; + meta.get(&quot;name&quot;);</span>
-<span class="pc bpc" id="L469" title="1 of 2 branches missed.">            if (!keys.add(key)) throw new IllegalArgumentException(&quot;resource collision: &quot; + key);</span>
+<span class="fc" id="L598">        java.util.Set&lt;String&gt; keys = new java.util.HashSet&lt;&gt;();</span>
+<span class="pc bpc" id="L599" title="2 of 6 branches missed.">        for (Map&lt;String, Object&gt; doc : docs) if (doc.get(&quot;metadata&quot;) instanceof Map&lt;?, ?&gt; meta &amp;&amp; meta.get(&quot;name&quot;) != null) {</span>
+<span class="fc bfc" id="L600" title="All 2 branches covered.">            Object namespace = meta.containsKey(&quot;namespace&quot;) ? meta.get(&quot;namespace&quot;) : defaultNamespace;</span>
+<span class="fc" id="L601">            String key = doc.get(&quot;apiVersion&quot;) + &quot;/&quot; + doc.get(&quot;kind&quot;) + &quot;/&quot; + namespace + &quot;/&quot; + meta.get(&quot;name&quot;);</span>
+<span class="pc bpc" id="L602" title="1 of 2 branches missed.">            if (!keys.add(key)) throw new IllegalArgumentException(&quot;resource collision: &quot; + key);</span>
         }
-<span class="fc" id="L471">    }</span>
-<span class="fc bfc" id="L472" title="All 4 branches covered.">    private static void copyIfPresent(Map&lt;String, Object&gt; from, Map&lt;String, Object&gt; to, String... keys) { for (String key : keys) if (from.containsKey(key)) to.put(key, from.get(key)); }</span>
+<span class="fc" id="L604">    }</span>
+<span class="fc bfc" id="L605" title="All 4 branches covered.">    private static void copyIfPresent(Map&lt;String, Object&gt; from, Map&lt;String, Object&gt; to, String... keys) { for (String key : keys) if (from.containsKey(key)) to.put(key, from.get(key)); }</span>
     @SuppressWarnings(&quot;unchecked&quot;) private static void append(Map&lt;String, Object&gt; m, String key, Object... values) {
-<span class="fc bfc" id="L474" title="All 2 branches covered.">        List&lt;Object&gt; list = m.get(key) instanceof List&lt;?&gt; l ? new ArrayList&lt;&gt;((List&lt;Object&gt;) l) : new ArrayList&lt;&gt;(); list.addAll(List.of(values)); m.put(key, list);</span>
-<span class="fc" id="L475">    }</span>
-<span class="pc bpc" id="L476" title="1 of 2 branches missed.">    private static Map&lt;String, Object&gt; ensureMap(Map&lt;String, Object&gt; m, String key) { if (m.get(key) == null) m.put(key, new LinkedHashMap&lt;String,Object&gt;()); return map(m.get(key), key); }</span>
-<span class="fc" id="L477">    private static Map&lt;String, Object&gt; map(Object value, String name) { return WorkloadDiscovery.map(value, name); }</span>
-<span class="fc bfc" id="L478" title="All 2 branches covered.">    private static Map&lt;String, Object&gt; obj(Object... entries) { Map&lt;String, Object&gt; m = new LinkedHashMap&lt;&gt;(); for (int i = 0; i &lt; entries.length; i += 2) m.put((String) entries[i], entries[i + 1]); return m; }</span>
+<span class="fc bfc" id="L607" title="All 2 branches covered.">        List&lt;Object&gt; list = m.get(key) instanceof List&lt;?&gt; l ? new ArrayList&lt;&gt;((List&lt;Object&gt;) l) : new ArrayList&lt;&gt;(); list.addAll(List.of(values)); m.put(key, list);</span>
+<span class="fc" id="L608">    }</span>
+<span class="pc bpc" id="L609" title="1 of 2 branches missed.">    private static Map&lt;String, Object&gt; ensureMap(Map&lt;String, Object&gt; m, String key) { if (m.get(key) == null) m.put(key, new LinkedHashMap&lt;String,Object&gt;()); return map(m.get(key), key); }</span>
+<span class="fc" id="L610">    private static Map&lt;String, Object&gt; map(Object value, String name) { return WorkloadDiscovery.map(value, name); }</span>
+<span class="fc bfc" id="L611" title="All 2 branches covered.">    private static Map&lt;String, Object&gt; obj(Object... entries) { Map&lt;String, Object&gt; m = new LinkedHashMap&lt;&gt;(); for (int i = 0; i &lt; entries.length; i += 2) m.put((String) entries[i], entries[i + 1]); return m; }</span>
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.16.202610240946</span></div></body></html>

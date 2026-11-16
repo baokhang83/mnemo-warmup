@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ArchiveVerifier.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">ArchiveVerifier.java</span></div><h1>ArchiveVerifier.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.security.GeneralSecurityException;
+import java.security.Signature;
+import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.function.Consumer;
+
+/**
+ * Checks archive signatures against the public keys an operator listed (docs/adr/0013). A statement is rebuilt by the caller from
+ * what it actually observed; this class only answers whether a listed key signed exactly that.
+ */
+public final class ArchiveVerifier {
+
+<span class="fc" id="L16">    public enum Result {</span>
+        /** A listed key signed exactly this statement. */
+<span class="fc" id="L18">        VALID,</span>
+        /** The signature names a key that is not listed. */
+<span class="fc" id="L20">        UNKNOWN_KEY,</span>
+        /** The key is listed but the signature does not match the statement. */
+<span class="fc" id="L22">        BAD_SIGNATURE</span>
+    }
+
+    /** The environment variable that lists the public keys a pod trusts, as {@code id=base64,id=base64}. Setting it makes a valid signature mandatory. */
+    public static final String ENV_PUBLIC_KEYS = &quot;MNEMO_WARMUP_SIGNING_PUBLIC_KEYS&quot;;
+
+    private final Map&lt;String, byte[]&gt; keys;
+
+<span class="fc" id="L30">    private ArchiveVerifier(Map&lt;String, byte[]&gt; keys) {</span>
+<span class="fc" id="L31">        this.keys = Map.copyOf(keys);</span>
+<span class="fc" id="L32">    }</span>
+
+    /**
+     * Reads {@code id=base64,id=base64}. An entry that is malformed, or whose id is not the id of its own key, is skipped with a note:
+     * a typo must never silently trust the wrong key, and must never stop an application.
+     */
+    public static ArchiveVerifier fromEntries(String entries, Consumer&lt;String&gt; note) {
+<span class="fc" id="L39">        Map&lt;String, byte[]&gt; keys = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L40" title="All 2 branches covered.">        if (entries != null) {</span>
+<span class="fc bfc" id="L41" title="All 2 branches covered.">            for (String entry : entries.split(&quot;,&quot;)) {</span>
+<span class="fc" id="L42">                String trimmed = entry.trim();</span>
+<span class="fc bfc" id="L43" title="All 2 branches covered.">                if (trimmed.isEmpty()) {</span>
+<span class="fc" id="L44">                    continue;</span>
+                }
+<span class="fc" id="L46">                int eq = trimmed.indexOf('=');</span>
+<span class="fc bfc" id="L47" title="All 2 branches covered.">                if (eq &lt;= 0) {</span>
+<span class="fc" id="L48">                    note.accept(&quot;ignoring a signing public key entry that is not id=base64&quot;);</span>
+<span class="fc" id="L49">                    continue;</span>
+                }
+<span class="fc" id="L51">                String id = trimmed.substring(0, eq);</span>
+                byte[] publicKey;
+                try {
+<span class="fc" id="L54">                    publicKey = Base64.getDecoder().decode(trimmed.substring(eq + 1));</span>
+<span class="fc" id="L55">                } catch (IllegalArgumentException e) {</span>
+<span class="fc" id="L56">                    note.accept(&quot;ignoring signing public key &quot; + id + &quot;: not valid base64&quot;);</span>
+<span class="fc" id="L57">                    continue;</span>
+<span class="fc" id="L58">                }</span>
+<span class="fc" id="L59">                String weak = SigningKey.weakness(publicKey);</span>
+<span class="fc bfc" id="L60" title="All 2 branches covered.">                if (weak != null) {</span>
+<span class="fc" id="L61">                    note.accept(&quot;ignoring signing public key &quot; + id + &quot;: &quot; + weak);</span>
+<span class="fc bfc" id="L62" title="All 2 branches covered.">                } else if (!SigningKey.keyId(publicKey).equals(id)) {</span>
+<span class="fc" id="L63">                    note.accept(&quot;ignoring signing public key &quot; + id + &quot;: the id is not the id of that key (expected &quot; + SigningKey.keyId(publicKey) + &quot;)&quot;);</span>
+                } else {
+<span class="fc" id="L65">                    keys.put(id, publicKey);</span>
+                }
+            }
+        }
+<span class="fc" id="L69">        return new ArchiveVerifier(keys);</span>
+    }
+
+    /** {@code &lt;key id&gt;=&lt;base64 public key&gt;} for 32 raw bytes. */
+    public static String publicKeyEntry(byte[] publicKey) {
+<span class="fc" id="L74">        return SigningKey.keyId(publicKey) + &quot;=&quot; + Base64.getEncoder().encodeToString(publicKey);</span>
+    }
+
+    /** No usable key. Handed to a store as its verifier, this refuses every archive (the key list was given, but nothing in it can be trusted). */
+    public boolean isEmpty() {
+<span class="fc" id="L79">        return keys.isEmpty();</span>
+    }
+
+    /** Whether a key with this id is listed. */
+    public boolean trusts(String keyId) {
+<span class="fc" id="L84">        return keys.containsKey(keyId);</span>
+    }
+
+    public Result verify(SignedStatement statement, ArchiveSignature signature) {
+<span class="fc" id="L88">        byte[] publicKey = keys.get(signature.keyId());</span>
+<span class="fc bfc" id="L89" title="All 2 branches covered.">        if (publicKey == null) {</span>
+<span class="fc" id="L90">            return Result.UNKNOWN_KEY;</span>
+        }
+<span class="fc bfc" id="L92" title="All 2 branches covered.">        return verifies(publicKey, statement.bytes(), signature.signature()) ? Result.VALID : Result.BAD_SIGNATURE;</span>
+    }
+
+    static boolean verifies(byte[] publicKey, byte[] message, byte[] signature) {
+        try {
+<span class="fc" id="L97">            Signature verifier = Signature.getInstance(&quot;Ed25519&quot;);</span>
+<span class="fc" id="L98">            verifier.initVerify(SigningKey.publicKeyFrom(publicKey));</span>
+<span class="fc" id="L99">            verifier.update(message);</span>
+<span class="fc" id="L100">            return verifier.verify(signature);</span>
+<span class="fc" id="L101">        } catch (GeneralSecurityException e) {</span>
+<span class="fc" id="L102">            return false; // a malformed signature is simply not valid</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

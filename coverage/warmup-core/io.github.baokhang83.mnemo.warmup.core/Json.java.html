@@ -176,10 +176,10 @@ final class Json {
 <span class="nc" id="L176">                case 'f' -&gt; literal(&quot;false&quot;, Boolean.FALSE);</span>
 <span class="fc" id="L177">                case 'n' -&gt; literal(&quot;null&quot;, null);</span>
                 default -&gt; {
-<span class="pc bpc" id="L179" title="2 of 6 branches missed.">                    if (c == '-' || (c &gt;= '0' &amp;&amp; c &lt;= '9')) {</span>
+<span class="pc bpc" id="L179" title="1 of 6 branches missed.">                    if (c == '-' || (c &gt;= '0' &amp;&amp; c &lt;= '9')) {</span>
 <span class="fc" id="L180">                        yield number();</span>
                     }
-<span class="nc" id="L182">                    throw error(&quot;Unexpected character '&quot; + c + &quot;'&quot;);</span>
+<span class="fc" id="L182">                    throw error(&quot;Unexpected character '&quot; + c + &quot;'&quot;);</span>
                 }
             };
         }

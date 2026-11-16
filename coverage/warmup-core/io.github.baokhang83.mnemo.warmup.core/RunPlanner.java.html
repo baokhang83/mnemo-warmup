@@ -51,7 +51,7 @@ import java.util.Map;
     private Plan decide(List&lt;String&gt; command, Path cacheDir, Map&lt;String, String&gt; env, String imageDigest, List&lt;String&gt; notes, PhaseTimer timer) {
 <span class="fc" id="L52">        Plan plain = new Plan(List.copyOf(command), false, notes);</span>
 <span class="fc" id="L53">        Path flagsFile = cacheDir.resolve(ArchiveFetcher.FLAGS_FILE);</span>
-<span class="fc" id="L54">        String flags = readOrNull(flagsFile);</span>
+<span class="fc" id="L54">        String flags = readOrNull(flagsFile, MAX_FLAGS_BYTES);</span>
 <span class="fc bfc" id="L55" title="All 4 branches covered.">        if (flags == null || flags.isBlank()) {</span>
 <span class="fc" id="L56">            notes.add(&quot;no archive was fetched into &quot; + cacheDir + &quot;; starting without one&quot;);</span>
 <span class="fc" id="L57">            return plain;</span>
@@ -66,164 +66,327 @@ import java.util.Map;
 <span class="fc" id="L66">            notes.add(&quot;no manifest next to the flags; starting without an archive&quot;);</span>
 <span class="fc" id="L67">            return plain;</span>
         }
-<span class="fc" id="L69">        ArchiveManifest trained = ArchiveManifest.read(manifestFile);</span>
-<span class="fc" id="L70">        timer.lap(&quot;read-manifest&quot;);</span>
-<span class="fc bfc" id="L71" title="All 2 branches covered.">        if (!flag.equals(trained.cacheType().runtimeFlag(flag.substring(flag.indexOf('=') + 1)))) {</span>
-<span class="fc" id="L72">            notes.add(&quot;flags (&quot; + flag + &quot;) do not match the manifest's cache type &quot; + trained.cacheType() + &quot;; starting without an archive&quot;);</span>
-<span class="fc" id="L73">            return plain;</span>
+        // One bounded snapshot, read once: it is parsed here and hashed for the signature below, so both see the same bytes even if a
+        // writer grows or replaces the file after this point. (A size check followed by two reads would let it change in between.)
+<span class="fc" id="L71">        byte[] manifestBytes = snapshot(manifestFile, MAX_MANIFEST_BYTES);</span>
+<span class="fc bfc" id="L72" title="All 2 branches covered.">        if (manifestBytes == null) {</span>
+<span class="fc" id="L73">            notes.add(&quot;the manifest next to the flags is unreadable or larger than anything fetch writes; starting without an archive&quot;);</span>
+<span class="fc" id="L74">            return plain;</span>
         }
-<span class="fc" id="L75">        Path archive = Path.of(flag.substring(flag.indexOf('=') + 1));</span>
-<span class="pc bpc" id="L76" title="1 of 6 branches missed.">        if (!Files.isRegularFile(archive) || trained.archive() == null || sizeOf(archive) != trained.archive().sizeBytes()) {</span>
-<span class="fc" id="L77">            notes.add(&quot;archive &quot; + archive + &quot; is missing or its size differs from the manifest; starting without it&quot;);</span>
-<span class="fc" id="L78">            return plain;</span>
+<span class="fc" id="L76">        ArchiveManifest trained = ArchiveManifest.fromJson(new String(manifestBytes, StandardCharsets.UTF_8));</span>
+<span class="fc" id="L77">        timer.lap(&quot;read-manifest&quot;);</span>
+<span class="fc bfc" id="L78" title="All 2 branches covered.">        if (!flag.equals(trained.cacheType().runtimeFlag(flag.substring(flag.indexOf('=') + 1)))) {</span>
+<span class="fc" id="L79">            notes.add(&quot;flags (&quot; + flag + &quot;) do not match the manifest's cache type &quot; + trained.cacheType() + &quot;; starting without an archive&quot;);</span>
+<span class="fc" id="L80">            return plain;</span>
+        }
+<span class="fc" id="L82">        Path archive = Path.of(flag.substring(flag.indexOf('=') + 1));</span>
+<span class="pc bpc" id="L83" title="1 of 6 branches missed.">        if (!Files.isRegularFile(archive) || trained.archive() == null || sizeOf(archive) != trained.archive().sizeBytes()) {</span>
+<span class="fc" id="L84">            notes.add(&quot;archive &quot; + archive + &quot; is missing or its size differs from the manifest; starting without it&quot;);</span>
+<span class="fc" id="L85">            return plain;</span>
         }
         // Verify before use (§2): the size alone would accept same-length corruption, so hash the bytes
         // that are about to be handed to the JVM.
-<span class="fc" id="L82">        boolean archiveDigestMatches = trained.archive().sha256().equals(sha256Hex(archive));</span>
-<span class="fc" id="L83">        timer.lap(&quot;archive-sha256&quot;);</span>
-<span class="fc bfc" id="L84" title="All 2 branches covered.">        if (!archiveDigestMatches) {</span>
-<span class="fc" id="L85">            notes.add(&quot;archive &quot; + archive + &quot; does not match the SHA-256 in its manifest; starting without it&quot;);</span>
-<span class="fc" id="L86">            return plain;</span>
+<span class="fc" id="L89">        String archiveSha256 = sha256Snapshot(archive, trained.archive().sizeBytes());</span>
+<span class="fc" id="L90">        timer.lap(&quot;archive-sha256&quot;);</span>
+<span class="pc bpc" id="L91" title="1 of 2 branches missed.">        if (archiveSha256 == null) {</span>
+<span class="nc" id="L92">            notes.add(&quot;archive &quot; + archive + &quot; could not be read as the &quot; + trained.archive().sizeBytes() + &quot; bytes the manifest declares; starting without it&quot;);</span>
+<span class="nc" id="L93">            return plain;</span>
+        }
+<span class="fc bfc" id="L95" title="All 2 branches covered.">        if (!trained.archive().sha256().equals(archiveSha256)) {</span>
+<span class="fc" id="L96">            notes.add(&quot;archive &quot; + archive + &quot; does not match the SHA-256 in its manifest; starting without it&quot;);</span>
+<span class="fc" id="L97">            return plain;</span>
+        }
+        // Signed archives (docs/adr/0013): when the operator lists public keys, the files on disk must still carry a valid signature.
+        // Anything able to write into this directory can swap the files, but cannot make a signature for the swap.
+        // A variable that is present enforces, even when blank: an empty value from a template or a typo must never switch the check off.
+        // A list with nothing usable then trusts nothing, which only costs the cache.
+<span class="fc" id="L103">        String keys = env.get(ArchiveVerifier.ENV_PUBLIC_KEYS);</span>
+<span class="fc bfc" id="L104" title="All 2 branches covered.">        if (keys != null) {</span>
+<span class="fc" id="L105">            String problem = signatureProblem(ArchiveVerifier.fromEntries(keys, notes::add), cacheDir, manifestBytes, trained, archive, archiveSha256);</span>
+<span class="fc" id="L106">            timer.lap(&quot;signature&quot;);</span>
+<span class="fc bfc" id="L107" title="All 2 branches covered.">            if (problem != null) {</span>
+<span class="fc" id="L108">                notes.add(&quot;the archive is not trusted: &quot; + problem + &quot;; starting without it&quot;);</span>
+<span class="fc" id="L109">                return plain;</span>
+            }
         }
 
-<span class="fc" id="L89">        JavaLaunch launch = JavaLaunch.parse(command);</span>
-<span class="fc bfc" id="L90" title="All 2 branches covered.">        if (launch == null) {</span>
-<span class="fc" id="L91">            notes.add(&quot;not a 'java ... -jar &lt;jar&gt;' launch; starting without an archive&quot;);</span>
-<span class="fc" id="L92">            return plain;</span>
+<span class="fc" id="L113">        JavaLaunch launch = JavaLaunch.parse(command);</span>
+<span class="fc bfc" id="L114" title="All 2 branches covered.">        if (launch == null) {</span>
+<span class="fc" id="L115">            notes.add(&quot;not a 'java ... -jar &lt;jar&gt;' launch; starting without an archive&quot;);</span>
+<span class="fc" id="L116">            return plain;</span>
         }
-<span class="fc bfc" id="L94" title="All 2 branches covered.">        for (String arg : command) {</span>
-<span class="fc bfc" id="L95" title="All 2 branches covered.">            for (String option : ARCHIVE_OPTIONS) {</span>
-<span class="fc bfc" id="L96" title="All 2 branches covered.">                if (arg.startsWith(option)) {</span>
-<span class="fc" id="L97">                    notes.add(&quot;the command already sets &quot; + option + &quot;; leaving it alone&quot;);</span>
-<span class="fc" id="L98">                    return plain;</span>
+<span class="fc bfc" id="L118" title="All 2 branches covered.">        for (String arg : command) {</span>
+<span class="fc bfc" id="L119" title="All 2 branches covered.">            for (String option : ARCHIVE_OPTIONS) {</span>
+<span class="fc bfc" id="L120" title="All 2 branches covered.">                if (arg.startsWith(option)) {</span>
+<span class="fc" id="L121">                    notes.add(&quot;the command already sets &quot; + option + &quot;; leaving it alone&quot;);</span>
+<span class="fc" id="L122">                    return plain;</span>
                 }
             }
-<span class="fc" id="L101">        }</span>
-<span class="fc bfc" id="L102" title="All 2 branches covered.">        if (JarExtractor.needsExtraction(launch.jar())) {</span>
-<span class="fc" id="L103">            notes.add(&quot;a Spring Boot fat JAR is launched directly; the archive was trained on the extracted layout, &quot;</span>
+<span class="fc" id="L125">        }</span>
+<span class="fc bfc" id="L126" title="All 2 branches covered.">        if (JarExtractor.needsExtraction(launch.jar())) {</span>
+<span class="fc" id="L127">            notes.add(&quot;a Spring Boot fat JAR is launched directly; the archive was trained on the extracted layout, &quot;</span>
                     + &quot;so extract at image build time (java -Djarmode=tools -jar app.jar extract) and run the extracted JAR&quot;);
-<span class="fc" id="L105">            return plain;</span>
+<span class="fc" id="L129">            return plain;</span>
         }
 
-<span class="fc" id="L108">        JdkInfo jdk = JdkInfo.fromJavaHome(launch.javaHome(env), PROBE_TIMEOUT);</span>
-<span class="fc" id="L109">        timer.lap(&quot;jdk-probe&quot;);</span>
-<span class="fc" id="L110">        var live = ArchiveManifest.describe(</span>
-<span class="fc" id="L111">                new JarExtractor.ExtractedApp(JarExtractor.Kind.EXECUTABLE_JAR, launch.jar().toAbsolutePath()),</span>
-<span class="fc" id="L112">                jdk, trained.cacheType(), launch.jvmOptions(), env, imageDigest);</span>
-<span class="fc" id="L113">        timer.lap(&quot;classpath-hash&quot;);</span>
-<span class="fc" id="L114">        List&lt;String&gt; problems = trained.mismatches(live);</span>
-<span class="fc bfc" id="L115" title="All 2 branches covered.">        if (!problems.isEmpty()) {</span>
-<span class="fc" id="L116">            notes.add(&quot;archive does not match this launch: &quot; + problems + &quot;; starting without it&quot;);</span>
-<span class="fc" id="L117">            return plain;</span>
+<span class="fc" id="L132">        JdkInfo jdk = JdkInfo.fromJavaHome(launch.javaHome(env), PROBE_TIMEOUT);</span>
+<span class="fc" id="L133">        timer.lap(&quot;jdk-probe&quot;);</span>
+<span class="fc" id="L134">        var live = ArchiveManifest.describe(</span>
+<span class="fc" id="L135">                new JarExtractor.ExtractedApp(JarExtractor.Kind.EXECUTABLE_JAR, launch.jar().toAbsolutePath()),</span>
+<span class="fc" id="L136">                jdk, trained.cacheType(), launch.jvmOptions(), env, imageDigest);</span>
+<span class="fc" id="L137">        timer.lap(&quot;classpath-hash&quot;);</span>
+<span class="fc" id="L138">        List&lt;String&gt; problems = trained.mismatches(live);</span>
+<span class="fc bfc" id="L139" title="All 2 branches covered.">        if (!problems.isEmpty()) {</span>
+<span class="fc" id="L140">            notes.add(&quot;archive does not match this launch: &quot; + problems + &quot;; starting without it&quot;);</span>
+<span class="fc" id="L141">            return plain;</span>
         }
-<span class="fc" id="L119">        List&lt;String&gt; locationProblems = trained.locationMismatches(live);</span>
-<span class="fc bfc" id="L120" title="All 2 branches covered.">        if (!locationProblems.isEmpty()) {</span>
-<span class="fc" id="L121">            notes.add(&quot;the JVM records JAR paths, so it would ignore the archive: &quot; + locationProblems + &quot;; starting without it&quot;);</span>
-<span class="fc" id="L122">            return plain;</span>
+<span class="fc" id="L143">        List&lt;String&gt; locationProblems = trained.locationMismatches(live);</span>
+<span class="fc bfc" id="L144" title="All 2 branches covered.">        if (!locationProblems.isEmpty()) {</span>
+<span class="fc" id="L145">            notes.add(&quot;the JVM records JAR paths, so it would ignore the archive: &quot; + locationProblems + &quot;; starting without it&quot;);</span>
+<span class="fc" id="L146">            return plain;</span>
         }
-<span class="fc" id="L124">        List&lt;String&gt; timeProblems = trained.modificationTimeMismatches(live);</span>
-<span class="fc bfc" id="L125" title="All 2 branches covered.">        if (!timeProblems.isEmpty()) {</span>
-<span class="fc" id="L126">            notes.add(&quot;the JVM would ignore the archive because JAR modification times differ: &quot; + timeProblems</span>
+<span class="fc" id="L148">        List&lt;String&gt; timeProblems = trained.modificationTimeMismatches(live);</span>
+<span class="fc bfc" id="L149" title="All 2 branches covered.">        if (!timeProblems.isEmpty()) {</span>
+<span class="fc" id="L150">            notes.add(&quot;the JVM would ignore the archive because JAR modification times differ: &quot; + timeProblems</span>
                     + &quot;; train and run from the same files; starting without it&quot;);
-<span class="fc" id="L128">            return plain;</span>
+<span class="fc" id="L152">            return plain;</span>
         }
-<span class="fc" id="L130">        List&lt;String&gt; withFlag = new ArrayList&lt;&gt;(command);</span>
-<span class="fc" id="L131">        withFlag.add(1, flag);</span>
-<span class="fc" id="L132">        notes.add(&quot;using &quot; + trained.cacheType() + &quot; archive &quot; + archive);</span>
-<span class="fc" id="L133">        return new Plan(List.copyOf(withFlag), true, notes);</span>
+<span class="fc" id="L154">        List&lt;String&gt; withFlag = new ArrayList&lt;&gt;(command);</span>
+<span class="fc" id="L155">        withFlag.add(1, flag);</span>
+<span class="fc" id="L156">        notes.add(&quot;using &quot; + trained.cacheType() + &quot; archive &quot; + archive);</span>
+<span class="fc" id="L157">        return new Plan(List.copyOf(withFlag), true, notes);</span>
     }
 
-    private static String readOrNull(Path file) {
+    /**
+     * Why the files in the cache directory are not covered by a valid signature, or null when they are. The statement is rebuilt from the
+     * files as they are now (the manifest's fingerprint, the SHA-256 of the manifest file's bytes, the archive's SHA-256 and size) and the
+     * repository the signature file names, never from anything the signature file claims about them.
+     */
+    private static String signatureProblem(
+            ArchiveVerifier verifier, Path cacheDir, byte[] manifestBytes, ArchiveManifest trained, Path archive, String archiveSha256) {
+<span class="fc" id="L167">        String text = readOrNull(cacheDir.resolve(SignatureFile.FILE_NAME), MAX_SIGNATURE_BYTES);</span>
+<span class="fc bfc" id="L168" title="All 2 branches covered.">        if (text == null) {</span>
+<span class="fc" id="L169">            return &quot;there is no usable signature next to it&quot;;</span>
+        }
+        SignatureFile.Contents contents;
         try {
-<span class="fc bfc" id="L138" title="All 2 branches covered.">            return Files.isRegularFile(file) ? Files.readString(file, StandardCharsets.UTF_8) : null;</span>
-<span class="nc" id="L139">        } catch (IOException e) {</span>
-<span class="nc" id="L140">            return null;</span>
+<span class="fc" id="L173">            contents = SignatureFile.parse(text);</span>
+<span class="fc" id="L174">        } catch (IllegalArgumentException e) {</span>
+<span class="fc" id="L175">            return &quot;the signature file is unreadable&quot;;</span>
+<span class="fc" id="L176">        }</span>
+<span class="fc" id="L177">        var statement = new SignedStatement(</span>
+<span class="fc" id="L178">                trained.fingerprint(), &quot;sha256:&quot; + sha256Hex(manifestBytes), &quot;sha256:&quot; + archiveSha256, trained.archive().sizeBytes(), contents.repository());</span>
+<span class="fc bfc" id="L179" title="All 3 branches covered.">        return switch (verifier.verify(statement, contents.signature())) {</span>
+<span class="fc" id="L180">            case VALID -&gt; null;</span>
+<span class="fc" id="L181">            case UNKNOWN_KEY -&gt; &quot;it is signed by a key that is not trusted (&quot; + contents.signature().keyId() + &quot;)&quot;;</span>
+<span class="fc" id="L182">            case BAD_SIGNATURE -&gt; &quot;its signature does not match the files on disk&quot;;</span>
+        };
+    }
+
+    private static String sha256Hex(byte[] bytes) {
+        try {
+<span class="fc" id="L188">            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance(&quot;SHA-256&quot;).digest(bytes));</span>
+<span class="nc" id="L189">        } catch (java.security.NoSuchAlgorithmException e) {</span>
+<span class="nc" id="L190">            throw new IllegalStateException(e);</span>
         }
     }
 
-    private static String sha256Hex(Path file) {
-<span class="fc" id="L145">        try (var in = Files.newInputStream(file)) {</span>
-<span class="fc" id="L146">            var md = java.security.MessageDigest.getInstance(&quot;SHA-256&quot;);</span>
-<span class="fc" id="L147">            byte[] buffer = new byte[64 * 1024];</span>
-<span class="fc bfc" id="L148" title="All 2 branches covered.">            for (int n; (n = in.read(buffer)) &gt; 0; ) {</span>
-<span class="fc" id="L149">                md.update(buffer, 0, n);</span>
+    // The files in the cache directory are written by fetch but live in a volume other processes may be able to write. They are small, so a
+    // bigger one is not what fetch wrote, and reading it whole could exhaust memory on the application's start path.
+    private static final int MAX_FLAGS_BYTES = 4 &lt;&lt; 10;
+    private static final int MAX_SIGNATURE_BYTES = 4 &lt;&lt; 10;
+    private static final long MAX_MANIFEST_BYTES = 8L &lt;&lt; 20;
+
+    /** How long opening one of these files may take before it is given up on (opening a named pipe waits for a writer, forever). */
+<span class="fc" id="L201">    static volatile long readTimeoutMillis = 5_000;</span>
+    /** How long hashing the archive may take once it is open. A 1 GiB archive takes a few seconds; a writer trickling bytes takes forever. */
+<span class="fc" id="L203">    static volatile long hashTimeoutMillis = 120_000;</span>
+    /**
+     * A timed-out read cannot be cancelled: a thread blocked opening a named pipe stays blocked until some writer opens it or the process
+     * exits. The planner is a short process that exits right after it prints the command, so this costs one thread for a few seconds. For
+     * a long-lived process that calls the planner repeatedly the number of blocked readers is capped: once that many are stuck, reads are
+     * refused (a plain start) instead of accumulating more.
+     */
+<span class="fc" id="L210">    static volatile int maxBlockedReaders = 8;</span>
+<span class="fc" id="L211">    private static final java.util.concurrent.atomic.AtomicInteger LIVE_READERS = new java.util.concurrent.atomic.AtomicInteger();</span>
+
+    static int liveReaders() {
+<span class="fc" id="L214">        return LIVE_READERS.get();</span>
+    }
+
+    /** The file's text, or null when it is missing, unreadable, larger than {@code max} bytes, or does not answer in time. */
+    private static String readOrNull(Path file, int max) {
+<span class="fc" id="L219">        byte[] bytes = snapshot(file, max);</span>
+<span class="fc bfc" id="L220" title="All 2 branches covered.">        return bytes == null ? null : new String(bytes, StandardCharsets.UTF_8);</span>
+    }
+
+    /**
+     * The file's bytes read once, or null when it is missing, is a directory, is larger than {@code max} bytes, or does not finish within
+     * {@link #readTimeoutMillis}. The cache directory is a volume other processes may be able to write, so a file here is never read
+     * without a bound. The read runs on a daemon thread: opening a named pipe blocks until someone writes to it, and Java cannot open a
+     * file without blocking, so the time limit is what keeps the application's start from hanging.
+     */
+    static byte[] snapshot(Path file, long max) {
+<span class="fc" id="L230">        var result = new java.util.concurrent.CompletableFuture&lt;byte[]&gt;();</span>
+<span class="fc bfc" id="L231" title="All 2 branches covered.">        if (!startReader(() -&gt; {</span>
+<span class="fc" id="L232">            try (var in = Files.newInputStream(file)) {</span>
+<span class="fc" id="L233">                byte[] bytes = in.readNBytes((int) (max + 1));</span>
+<span class="fc bfc" id="L234" title="All 2 branches covered.">                result.complete(bytes.length &gt; max ? null : bytes);</span>
+<span class="fc" id="L235">            } catch (IOException | RuntimeException e) {</span>
+<span class="fc" id="L236">                result.complete(null);</span>
+<span class="fc" id="L237">            }</span>
+<span class="fc" id="L238">        })) {</span>
+<span class="fc" id="L239">            return null;</span>
+        }
+        try {
+<span class="fc" id="L242">            return result.get(readTimeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS);</span>
+<span class="fc" id="L243">        } catch (java.util.concurrent.TimeoutException | java.util.concurrent.ExecutionException e) {</span>
+<span class="fc" id="L244">            return null;</span>
+<span class="nc" id="L245">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L246">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L247">            return null;</span>
+        }
+    }
+
+    /**
+     * The SHA-256 of an archive that is exactly {@code expectedSize} bytes, or null when it cannot be opened in time, is a different size
+     * (longer, or shorter), or cannot be read. The archive is opened here, not checked with {@code isRegularFile} first: a check followed by
+     * an open leaves a moment in which the path can be swapped for a named pipe, and opening one would block the planner.
+     */
+    static String sha256Snapshot(Path file, long expectedSize) {
+<span class="fc" id="L257">        var opened = new java.util.concurrent.CompletableFuture&lt;Boolean&gt;();</span>
+<span class="fc" id="L258">        var result = new java.util.concurrent.CompletableFuture&lt;String&gt;();</span>
+<span class="pc bpc" id="L259" title="1 of 2 branches missed.">        if (!startReader(() -&gt; {</span>
+<span class="fc" id="L260">            try (var in = Files.newInputStream(file)) {</span>
+<span class="fc" id="L261">                opened.complete(true);</span>
+<span class="fc" id="L262">                var md = java.security.MessageDigest.getInstance(&quot;SHA-256&quot;);</span>
+<span class="fc" id="L263">                byte[] buffer = new byte[64 * 1024];</span>
+<span class="fc" id="L264">                long total = 0;</span>
+<span class="fc bfc" id="L265" title="All 2 branches covered.">                for (int n; (n = in.read(buffer)) &gt;= 0; ) {</span>
+<span class="fc" id="L266">                    total += n;</span>
+<span class="fc bfc" id="L267" title="All 2 branches covered.">                    if (total &gt; expectedSize) {</span>
+<span class="fc" id="L268">                        result.complete(null);</span>
+<span class="fc" id="L269">                        return;</span>
+                    }
+<span class="fc" id="L271">                    md.update(buffer, 0, n);</span>
+                }
+<span class="fc bfc" id="L273" title="All 2 branches covered.">                result.complete(total == expectedSize ? java.util.HexFormat.of().formatHex(md.digest()) : null);</span>
+<span class="pc bpc" id="L274" title="1 of 2 branches missed.">            } catch (IOException | java.security.NoSuchAlgorithmException | RuntimeException e) {</span>
+<span class="fc" id="L275">                opened.complete(false);</span>
+<span class="fc" id="L276">                result.complete(null);</span>
+<span class="fc" id="L277">            }</span>
+<span class="fc" id="L278">        })) {</span>
+<span class="nc" id="L279">            return null;</span>
+        }
+        try {
+<span class="fc bfc" id="L282" title="All 2 branches covered.">            if (!opened.get(readTimeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS)) {</span>
+<span class="fc" id="L283">                return null;</span>
             }
-<span class="fc" id="L151">            return java.util.HexFormat.of().formatHex(md.digest());</span>
-<span class="nc" id="L152">        } catch (IOException | java.security.NoSuchAlgorithmException e) {</span>
-<span class="nc" id="L153">            throw new IllegalStateException(&quot;Cannot hash &quot; + file + &quot;: &quot; + e.getMessage(), e);</span>
+<span class="fc" id="L285">            return result.get(hashTimeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS);</span>
+<span class="fc" id="L286">        } catch (java.util.concurrent.TimeoutException | java.util.concurrent.ExecutionException e) {</span>
+<span class="fc" id="L287">            return null;</span>
+<span class="nc" id="L288">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L289">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L290">            return null;</span>
+        }
+    }
+
+    /** Runs {@code task} on a daemon thread, unless too many earlier readers are still stuck (see {@link #maxBlockedReaders}). */
+    private static boolean startReader(Runnable task) {
+        int readers;
+        do {
+<span class="fc" id="L298">            readers = LIVE_READERS.get();</span>
+<span class="fc bfc" id="L299" title="All 2 branches covered.">            if (readers &gt;= maxBlockedReaders) {</span>
+<span class="fc" id="L300">                return false;</span>
+            }
+<span class="pc bpc" id="L302" title="1 of 2 branches missed.">        } while (!LIVE_READERS.compareAndSet(readers, readers + 1));</span>
+        try {
+<span class="fc" id="L304">            Thread reader = new Thread(() -&gt; {</span>
+                try {
+<span class="fc" id="L306">                    task.run();</span>
+                } finally {
+<span class="fc" id="L308">                    LIVE_READERS.decrementAndGet();</span>
+                }
+<span class="fc" id="L310">            }, &quot;mnemo-warmup-read&quot;);</span>
+<span class="fc" id="L311">            reader.setDaemon(true);</span>
+<span class="fc" id="L312">            reader.start();</span>
+<span class="fc" id="L313">            return true;</span>
+<span class="nc" id="L314">        } catch (RuntimeException | Error e) {</span>
+<span class="nc" id="L315">            LIVE_READERS.decrementAndGet();</span>
+<span class="nc" id="L316">            throw e;</span>
         }
     }
 
     private static long sizeOf(Path file) {
         try {
-<span class="fc" id="L159">            return Files.size(file);</span>
-<span class="nc" id="L160">        } catch (IOException e) {</span>
-<span class="nc" id="L161">            return -1;</span>
+<span class="fc" id="L322">            return Files.size(file);</span>
+<span class="nc" id="L323">        } catch (IOException e) {</span>
+<span class="nc" id="L324">            return -1;</span>
         }
     }
 
     /** The parts of a {@code java ... -jar app.jar} command that decide archive validity. */
-<span class="fc" id="L166">    record JavaLaunch(String executable, List&lt;String&gt; jvmOptions, Path jar) {</span>
+<span class="fc" id="L329">    record JavaLaunch(String executable, List&lt;String&gt; jvmOptions, Path jar) {</span>
 
         /** Null unless the command is {@code &lt;java&gt; [-options] -jar &lt;jar&gt; ...}. */
         static JavaLaunch parse(List&lt;String&gt; command) {
-<span class="fc bfc" id="L170" title="All 2 branches covered.">            if (command.size() &lt; 3) {</span>
-<span class="fc" id="L171">                return null;</span>
+<span class="fc bfc" id="L333" title="All 2 branches covered.">            if (command.size() &lt; 3) {</span>
+<span class="fc" id="L334">                return null;</span>
             }
-<span class="fc" id="L173">            String exe = command.get(0);</span>
-<span class="fc" id="L174">            String name = Path.of(exe).getFileName().toString();</span>
-<span class="pc bpc" id="L175" title="1 of 4 branches missed.">            if (!name.equals(&quot;java&quot;) &amp;&amp; !name.equals(&quot;java.exe&quot;)) {</span>
-<span class="fc" id="L176">                return null;</span>
+<span class="fc" id="L336">            String exe = command.get(0);</span>
+<span class="fc" id="L337">            String name = Path.of(exe).getFileName().toString();</span>
+<span class="pc bpc" id="L338" title="1 of 4 branches missed.">            if (!name.equals(&quot;java&quot;) &amp;&amp; !name.equals(&quot;java.exe&quot;)) {</span>
+<span class="fc" id="L339">                return null;</span>
             }
-<span class="fc" id="L178">            List&lt;String&gt; options = new ArrayList&lt;&gt;();</span>
-<span class="pc bpc" id="L179" title="1 of 2 branches missed.">            for (int i = 1; i &lt; command.size(); i++) {</span>
-<span class="fc" id="L180">                String arg = command.get(i);</span>
-<span class="fc bfc" id="L181" title="All 2 branches covered.">                if (arg.equals(&quot;-jar&quot;)) {</span>
-<span class="pc bpc" id="L182" title="1 of 2 branches missed.">                    return i + 1 &lt; command.size() ? new JavaLaunch(exe, List.copyOf(options), Path.of(command.get(i + 1))) : null;</span>
+<span class="fc" id="L341">            List&lt;String&gt; options = new ArrayList&lt;&gt;();</span>
+<span class="pc bpc" id="L342" title="1 of 2 branches missed.">            for (int i = 1; i &lt; command.size(); i++) {</span>
+<span class="fc" id="L343">                String arg = command.get(i);</span>
+<span class="fc bfc" id="L344" title="All 2 branches covered.">                if (arg.equals(&quot;-jar&quot;)) {</span>
+<span class="pc bpc" id="L345" title="1 of 2 branches missed.">                    return i + 1 &lt; command.size() ? new JavaLaunch(exe, List.copyOf(options), Path.of(command.get(i + 1))) : null;</span>
                 }
-<span class="pc bpc" id="L184" title="1 of 2 branches missed.">                if (!arg.startsWith(&quot;-&quot;)) {</span>
-<span class="nc" id="L185">                    return null; // a main class: not a -jar launch</span>
+<span class="pc bpc" id="L347" title="1 of 2 branches missed.">                if (!arg.startsWith(&quot;-&quot;)) {</span>
+<span class="nc" id="L348">                    return null; // a main class: not a -jar launch</span>
                 }
-<span class="pc bpc" id="L187" title="2 of 6 branches missed.">                if (arg.equals(&quot;-cp&quot;) || arg.equals(&quot;-classpath&quot;) || arg.equals(&quot;--class-path&quot;)) {</span>
-<span class="fc" id="L188">                    return null; // classpath launches are not supported</span>
+<span class="pc bpc" id="L350" title="2 of 6 branches missed.">                if (arg.equals(&quot;-cp&quot;) || arg.equals(&quot;-classpath&quot;) || arg.equals(&quot;--class-path&quot;)) {</span>
+<span class="fc" id="L351">                    return null; // classpath launches are not supported</span>
                 }
-<span class="fc" id="L190">                options.add(arg);</span>
+<span class="fc" id="L353">                options.add(arg);</span>
             }
-<span class="nc" id="L192">            return null;</span>
+<span class="nc" id="L355">            return null;</span>
         }
 
         /** The java home of the launched executable: its path if given, else the first {@code java} on PATH, else JAVA_HOME. */
         Path javaHome(Map&lt;String, String&gt; env) {
-<span class="fc" id="L197">            Path bin = null;</span>
-<span class="pc bpc" id="L198" title="3 of 4 branches missed.">            if (executable.contains(&quot;/&quot;) || executable.contains(&quot;\\&quot;)) {</span>
-<span class="fc" id="L199">                bin = Path.of(executable);</span>
+<span class="fc" id="L360">            Path bin = null;</span>
+<span class="pc bpc" id="L361" title="3 of 4 branches missed.">            if (executable.contains(&quot;/&quot;) || executable.contains(&quot;\\&quot;)) {</span>
+<span class="fc" id="L362">                bin = Path.of(executable);</span>
             } else {
-<span class="nc" id="L201">                String path = env.get(&quot;PATH&quot;);</span>
-<span class="nc bnc" id="L202" title="All 2 branches missed.">                if (path != null) {</span>
-<span class="nc bnc" id="L203" title="All 2 branches missed.">                    for (String dir : path.split(java.io.File.pathSeparator)) {</span>
-<span class="nc bnc" id="L204" title="All 2 branches missed.">                        Path candidate = Path.of(dir.isEmpty() ? &quot;.&quot; : dir).resolve(executable);</span>
-<span class="nc bnc" id="L205" title="All 4 branches missed.">                        if (Files.isRegularFile(candidate) &amp;&amp; Files.isExecutable(candidate)) {</span>
-<span class="nc" id="L206">                            bin = candidate;</span>
-<span class="nc" id="L207">                            break;</span>
+<span class="nc" id="L364">                String path = env.get(&quot;PATH&quot;);</span>
+<span class="nc bnc" id="L365" title="All 2 branches missed.">                if (path != null) {</span>
+<span class="nc bnc" id="L366" title="All 2 branches missed.">                    for (String dir : path.split(java.io.File.pathSeparator)) {</span>
+<span class="nc bnc" id="L367" title="All 2 branches missed.">                        Path candidate = Path.of(dir.isEmpty() ? &quot;.&quot; : dir).resolve(executable);</span>
+<span class="nc bnc" id="L368" title="All 4 branches missed.">                        if (Files.isRegularFile(candidate) &amp;&amp; Files.isExecutable(candidate)) {</span>
+<span class="nc" id="L369">                            bin = candidate;</span>
+<span class="nc" id="L370">                            break;</span>
                         }
                     }
                 }
             }
-<span class="pc bpc" id="L212" title="1 of 2 branches missed.">            if (bin != null) {</span>
+<span class="pc bpc" id="L375" title="1 of 2 branches missed.">            if (bin != null) {</span>
                 try {
-<span class="fc" id="L214">                    Path home = bin.toRealPath().getParent().getParent();</span>
-<span class="pc bpc" id="L215" title="2 of 4 branches missed.">                    if (home != null &amp;&amp; Files.isRegularFile(home.resolve(&quot;bin&quot;).resolve(bin.getFileName()))) {</span>
-<span class="fc" id="L216">                        return home;</span>
+<span class="fc" id="L377">                    Path home = bin.toRealPath().getParent().getParent();</span>
+<span class="pc bpc" id="L378" title="2 of 4 branches missed.">                    if (home != null &amp;&amp; Files.isRegularFile(home.resolve(&quot;bin&quot;).resolve(bin.getFileName()))) {</span>
+<span class="fc" id="L379">                        return home;</span>
                     }
-<span class="nc" id="L218">                } catch (IOException ignored) {</span>
+<span class="nc" id="L381">                } catch (IOException ignored) {</span>
                     // fall through to JAVA_HOME
-<span class="nc" id="L220">                }</span>
+<span class="nc" id="L383">                }</span>
             }
-<span class="nc" id="L222">            String fromEnv = env.get(&quot;JAVA_HOME&quot;);</span>
-<span class="nc bnc" id="L223" title="All 4 branches missed.">            if (fromEnv != null &amp;&amp; !fromEnv.isBlank()) {</span>
-<span class="nc" id="L224">                return Path.of(fromEnv);</span>
+<span class="nc" id="L385">            String fromEnv = env.get(&quot;JAVA_HOME&quot;);</span>
+<span class="nc bnc" id="L386" title="All 4 branches missed.">            if (fromEnv != null &amp;&amp; !fromEnv.isBlank()) {</span>
+<span class="nc" id="L387">                return Path.of(fromEnv);</span>
             }
-<span class="nc" id="L226">            return JdkInfo.current().javaHome();</span>
+<span class="nc" id="L389">            return JdkInfo.current().javaHome();</span>
         }
     }
 }

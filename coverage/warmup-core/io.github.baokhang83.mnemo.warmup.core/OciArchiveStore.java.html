@@ -53,13 +53,17 @@ public final class OciArchiveStore implements ArchiveStore {
     private final Duration timeout;
     private final OciRegistryHttp registry;
     private volatile FetchLimits limits;
+    private volatile SigningKey signingKey;
+    private volatile ArchiveVerifier verifier;
+    static final String ANNOTATION_SIGNATURE = &quot;io.github.baokhang83.mnemo.warmup.signature&quot;;
+    static final String ANNOTATION_KEY_ID = &quot;io.github.baokhang83.mnemo.warmup.keyid&quot;;
 
-<span class="fc" id="L57">    private OciArchiveStore(URI base, String repository, RegistryAuth auth, Duration timeout) {</span>
-<span class="fc" id="L58">        this.base = base;</span>
-<span class="fc" id="L59">        this.repository = repository;</span>
-<span class="fc" id="L60">        this.timeout = timeout;</span>
-<span class="fc" id="L61">        this.registry = new OciRegistryHttp(base, repository, auth, timeout);</span>
-<span class="fc" id="L62">    }</span>
+<span class="fc" id="L61">    private OciArchiveStore(URI base, String repository, RegistryAuth auth, Duration timeout) {</span>
+<span class="fc" id="L62">        this.base = base;</span>
+<span class="fc" id="L63">        this.repository = repository;</span>
+<span class="fc" id="L64">        this.timeout = timeout;</span>
+<span class="fc" id="L65">        this.registry = new OciRegistryHttp(base, repository, auth, timeout);</span>
+<span class="fc" id="L66">    }</span>
 
     /**
      * @param reference   {@code oci://host[:port]/repository/path}
@@ -68,16 +72,16 @@ public final class OciArchiveStore implements ArchiveStore {
      * @param timeout     per request; archives are large, so make it generous
      */
     public static OciArchiveStore of(String reference, boolean plainHttp, RegistryCredentials credentials, Duration timeout) {
-<span class="fc" id="L71">        return withAuth(reference, plainHttp, RegistryAuth.fixed(credentials), timeout);</span>
+<span class="fc" id="L75">        return withAuth(reference, plainHttp, RegistryAuth.fixed(credentials), timeout);</span>
     }
 
     /**
      * @param auth where the registry login comes from; asked afresh for every token request
      */
     public static OciArchiveStore withAuth(String reference, boolean plainHttp, RegistryAuth auth, Duration timeout) {
-<span class="fc" id="L78">        ParsedReference ref = parse(reference);</span>
-<span class="pc bpc" id="L79" title="1 of 2 branches missed.">        URI base = URI.create((plainHttp ? &quot;http://&quot; : &quot;https://&quot;) + ref.host());</span>
-<span class="fc" id="L80">        return new OciArchiveStore(base, ref.repository(), auth, timeout);</span>
+<span class="fc" id="L82">        ParsedReference ref = parse(reference);</span>
+<span class="pc bpc" id="L83" title="1 of 2 branches missed.">        URI base = URI.create((plainHttp ? &quot;http://&quot; : &quot;https://&quot;) + ref.host());</span>
+<span class="fc" id="L84">        return new OciArchiveStore(base, ref.repository(), auth, timeout);</span>
     }
 
     /**
@@ -85,64 +89,138 @@ public final class OciArchiveStore implements ArchiveStore {
      * They never apply to {@link #put}: the trainer must stay free to publish what it trained.
      */
     public OciArchiveStore withFetchLimits(FetchLimits fetchLimits) {
-<span class="fc" id="L88">        this.limits = fetchLimits;</span>
-<span class="fc" id="L89">        registry.startDeadline(fetchLimits);</span>
-<span class="fc" id="L90">        return this;</span>
+<span class="fc" id="L92">        this.limits = fetchLimits;</span>
+<span class="fc" id="L93">        registry.startDeadline(fetchLimits);</span>
+<span class="fc" id="L94">        return this;</span>
+    }
+
+    /** Makes {@link #put} sign what it publishes (docs/adr/0013). Without a key, nothing is signed. */
+    public OciArchiveStore withSigningKey(SigningKey key) {
+<span class="fc" id="L99">        this.signingKey = key;</span>
+<span class="fc" id="L100">        return this;</span>
+    }
+
+    /**
+     * Requires a valid signature from one of the verifier's keys before an archive is used. With a verifier, an unsigned archive, an
+     * unknown key and a bad signature all count as &quot;no usable archive&quot;; without one, archives are accepted on their digests alone.
+     * A verifier with no usable key therefore refuses everything: a typo in the key list must never switch the check off.
+     */
+    public OciArchiveStore withVerifier(ArchiveVerifier verifier) {
+<span class="fc" id="L109">        this.verifier = verifier;</span>
+<span class="fc" id="L110">        return this;</span>
+    }
+
+    /** Whether a valid signature is required before an archive is used (a verifier was set, even one that trusts nothing). */
+    public boolean requiresSignatures() {
+<span class="fc bfc" id="L115" title="All 2 branches covered.">        return verifier != null;</span>
+    }
+
+    /** The id of the key {@link #put} signs with, or null when it does not sign. */
+    public String signingKeyId() {
+<span class="fc" id="L120">        SigningKey key = signingKey;</span>
+<span class="fc bfc" id="L121" title="All 2 branches covered.">        return key == null ? null : key.keyId();</span>
     }
 
     /** The {@code host[:port]} of an {@code oci://} reference, for looking up credentials. */
     public static String registryHost(String reference) {
-<span class="fc" id="L95">        return parse(reference).host();</span>
+<span class="fc" id="L126">        return parse(reference).host();</span>
     }
 
-<span class="fc" id="L98">    private record ParsedReference(String host, String repository) {}</span>
+<span class="fc" id="L129">    private record ParsedReference(String host, String repository) {}</span>
 
     private static ParsedReference parse(String reference) {
-<span class="pc bpc" id="L101" title="1 of 4 branches missed.">        if (reference == null || !reference.startsWith(&quot;oci://&quot;)) {</span>
-<span class="fc" id="L102">            throw new IllegalArgumentException(&quot;Store must look like oci://host[:port]/repository, got: &quot; + reference);</span>
+<span class="pc bpc" id="L132" title="1 of 4 branches missed.">        if (reference == null || !reference.startsWith(&quot;oci://&quot;)) {</span>
+<span class="fc" id="L133">            throw new IllegalArgumentException(&quot;Store must look like oci://host[:port]/repository, got: &quot; + reference);</span>
         }
-<span class="fc" id="L104">        String rest = reference.substring(&quot;oci://&quot;.length());</span>
-<span class="fc" id="L105">        int slash = rest.indexOf('/');</span>
-<span class="pc bpc" id="L106" title="1 of 4 branches missed.">        if (slash &lt;= 0 || slash == rest.length() - 1) {</span>
-<span class="fc" id="L107">            throw new IllegalArgumentException(&quot;Store must look like oci://host[:port]/repository, got: &quot; + reference);</span>
+<span class="fc" id="L135">        String rest = reference.substring(&quot;oci://&quot;.length());</span>
+<span class="fc" id="L136">        int slash = rest.indexOf('/');</span>
+<span class="pc bpc" id="L137" title="1 of 4 branches missed.">        if (slash &lt;= 0 || slash == rest.length() - 1) {</span>
+<span class="fc" id="L138">            throw new IllegalArgumentException(&quot;Store must look like oci://host[:port]/repository, got: &quot; + reference);</span>
         }
-<span class="fc" id="L109">        String repository = rest.substring(slash + 1);</span>
-<span class="fc bfc" id="L110" title="All 2 branches covered.">        if (!repository.matches(&quot;[a-z0-9]+([._/-][a-z0-9]+)*&quot;)) {</span>
-<span class="fc" id="L111">            throw new IllegalArgumentException(&quot;Not a valid repository name (lower-case a-z, 0-9, . _ - /): &quot; + repository);</span>
+<span class="fc" id="L140">        String repository = rest.substring(slash + 1);</span>
+<span class="fc bfc" id="L141" title="All 2 branches covered.">        if (!repository.matches(&quot;[a-z0-9]+([._/-][a-z0-9]+)*&quot;)) {</span>
+<span class="fc" id="L142">            throw new IllegalArgumentException(&quot;Not a valid repository name (lower-case a-z, 0-9, . _ - /): &quot; + repository);</span>
         }
-<span class="fc" id="L113">        return new ParsedReference(rest.substring(0, slash), repository);</span>
+<span class="fc" id="L144">        return new ParsedReference(rest.substring(0, slash), repository);</span>
     }
 
     // ---- tag encoding ----
 
     /** {@code sha256:&lt;64 hex&gt;} to {@code fp-&lt;64 hex&gt;}. */
     public static String tagFor(String fingerprint) {
-<span class="pc bpc" id="L120" title="1 of 2 branches missed.">        if (fingerprint == null</span>
-<span class="fc bfc" id="L121" title="All 2 branches covered.">                || !fingerprint.startsWith(FINGERPRINT_PREFIX)</span>
-<span class="fc bfc" id="L122" title="All 2 branches covered.">                || !HEX64.matcher(fingerprint.substring(FINGERPRINT_PREFIX.length())).matches()) {</span>
-<span class="fc" id="L123">            throw new IllegalArgumentException(&quot;Not a fingerprint (sha256:&lt;64 hex&gt;): &quot; + fingerprint);</span>
+<span class="pc bpc" id="L151" title="1 of 2 branches missed.">        if (fingerprint == null</span>
+<span class="fc bfc" id="L152" title="All 2 branches covered.">                || !fingerprint.startsWith(FINGERPRINT_PREFIX)</span>
+<span class="fc bfc" id="L153" title="All 2 branches covered.">                || !HEX64.matcher(fingerprint.substring(FINGERPRINT_PREFIX.length())).matches()) {</span>
+<span class="fc" id="L154">            throw new IllegalArgumentException(&quot;Not a fingerprint (sha256:&lt;64 hex&gt;): &quot; + fingerprint);</span>
         }
-<span class="fc" id="L125">        return TAG_PREFIX + fingerprint.substring(FINGERPRINT_PREFIX.length());</span>
+<span class="fc" id="L156">        return TAG_PREFIX + fingerprint.substring(FINGERPRINT_PREFIX.length());</span>
     }
 
     /** The inverse of {@link #tagFor(String)}. */
     public static String fingerprintOf(String tag) {
-<span class="pc bpc" id="L130" title="2 of 6 branches missed.">        if (tag == null || !tag.startsWith(TAG_PREFIX) || !HEX64.matcher(tag.substring(TAG_PREFIX.length())).matches()) {</span>
-<span class="fc" id="L131">            throw new IllegalArgumentException(&quot;Not a fingerprint tag (fp-&lt;64 hex&gt;): &quot; + tag);</span>
+<span class="pc bpc" id="L161" title="2 of 6 branches missed.">        if (tag == null || !tag.startsWith(TAG_PREFIX) || !HEX64.matcher(tag.substring(TAG_PREFIX.length())).matches()) {</span>
+<span class="fc" id="L162">            throw new IllegalArgumentException(&quot;Not a fingerprint tag (fp-&lt;64 hex&gt;): &quot; + tag);</span>
         }
-<span class="fc" id="L133">        return FINGERPRINT_PREFIX + tag.substring(TAG_PREFIX.length());</span>
+<span class="fc" id="L164">        return FINGERPRINT_PREFIX + tag.substring(TAG_PREFIX.length());</span>
     }
 
     // ---- ArchiveStore ----
 
+    /**
+     * Why the stored entry may not be used, or null when it may. The statement is rebuilt here from what was actually observed (the
+     * fingerprint asked for, the digest of the manifest blob that was just verified, the declared archive digest and size, this
+     * repository), never read from the registry. Without a verifier nothing is required.
+     */
+    @SuppressWarnings(&quot;unchecked&quot;)
+    private String signatureProblem(String fingerprint, Map&lt;String, Object&gt; image, String configDigest, String layerDigest, long layerSize) {
+<span class="fc" id="L176">        ArchiveVerifier check = verifier;</span>
+<span class="fc bfc" id="L177" title="All 2 branches covered.">        if (check == null) {</span>
+<span class="fc" id="L178">            return null;</span>
+        }
+<span class="fc" id="L180">        ArchiveSignature signature = storedSignature(image);</span>
+<span class="fc bfc" id="L181" title="All 2 branches covered.">        if (signature == null) {</span>
+<span class="fc" id="L182">            return &quot;not signed&quot;;</span>
+        }
+        SignedStatement statement;
+        try {
+<span class="fc" id="L186">            statement = new SignedStatement(fingerprint, configDigest, layerDigest, layerSize, repository);</span>
+<span class="nc" id="L187">        } catch (IllegalArgumentException e) {</span>
+<span class="nc" id="L188">            return &quot;not something that can be signed (&quot; + e.getMessage() + &quot;)&quot;;</span>
+<span class="fc" id="L189">        }</span>
+<span class="fc bfc" id="L190" title="All 3 branches covered.">        return switch (check.verify(statement, signature)) {</span>
+<span class="fc" id="L191">            case VALID -&gt; null;</span>
+<span class="fc" id="L192">            case UNKNOWN_KEY -&gt; &quot;signed by a key that is not trusted (&quot; + signature.keyId() + &quot;)&quot;;</span>
+<span class="fc" id="L193">            case BAD_SIGNATURE -&gt; &quot;carrying a signature that does not match it&quot;;</span>
+        };
+    }
+
+    /** The signature in the manifest's annotations, or null when it is absent or unreadable (which is the same as unsigned). */
+    @SuppressWarnings(&quot;unchecked&quot;)
+    private static ArchiveSignature storedSignature(Map&lt;String, Object&gt; image) {
+        try {
+<span class="fc" id="L201">            Object annotations = image.get(&quot;annotations&quot;);</span>
+<span class="fc bfc" id="L202" title="All 2 branches covered.">            if (!(annotations instanceof Map&lt;?, ?&gt; map)) {</span>
+<span class="fc" id="L203">                return null;</span>
+            }
+<span class="fc" id="L205">            Object keyId = map.get(ANNOTATION_KEY_ID);</span>
+<span class="fc" id="L206">            Object signature = map.get(ANNOTATION_SIGNATURE);</span>
+<span class="pc bpc" id="L207" title="2 of 4 branches missed.">            if (!(keyId instanceof String id) || !(signature instanceof String encoded)) {</span>
+<span class="nc" id="L208">                return null;</span>
+            }
+<span class="fc" id="L210">            return new ArchiveSignature(id, java.util.Base64.getDecoder().decode(encoded));</span>
+<span class="nc" id="L211">        } catch (IllegalArgumentException e) {</span>
+<span class="nc" id="L212">            return null;</span>
+        }
+    }
+
     @Override
     public boolean exists(String fingerprint) {
-<span class="fc" id="L140">        String tag = tagFor(fingerprint);</span>
-<span class="fc" id="L141">        HttpResponse&lt;byte[]&gt; r = call(&quot;HEAD&quot;, manifestUri(tag), Map.of(&quot;Accept&quot;, MANIFEST_TYPE), null, BodyHandlers.ofByteArray(), &quot;pull&quot;);</span>
-<span class="fc bfc" id="L142" title="All 3 branches covered.">        return switch (r.statusCode()) {</span>
-<span class="fc" id="L143">            case 200 -&gt; true;</span>
-<span class="fc" id="L144">            case 404 -&gt; false;</span>
-<span class="fc" id="L145">            default -&gt; throw failure(&quot;check&quot;, r);</span>
+<span class="fc" id="L218">        String tag = tagFor(fingerprint);</span>
+<span class="fc" id="L219">        HttpResponse&lt;byte[]&gt; r = call(&quot;HEAD&quot;, manifestUri(tag), Map.of(&quot;Accept&quot;, MANIFEST_TYPE), null, BodyHandlers.ofByteArray(), &quot;pull&quot;);</span>
+<span class="fc bfc" id="L220" title="All 3 branches covered.">        return switch (r.statusCode()) {</span>
+<span class="fc" id="L221">            case 200 -&gt; true;</span>
+<span class="fc" id="L222">            case 404 -&gt; false;</span>
+<span class="fc" id="L223">            default -&gt; throw failure(&quot;check&quot;, r);</span>
         };
     }
 
@@ -154,246 +232,263 @@ public final class OciArchiveStore implements ArchiveStore {
     @Override
     @SuppressWarnings(&quot;unchecked&quot;)
     public Inspection inspect(String fingerprint) {
-<span class="fc" id="L157">        String tag = tagFor(fingerprint);</span>
-<span class="fc" id="L158">        HttpResponse&lt;byte[]&gt; r = call(&quot;GET&quot;, manifestUri(tag), Map.of(&quot;Accept&quot;, MANIFEST_TYPE), null, BoundedBody.bytes(MAX_MANIFEST_BYTES, &quot;a manifest&quot;), &quot;pull&quot;);</span>
-<span class="fc bfc" id="L159" title="All 2 branches covered.">        if (r.statusCode() == 404) {</span>
-<span class="fc" id="L160">            return Inspection.absent();</span>
+<span class="fc" id="L235">        String tag = tagFor(fingerprint);</span>
+<span class="fc" id="L236">        HttpResponse&lt;byte[]&gt; r = call(&quot;GET&quot;, manifestUri(tag), Map.of(&quot;Accept&quot;, MANIFEST_TYPE), null, BoundedBody.bytes(MAX_MANIFEST_BYTES, &quot;a manifest&quot;), &quot;pull&quot;);</span>
+<span class="fc bfc" id="L237" title="All 2 branches covered.">        if (r.statusCode() == 404) {</span>
+<span class="fc" id="L238">            return Inspection.absent();</span>
         }
-<span class="pc bpc" id="L162" title="1 of 2 branches missed.">        if (r.statusCode() != 200) {</span>
-<span class="nc" id="L163">            throw failure(&quot;read the manifest&quot;, r);</span>
+<span class="pc bpc" id="L240" title="1 of 2 branches missed.">        if (r.statusCode() != 200) {</span>
+<span class="nc" id="L241">            throw failure(&quot;read the manifest&quot;, r);</span>
         }
         String configDigest;
         long configSize;
         String layerDigest;
         long layerSize;
+        Map&lt;String, Object&gt; image;
         try {
-<span class="fc" id="L170">            Map&lt;String, Object&gt; image = (Map&lt;String, Object&gt;) Json.parse(new String(r.body(), StandardCharsets.UTF_8));</span>
-<span class="fc" id="L171">            Map&lt;String, Object&gt; config = (Map&lt;String, Object&gt;) image.get(&quot;config&quot;);</span>
-<span class="fc" id="L172">            List&lt;Object&gt; layers = (List&lt;Object&gt;) image.get(&quot;layers&quot;);</span>
-<span class="pc bpc" id="L173" title="2 of 4 branches missed.">            if (!CONFIG_TYPE.equals(config.get(&quot;mediaType&quot;)) || layers.size() != 1</span>
-<span class="pc bpc" id="L174" title="1 of 2 branches missed.">                    || !LAYER_TYPE.equals(((Map&lt;String, Object&gt;) layers.get(0)).get(&quot;mediaType&quot;))) {</span>
-<span class="nc" id="L175">                return Inspection.broken(&quot;the tag is not a mnemo-warmup artifact&quot;);</span>
+<span class="fc" id="L249">            image = (Map&lt;String, Object&gt;) Json.parse(new String(r.body(), StandardCharsets.UTF_8));</span>
+<span class="fc" id="L250">            Map&lt;String, Object&gt; config = (Map&lt;String, Object&gt;) image.get(&quot;config&quot;);</span>
+<span class="fc" id="L251">            List&lt;Object&gt; layers = (List&lt;Object&gt;) image.get(&quot;layers&quot;);</span>
+<span class="pc bpc" id="L252" title="2 of 4 branches missed.">            if (!CONFIG_TYPE.equals(config.get(&quot;mediaType&quot;)) || layers.size() != 1</span>
+<span class="pc bpc" id="L253" title="1 of 2 branches missed.">                    || !LAYER_TYPE.equals(((Map&lt;String, Object&gt;) layers.get(0)).get(&quot;mediaType&quot;))) {</span>
+<span class="nc" id="L254">                return Inspection.broken(&quot;the tag is not a mnemo-warmup artifact&quot;);</span>
             }
-<span class="fc" id="L177">            Map&lt;String, Object&gt; layer = (Map&lt;String, Object&gt;) layers.get(0);</span>
-<span class="fc" id="L178">            configDigest = String.valueOf(config.get(&quot;digest&quot;));</span>
-<span class="fc" id="L179">            configSize = ((Number) config.get(&quot;size&quot;)).longValue();</span>
-<span class="fc" id="L180">            layerDigest = String.valueOf(layer.get(&quot;digest&quot;));</span>
-<span class="fc" id="L181">            layerSize = ((Number) layer.get(&quot;size&quot;)).longValue();</span>
-<span class="fc" id="L182">        } catch (RuntimeException e) {</span>
-<span class="fc" id="L183">            return Inspection.broken(&quot;the manifest is unreadable&quot;);</span>
-<span class="fc" id="L184">        }</span>
-<span class="pc bpc" id="L185" title="2 of 4 branches missed.">        if (configSize &lt;= 0 || configSize &gt; MAX_CONFIG_BYTES) {</span>
-<span class="nc" id="L186">            return Inspection.broken(&quot;the manifest blob declares &quot; + configSize + &quot; bytes, outside the allowed 1 to &quot; + MAX_CONFIG_BYTES);</span>
+<span class="fc" id="L256">            Map&lt;String, Object&gt; layer = (Map&lt;String, Object&gt;) layers.get(0);</span>
+<span class="fc" id="L257">            configDigest = String.valueOf(config.get(&quot;digest&quot;));</span>
+<span class="fc" id="L258">            configSize = ((Number) config.get(&quot;size&quot;)).longValue();</span>
+<span class="fc" id="L259">            layerDigest = String.valueOf(layer.get(&quot;digest&quot;));</span>
+<span class="fc" id="L260">            layerSize = ((Number) layer.get(&quot;size&quot;)).longValue();</span>
+<span class="fc" id="L261">        } catch (RuntimeException e) {</span>
+<span class="fc" id="L262">            return Inspection.broken(&quot;the manifest is unreadable&quot;);</span>
+<span class="fc" id="L263">        }</span>
+<span class="pc bpc" id="L264" title="2 of 4 branches missed.">        if (configSize &lt;= 0 || configSize &gt; MAX_CONFIG_BYTES) {</span>
+<span class="nc" id="L265">            return Inspection.broken(&quot;the manifest blob declares &quot; + configSize + &quot; bytes, outside the allowed 1 to &quot; + MAX_CONFIG_BYTES);</span>
         }
-<span class="fc" id="L188">        HttpResponse&lt;byte[]&gt; configResponse = call(&quot;GET&quot;, blobUri(configDigest), Map.of(), null, BoundedBody.bytes(MAX_CONFIG_BYTES, &quot;the manifest blob&quot;), &quot;pull&quot;);</span>
-<span class="pc bpc" id="L189" title="1 of 2 branches missed.">        if (configResponse.statusCode() == 404) {</span>
-<span class="nc" id="L190">            return Inspection.broken(&quot;the manifest blob &quot; + configDigest + &quot; is missing&quot;);</span>
+<span class="fc" id="L267">        HttpResponse&lt;byte[]&gt; configResponse = call(&quot;GET&quot;, blobUri(configDigest), Map.of(), null, BoundedBody.bytes(MAX_CONFIG_BYTES, &quot;the manifest blob&quot;), &quot;pull&quot;);</span>
+<span class="pc bpc" id="L268" title="1 of 2 branches missed.">        if (configResponse.statusCode() == 404) {</span>
+<span class="nc" id="L269">            return Inspection.broken(&quot;the manifest blob &quot; + configDigest + &quot; is missing&quot;);</span>
         }
-<span class="pc bpc" id="L192" title="1 of 2 branches missed.">        if (configResponse.statusCode() != 200) {</span>
-<span class="nc" id="L193">            throw failure(&quot;read the manifest blob&quot;, configResponse);</span>
+<span class="pc bpc" id="L271" title="1 of 2 branches missed.">        if (configResponse.statusCode() != 200) {</span>
+<span class="nc" id="L272">            throw failure(&quot;read the manifest blob&quot;, configResponse);</span>
         }
-<span class="fc bfc" id="L195" title="All 2 branches covered.">        if (!configDigest.equals(&quot;sha256:&quot; + hex(configResponse.body()))) {</span>
-<span class="fc" id="L196">            return Inspection.broken(&quot;the manifest blob does not match its digest&quot;);</span>
+<span class="fc bfc" id="L274" title="All 2 branches covered.">        if (!configDigest.equals(&quot;sha256:&quot; + hex(configResponse.body()))) {</span>
+<span class="fc" id="L275">            return Inspection.broken(&quot;the manifest blob does not match its digest&quot;);</span>
         }
         try {
-<span class="fc bfc" id="L199" title="All 2 branches covered.">            if (!fingerprint.equals(ArchiveManifest.fromJson(new String(configResponse.body(), StandardCharsets.UTF_8)).fingerprint())) {</span>
-<span class="fc" id="L200">                return Inspection.broken(&quot;the stored manifest describes another fingerprint&quot;);</span>
+<span class="fc bfc" id="L278" title="All 2 branches covered.">            if (!fingerprint.equals(ArchiveManifest.fromJson(new String(configResponse.body(), StandardCharsets.UTF_8)).fingerprint())) {</span>
+<span class="fc" id="L279">                return Inspection.broken(&quot;the stored manifest describes another fingerprint&quot;);</span>
             }
-<span class="nc" id="L202">        } catch (RuntimeException e) {</span>
-<span class="nc" id="L203">            return Inspection.broken(&quot;the stored manifest is unreadable&quot;);</span>
-<span class="fc" id="L204">        }</span>
-<span class="fc" id="L205">        HttpResponse&lt;byte[]&gt; layerResponse = call(&quot;HEAD&quot;, blobUri(layerDigest), Map.of(), null, BodyHandlers.ofByteArray(), &quot;pull&quot;);</span>
-<span class="fc bfc" id="L206" title="All 2 branches covered.">        if (layerResponse.statusCode() == 404) {</span>
-<span class="fc" id="L207">            return Inspection.broken(&quot;the archive blob &quot; + layerDigest + &quot; is missing&quot;);</span>
+<span class="nc" id="L281">        } catch (RuntimeException e) {</span>
+<span class="nc" id="L282">            return Inspection.broken(&quot;the stored manifest is unreadable&quot;);</span>
+<span class="fc" id="L283">        }</span>
+<span class="fc" id="L284">        String problem = signatureProblem(fingerprint, image, configDigest, layerDigest, layerSize);</span>
+<span class="fc bfc" id="L285" title="All 2 branches covered.">        if (problem != null) {</span>
+<span class="fc" id="L286">            return Inspection.broken(&quot;the entry is &quot; + problem);</span>
         }
-<span class="pc bpc" id="L209" title="1 of 2 branches missed.">        if (layerResponse.statusCode() != 200) {</span>
-<span class="nc" id="L210">            throw failure(&quot;check the archive blob&quot;, layerResponse);</span>
+<span class="fc" id="L288">        HttpResponse&lt;byte[]&gt; layerResponse = call(&quot;HEAD&quot;, blobUri(layerDigest), Map.of(), null, BodyHandlers.ofByteArray(), &quot;pull&quot;);</span>
+<span class="fc bfc" id="L289" title="All 2 branches covered.">        if (layerResponse.statusCode() == 404) {</span>
+<span class="fc" id="L290">            return Inspection.broken(&quot;the archive blob &quot; + layerDigest + &quot; is missing&quot;);</span>
         }
-<span class="fc" id="L212">        long declared = layerResponse.headers().firstValueAsLong(&quot;Content-Length&quot;).orElse(-1);</span>
-<span class="pc bpc" id="L213" title="1 of 4 branches missed.">        if (declared &gt;= 0 &amp;&amp; declared != layerSize) {</span>
-<span class="fc" id="L214">            return Inspection.broken(&quot;the archive blob has &quot; + declared + &quot; bytes, the manifest declares &quot; + layerSize);</span>
+<span class="pc bpc" id="L292" title="1 of 2 branches missed.">        if (layerResponse.statusCode() != 200) {</span>
+<span class="nc" id="L293">            throw failure(&quot;check the archive blob&quot;, layerResponse);</span>
         }
-<span class="fc" id="L216">        return Inspection.usable();</span>
+<span class="fc" id="L295">        long declared = layerResponse.headers().firstValueAsLong(&quot;Content-Length&quot;).orElse(-1);</span>
+<span class="pc bpc" id="L296" title="1 of 4 branches missed.">        if (declared &gt;= 0 &amp;&amp; declared != layerSize) {</span>
+<span class="fc" id="L297">            return Inspection.broken(&quot;the archive blob has &quot; + declared + &quot; bytes, the manifest declares &quot; + layerSize);</span>
+        }
+<span class="fc" id="L299">        return Inspection.usable();</span>
     }
 
     @Override
     public void put(ArchiveManifest manifest, Path archiveFile) {
-<span class="fc" id="L221">        String tag = tagFor(manifest.fingerprint());</span>
+<span class="fc" id="L304">        String tag = tagFor(manifest.fingerprint());</span>
         try {
-<span class="fc" id="L223">            byte[] config = manifest.toJson().getBytes(StandardCharsets.UTF_8);</span>
-<span class="fc" id="L224">            String configDigest = &quot;sha256:&quot; + hex(config);</span>
-<span class="fc" id="L225">            String archiveHex = hex(archiveFile);</span>
-<span class="fc" id="L226">            String archiveDigest = &quot;sha256:&quot; + archiveHex;</span>
-<span class="fc" id="L227">            long archiveSize = Files.size(archiveFile);</span>
-<span class="fc" id="L228">            ArchiveManifest.ArchiveInfo declared = manifest.archive();</span>
-<span class="pc bpc" id="L229" title="2 of 6 branches missed.">            if (declared == null || declared.sizeBytes() != archiveSize || !declared.sha256().equals(archiveHex)) {</span>
-<span class="fc" id="L230">                throw new IllegalArgumentException(</span>
+<span class="fc" id="L306">            byte[] config = manifest.toJson().getBytes(StandardCharsets.UTF_8);</span>
+<span class="fc" id="L307">            String configDigest = &quot;sha256:&quot; + hex(config);</span>
+<span class="fc" id="L308">            String archiveHex = hex(archiveFile);</span>
+<span class="fc" id="L309">            String archiveDigest = &quot;sha256:&quot; + archiveHex;</span>
+<span class="fc" id="L310">            long archiveSize = Files.size(archiveFile);</span>
+<span class="fc" id="L311">            ArchiveManifest.ArchiveInfo declared = manifest.archive();</span>
+<span class="pc bpc" id="L312" title="2 of 6 branches missed.">            if (declared == null || declared.sizeBytes() != archiveSize || !declared.sha256().equals(archiveHex)) {</span>
+<span class="fc" id="L313">                throw new IllegalArgumentException(</span>
                         &quot;Archive &quot; + archiveFile + &quot; does not match its manifest (size or SHA-256 differs); rebuild before pushing&quot;);
             }
 
-<span class="fc" id="L234">            uploadBlob(configDigest, () -&gt; BodyPublishers.ofByteArray(config));</span>
-<span class="fc" id="L235">            uploadBlob(archiveDigest, () -&gt; {</span>
+<span class="fc" id="L317">            uploadBlob(configDigest, () -&gt; BodyPublishers.ofByteArray(config));</span>
+<span class="fc" id="L318">            uploadBlob(archiveDigest, () -&gt; {</span>
                 try {
-<span class="fc" id="L237">                    return BodyPublishers.ofFile(archiveFile);</span>
-<span class="nc" id="L238">                } catch (IOException e) {</span>
-<span class="nc" id="L239">                    throw new StoreException(&quot;Cannot read archive &quot; + archiveFile + &quot;: &quot; + e.getMessage(), e);</span>
+<span class="fc" id="L320">                    return BodyPublishers.ofFile(archiveFile);</span>
+<span class="nc" id="L321">                } catch (IOException e) {</span>
+<span class="nc" id="L322">                    throw new StoreException(&quot;Cannot read archive &quot; + archiveFile + &quot;: &quot; + e.getMessage(), e);</span>
                 }
             });
 
-<span class="fc" id="L243">            Map&lt;String, Object&gt; configDescriptor = descriptor(CONFIG_TYPE, configDigest, config.length);</span>
-<span class="fc" id="L244">            Map&lt;String, Object&gt; layer = descriptor(LAYER_TYPE, archiveDigest, archiveSize);</span>
-<span class="fc" id="L245">            layer.put(&quot;annotations&quot;, new LinkedHashMap&lt;&gt;(Map.of(TITLE_ANNOTATION, archiveFile.getFileName().toString())));</span>
-<span class="fc" id="L246">            Map&lt;String, Object&gt; image = new LinkedHashMap&lt;&gt;();</span>
-<span class="fc" id="L247">            image.put(&quot;schemaVersion&quot;, 2L);</span>
-<span class="fc" id="L248">            image.put(&quot;mediaType&quot;, MANIFEST_TYPE);</span>
-<span class="fc" id="L249">            image.put(&quot;artifactType&quot;, ARTIFACT_TYPE);</span>
-<span class="fc" id="L250">            image.put(&quot;config&quot;, configDescriptor);</span>
-<span class="fc" id="L251">            image.put(&quot;layers&quot;, new ArrayList&lt;Object&gt;(List.of(layer)));</span>
-<span class="fc" id="L252">            byte[] body = Json.writeCompact(image).getBytes(StandardCharsets.UTF_8);</span>
-
-<span class="fc" id="L254">            HttpResponse&lt;byte[]&gt; r = call(</span>
-                    &quot;PUT&quot;,
-<span class="fc" id="L256">                    manifestUri(tag),</span>
-<span class="fc" id="L257">                    Map.of(&quot;Content-Type&quot;, MANIFEST_TYPE),</span>
-<span class="fc" id="L258">                    () -&gt; BodyPublishers.ofByteArray(body),</span>
-<span class="fc" id="L259">                    BodyHandlers.ofByteArray(),</span>
-                    &quot;pull,push&quot;);
-<span class="pc bpc" id="L261" title="3 of 4 branches missed.">            if (r.statusCode() != 201 &amp;&amp; r.statusCode() != 200) {</span>
-<span class="nc" id="L262">                throw failure(&quot;publish manifest&quot;, r);</span>
+<span class="fc" id="L326">            Map&lt;String, Object&gt; configDescriptor = descriptor(CONFIG_TYPE, configDigest, config.length);</span>
+<span class="fc" id="L327">            Map&lt;String, Object&gt; layer = descriptor(LAYER_TYPE, archiveDigest, archiveSize);</span>
+<span class="fc" id="L328">            layer.put(&quot;annotations&quot;, new LinkedHashMap&lt;&gt;(Map.of(TITLE_ANNOTATION, archiveFile.getFileName().toString())));</span>
+<span class="fc" id="L329">            Map&lt;String, Object&gt; image = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L330">            image.put(&quot;schemaVersion&quot;, 2L);</span>
+<span class="fc" id="L331">            image.put(&quot;mediaType&quot;, MANIFEST_TYPE);</span>
+<span class="fc" id="L332">            image.put(&quot;artifactType&quot;, ARTIFACT_TYPE);</span>
+<span class="fc" id="L333">            image.put(&quot;config&quot;, configDescriptor);</span>
+<span class="fc" id="L334">            image.put(&quot;layers&quot;, new ArrayList&lt;Object&gt;(List.of(layer)));</span>
+<span class="fc" id="L335">            SigningKey key = signingKey;</span>
+<span class="fc bfc" id="L336" title="All 2 branches covered.">            if (key != null) {</span>
+<span class="fc" id="L337">                ArchiveSignature signature = key.sign(new SignedStatement(manifest.fingerprint(), configDigest, archiveDigest, archiveSize, repository));</span>
+<span class="fc" id="L338">                Map&lt;String, Object&gt; annotations = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L339">                annotations.put(ANNOTATION_SIGNATURE, signature.signatureBase64());</span>
+<span class="fc" id="L340">                annotations.put(ANNOTATION_KEY_ID, signature.keyId());</span>
+<span class="fc" id="L341">                image.put(&quot;annotations&quot;, annotations);</span>
             }
-<span class="nc" id="L264">        } catch (IOException e) {</span>
-<span class="nc" id="L265">            throw new StoreException(&quot;Cannot read archive &quot; + archiveFile + &quot;: &quot; + e.getMessage(), e);</span>
-<span class="fc" id="L266">        }</span>
-<span class="fc" id="L267">    }</span>
+<span class="fc" id="L343">            byte[] body = Json.writeCompact(image).getBytes(StandardCharsets.UTF_8);</span>
+
+<span class="fc" id="L345">            HttpResponse&lt;byte[]&gt; r = call(</span>
+                    &quot;PUT&quot;,
+<span class="fc" id="L347">                    manifestUri(tag),</span>
+<span class="fc" id="L348">                    Map.of(&quot;Content-Type&quot;, MANIFEST_TYPE),</span>
+<span class="fc" id="L349">                    () -&gt; BodyPublishers.ofByteArray(body),</span>
+<span class="fc" id="L350">                    BodyHandlers.ofByteArray(),</span>
+                    &quot;pull,push&quot;);
+<span class="pc bpc" id="L352" title="3 of 4 branches missed.">            if (r.statusCode() != 201 &amp;&amp; r.statusCode() != 200) {</span>
+<span class="nc" id="L353">                throw failure(&quot;publish manifest&quot;, r);</span>
+            }
+<span class="nc" id="L355">        } catch (IOException e) {</span>
+<span class="nc" id="L356">            throw new StoreException(&quot;Cannot read archive &quot; + archiveFile + &quot;: &quot; + e.getMessage(), e);</span>
+<span class="fc" id="L357">        }</span>
+<span class="fc" id="L358">    }</span>
 
     @Override
     @SuppressWarnings(&quot;unchecked&quot;)
     public Optional&lt;StoredArchive&gt; get(String fingerprint, Path targetDir) {
-<span class="fc" id="L272">        String tag = tagFor(fingerprint);</span>
-<span class="fc" id="L273">        HttpResponse&lt;byte[]&gt; r = call(&quot;GET&quot;, manifestUri(tag), Map.of(&quot;Accept&quot;, MANIFEST_TYPE), null, BoundedBody.bytes(MAX_MANIFEST_BYTES, &quot;a manifest&quot;), &quot;pull&quot;);</span>
-<span class="fc bfc" id="L274" title="All 2 branches covered.">        if (r.statusCode() == 404) {</span>
-<span class="fc" id="L275">            return Optional.empty();</span>
+<span class="fc" id="L363">        String tag = tagFor(fingerprint);</span>
+<span class="fc" id="L364">        HttpResponse&lt;byte[]&gt; r = call(&quot;GET&quot;, manifestUri(tag), Map.of(&quot;Accept&quot;, MANIFEST_TYPE), null, BoundedBody.bytes(MAX_MANIFEST_BYTES, &quot;a manifest&quot;), &quot;pull&quot;);</span>
+<span class="fc bfc" id="L365" title="All 2 branches covered.">        if (r.statusCode() == 404) {</span>
+<span class="fc" id="L366">            return Optional.empty();</span>
         }
-<span class="pc bpc" id="L277" title="1 of 2 branches missed.">        if (r.statusCode() != 200) {</span>
-<span class="nc" id="L278">            throw failure(&quot;fetch manifest&quot;, r);</span>
+<span class="pc bpc" id="L368" title="1 of 2 branches missed.">        if (r.statusCode() != 200) {</span>
+<span class="nc" id="L369">            throw failure(&quot;fetch manifest&quot;, r);</span>
         }
         Map&lt;String, Object&gt; image;
         Map&lt;String, Object&gt; config;
         Map&lt;String, Object&gt; layer;
         try {
-<span class="fc" id="L284">            image = (Map&lt;String, Object&gt;) Json.parse(new String(r.body(), StandardCharsets.UTF_8));</span>
-<span class="fc" id="L285">            config = (Map&lt;String, Object&gt;) image.get(&quot;config&quot;);</span>
-<span class="fc" id="L286">            List&lt;Object&gt; layers = (List&lt;Object&gt;) image.get(&quot;layers&quot;);</span>
-<span class="pc bpc" id="L287" title="2 of 4 branches missed.">            if (!CONFIG_TYPE.equals(config.get(&quot;mediaType&quot;)) || layers.size() != 1) {</span>
-<span class="nc" id="L288">                throw new StoreException(&quot;Tag &quot; + tag + &quot; in &quot; + repository + &quot; is not a mnemo-warmup archive&quot;);</span>
+<span class="fc" id="L375">            image = (Map&lt;String, Object&gt;) Json.parse(new String(r.body(), StandardCharsets.UTF_8));</span>
+<span class="fc" id="L376">            config = (Map&lt;String, Object&gt;) image.get(&quot;config&quot;);</span>
+<span class="fc" id="L377">            List&lt;Object&gt; layers = (List&lt;Object&gt;) image.get(&quot;layers&quot;);</span>
+<span class="pc bpc" id="L378" title="2 of 4 branches missed.">            if (!CONFIG_TYPE.equals(config.get(&quot;mediaType&quot;)) || layers.size() != 1) {</span>
+<span class="nc" id="L379">                throw new StoreException(&quot;Tag &quot; + tag + &quot; in &quot; + repository + &quot; is not a mnemo-warmup archive&quot;);</span>
             }
-<span class="fc" id="L290">            layer = (Map&lt;String, Object&gt;) layers.get(0);</span>
-<span class="pc bpc" id="L291" title="1 of 2 branches missed.">            if (!LAYER_TYPE.equals(layer.get(&quot;mediaType&quot;))) {</span>
-<span class="nc" id="L292">                throw new StoreException(&quot;Tag &quot; + tag + &quot; in &quot; + repository + &quot; is not a mnemo-warmup archive&quot;);</span>
+<span class="fc" id="L381">            layer = (Map&lt;String, Object&gt;) layers.get(0);</span>
+<span class="pc bpc" id="L382" title="1 of 2 branches missed.">            if (!LAYER_TYPE.equals(layer.get(&quot;mediaType&quot;))) {</span>
+<span class="nc" id="L383">                throw new StoreException(&quot;Tag &quot; + tag + &quot; in &quot; + repository + &quot; is not a mnemo-warmup archive&quot;);</span>
             }
-<span class="nc" id="L294">        } catch (ClassCastException | NullPointerException | IllegalArgumentException e) {</span>
-<span class="nc" id="L295">            throw new StoreException(&quot;Registry returned a malformed manifest for &quot; + tag, e);</span>
-<span class="fc" id="L296">        }</span>
+<span class="nc" id="L385">        } catch (ClassCastException | NullPointerException | IllegalArgumentException e) {</span>
+<span class="nc" id="L386">            throw new StoreException(&quot;Registry returned a malformed manifest for &quot; + tag, e);</span>
+<span class="fc" id="L387">        }</span>
 
-<span class="fc" id="L298">        FetchLimits fetchLimits = limits;</span>
+<span class="fc" id="L389">        FetchLimits fetchLimits = limits;</span>
         long declaredLayerSize;
         long declaredConfigSize;
         try {
-<span class="fc" id="L302">            declaredLayerSize = ((Number) layer.get(&quot;size&quot;)).longValue();</span>
-<span class="fc" id="L303">            declaredConfigSize = ((Number) config.get(&quot;size&quot;)).longValue();</span>
-<span class="nc" id="L304">        } catch (ClassCastException | NullPointerException e) {</span>
-<span class="nc" id="L305">            throw new StoreException(&quot;Registry returned a manifest without usable sizes for &quot; + tag, e);</span>
-<span class="fc" id="L306">        }</span>
-<span class="pc bpc" id="L307" title="1 of 6 branches missed.">        if (fetchLimits != null &amp;&amp; (declaredLayerSize &lt;= 0 || declaredLayerSize &gt; fetchLimits.maxArchiveBytes())) {</span>
-<span class="fc" id="L308">            throw new StoreException(&quot;The archive declares &quot; + declaredLayerSize + &quot; bytes, outside the allowed 1 to &quot;</span>
-<span class="fc" id="L309">                    + fetchLimits.maxArchiveBytes() + &quot; (&quot; + FetchLimits.ENV_MAX_ARCHIVE + &quot;); not downloading it&quot;);</span>
+<span class="fc" id="L393">            declaredLayerSize = ((Number) layer.get(&quot;size&quot;)).longValue();</span>
+<span class="fc" id="L394">            declaredConfigSize = ((Number) config.get(&quot;size&quot;)).longValue();</span>
+<span class="nc" id="L395">        } catch (ClassCastException | NullPointerException e) {</span>
+<span class="nc" id="L396">            throw new StoreException(&quot;Registry returned a manifest without usable sizes for &quot; + tag, e);</span>
+<span class="fc" id="L397">        }</span>
+<span class="pc bpc" id="L398" title="1 of 6 branches missed.">        if (fetchLimits != null &amp;&amp; (declaredLayerSize &lt;= 0 || declaredLayerSize &gt; fetchLimits.maxArchiveBytes())) {</span>
+<span class="fc" id="L399">            throw new StoreException(&quot;The archive declares &quot; + declaredLayerSize + &quot; bytes, outside the allowed 1 to &quot;</span>
+<span class="fc" id="L400">                    + fetchLimits.maxArchiveBytes() + &quot; (&quot; + FetchLimits.ENV_MAX_ARCHIVE + &quot;); not downloading it&quot;);</span>
         }
-<span class="pc bpc" id="L311" title="2 of 4 branches missed.">        if (declaredConfigSize &lt;= 0 || declaredConfigSize &gt; MAX_CONFIG_BYTES) {</span>
-<span class="nc" id="L312">            throw new StoreException(&quot;The manifest blob of &quot; + tag + &quot; declares &quot; + declaredConfigSize + &quot; bytes, outside the allowed 1 to &quot; + MAX_CONFIG_BYTES);</span>
+<span class="pc bpc" id="L402" title="2 of 4 branches missed.">        if (declaredConfigSize &lt;= 0 || declaredConfigSize &gt; MAX_CONFIG_BYTES) {</span>
+<span class="nc" id="L403">            throw new StoreException(&quot;The manifest blob of &quot; + tag + &quot; declares &quot; + declaredConfigSize + &quot; bytes, outside the allowed 1 to &quot; + MAX_CONFIG_BYTES);</span>
         }
 
-<span class="fc" id="L315">        String configDigest = String.valueOf(config.get(&quot;digest&quot;));</span>
-<span class="fc" id="L316">        HttpResponse&lt;byte[]&gt; configResponse = call(&quot;GET&quot;, blobUri(configDigest), Map.of(), null, BoundedBody.bytes(MAX_CONFIG_BYTES, &quot;the manifest blob&quot;), &quot;pull&quot;);</span>
-<span class="pc bpc" id="L317" title="1 of 2 branches missed.">        if (configResponse.statusCode() != 200) {</span>
-<span class="nc" id="L318">            throw failure(&quot;fetch config&quot;, configResponse);</span>
+<span class="fc" id="L406">        String configDigest = String.valueOf(config.get(&quot;digest&quot;));</span>
+<span class="fc" id="L407">        HttpResponse&lt;byte[]&gt; configResponse = call(&quot;GET&quot;, blobUri(configDigest), Map.of(), null, BoundedBody.bytes(MAX_CONFIG_BYTES, &quot;the manifest blob&quot;), &quot;pull&quot;);</span>
+<span class="pc bpc" id="L408" title="1 of 2 branches missed.">        if (configResponse.statusCode() != 200) {</span>
+<span class="nc" id="L409">            throw failure(&quot;fetch config&quot;, configResponse);</span>
         }
-<span class="pc bpc" id="L320" title="1 of 2 branches missed.">        if (!configDigest.equals(&quot;sha256:&quot; + hex(configResponse.body()))) {</span>
-<span class="nc" id="L321">            throw new StoreException(&quot;Digest mismatch for the manifest blob of &quot; + tag);</span>
+<span class="pc bpc" id="L411" title="1 of 2 branches missed.">        if (!configDigest.equals(&quot;sha256:&quot; + hex(configResponse.body()))) {</span>
+<span class="nc" id="L412">            throw new StoreException(&quot;Digest mismatch for the manifest blob of &quot; + tag);</span>
         }
         ArchiveManifest manifest;
         try {
-<span class="fc" id="L325">            manifest = ArchiveManifest.fromJson(new String(configResponse.body(), StandardCharsets.UTF_8));</span>
-<span class="nc" id="L326">        } catch (RuntimeException e) {</span>
-<span class="nc" id="L327">            throw new StoreException(&quot;Stored manifest for &quot; + tag + &quot; is unreadable: &quot; + e.getMessage(), e);</span>
-<span class="fc" id="L328">        }</span>
-<span class="pc bpc" id="L329" title="1 of 2 branches missed.">        if (!fingerprint.equals(manifest.fingerprint())) {</span>
-<span class="nc" id="L330">            throw new StoreException(&quot;Stored manifest for &quot; + tag + &quot; does not hash to that fingerprint&quot;);</span>
+<span class="fc" id="L416">            manifest = ArchiveManifest.fromJson(new String(configResponse.body(), StandardCharsets.UTF_8));</span>
+<span class="nc" id="L417">        } catch (RuntimeException e) {</span>
+<span class="nc" id="L418">            throw new StoreException(&quot;Stored manifest for &quot; + tag + &quot; is unreadable: &quot; + e.getMessage(), e);</span>
+<span class="fc" id="L419">        }</span>
+<span class="pc bpc" id="L420" title="1 of 2 branches missed.">        if (!fingerprint.equals(manifest.fingerprint())) {</span>
+<span class="nc" id="L421">            throw new StoreException(&quot;Stored manifest for &quot; + tag + &quot; does not hash to that fingerprint&quot;);</span>
         }
 
-<span class="fc" id="L333">        String layerDigest = String.valueOf(layer.get(&quot;digest&quot;));</span>
-<span class="fc" id="L334">        long layerSize = ((Number) layer.get(&quot;size&quot;)).longValue();</span>
-<span class="pc bpc" id="L335" title="1 of 2 branches missed.">        String fileName = Path.of(manifest.archive() == null ? &quot;archive&quot; : manifest.archive().file()).getFileName().toString();</span>
-<span class="fc" id="L336">        Path target = targetDir.resolve(fileName);</span>
-<span class="fc" id="L337">        download(blobUri(layerDigest), layerDigest, layerSize, target);</span>
-<span class="fc" id="L338">        return Optional.of(new StoredArchive(manifest, target));</span>
+<span class="fc" id="L424">        String layerDigest = String.valueOf(layer.get(&quot;digest&quot;));</span>
+<span class="fc" id="L425">        long layerSize = ((Number) layer.get(&quot;size&quot;)).longValue();</span>
+<span class="fc" id="L426">        String problem = signatureProblem(fingerprint, image, configDigest, layerDigest, layerSize);</span>
+<span class="fc bfc" id="L427" title="All 2 branches covered.">        if (problem != null) {</span>
+<span class="fc" id="L428">            throw new StoreException(&quot;The archive stored for &quot; + tag + &quot; is &quot; + problem + &quot;; not using it&quot;);</span>
+        }
+<span class="pc bpc" id="L430" title="1 of 2 branches missed.">        String fileName = Path.of(manifest.archive() == null ? &quot;archive&quot; : manifest.archive().file()).getFileName().toString();</span>
+<span class="fc" id="L431">        Path target = targetDir.resolve(fileName);</span>
+<span class="fc" id="L432">        download(blobUri(layerDigest), layerDigest, layerSize, target);</span>
+<span class="fc" id="L433">        return Optional.of(new StoredArchive(manifest, target, configResponse.body(), storedSignature(image), repository));</span>
     }
 
     // ---- blobs ----
 
     private void uploadBlob(String digest, Supplier&lt;BodyPublisher&gt; body) {
-<span class="fc" id="L344">        HttpResponse&lt;byte[]&gt; head = call(&quot;HEAD&quot;, blobUri(digest), Map.of(), null, BodyHandlers.ofByteArray(), &quot;pull,push&quot;);</span>
-<span class="fc bfc" id="L345" title="All 2 branches covered.">        if (head.statusCode() == 200) {</span>
-<span class="fc" id="L346">            return;</span>
+<span class="fc" id="L439">        HttpResponse&lt;byte[]&gt; head = call(&quot;HEAD&quot;, blobUri(digest), Map.of(), null, BodyHandlers.ofByteArray(), &quot;pull,push&quot;);</span>
+<span class="fc bfc" id="L440" title="All 2 branches covered.">        if (head.statusCode() == 200) {</span>
+<span class="fc" id="L441">            return;</span>
         }
-<span class="fc" id="L348">        URI startUri = uri(&quot;/v2/&quot; + repository + &quot;/blobs/uploads/&quot;);</span>
-<span class="fc" id="L349">        HttpResponse&lt;byte[]&gt; start = call(</span>
-<span class="fc" id="L350">                &quot;POST&quot;, startUri, Map.of(), () -&gt; BodyPublishers.noBody(), BodyHandlers.ofByteArray(), &quot;pull,push&quot;);</span>
-<span class="pc bpc" id="L351" title="1 of 2 branches missed.">        if (start.statusCode() != 202) {</span>
-<span class="nc" id="L352">            throw failure(&quot;start upload&quot;, start);</span>
+<span class="fc" id="L443">        URI startUri = uri(&quot;/v2/&quot; + repository + &quot;/blobs/uploads/&quot;);</span>
+<span class="fc" id="L444">        HttpResponse&lt;byte[]&gt; start = call(</span>
+<span class="fc" id="L445">                &quot;POST&quot;, startUri, Map.of(), () -&gt; BodyPublishers.noBody(), BodyHandlers.ofByteArray(), &quot;pull,push&quot;);</span>
+<span class="pc bpc" id="L446" title="1 of 2 branches missed.">        if (start.statusCode() != 202) {</span>
+<span class="nc" id="L447">            throw failure(&quot;start upload&quot;, start);</span>
         }
-<span class="fc" id="L354">        String location = start.headers().firstValue(&quot;Location&quot;).orElseThrow(</span>
-<span class="nc" id="L355">                () -&gt; new StoreException(&quot;Registry did not return an upload Location&quot;));</span>
-<span class="fc" id="L356">        URI target = startUri.resolve(location);</span>
-<span class="fc bfc" id="L357" title="All 2 branches covered.">        String joined = target + (target.getRawQuery() == null ? &quot;?&quot; : &quot;&amp;&quot;) + &quot;digest=&quot; + URLEncoder.encode(digest, StandardCharsets.UTF_8);</span>
-<span class="fc" id="L358">        HttpResponse&lt;byte[]&gt; put = call(&quot;PUT&quot;, URI.create(joined), Map.of(&quot;Content-Type&quot;, &quot;application/octet-stream&quot;), body, BodyHandlers.ofByteArray(), &quot;pull,push&quot;);</span>
-<span class="pc bpc" id="L359" title="1 of 2 branches missed.">        if (put.statusCode() != 201) {</span>
-<span class="nc" id="L360">            throw failure(&quot;upload blob&quot;, put);</span>
+<span class="fc" id="L449">        String location = start.headers().firstValue(&quot;Location&quot;).orElseThrow(</span>
+<span class="nc" id="L450">                () -&gt; new StoreException(&quot;Registry did not return an upload Location&quot;));</span>
+<span class="fc" id="L451">        URI target = startUri.resolve(location);</span>
+<span class="fc bfc" id="L452" title="All 2 branches covered.">        String joined = target + (target.getRawQuery() == null ? &quot;?&quot; : &quot;&amp;&quot;) + &quot;digest=&quot; + URLEncoder.encode(digest, StandardCharsets.UTF_8);</span>
+<span class="fc" id="L453">        HttpResponse&lt;byte[]&gt; put = call(&quot;PUT&quot;, URI.create(joined), Map.of(&quot;Content-Type&quot;, &quot;application/octet-stream&quot;), body, BodyHandlers.ofByteArray(), &quot;pull,push&quot;);</span>
+<span class="pc bpc" id="L454" title="1 of 2 branches missed.">        if (put.statusCode() != 201) {</span>
+<span class="nc" id="L455">            throw failure(&quot;upload blob&quot;, put);</span>
         }
-<span class="fc" id="L362">    }</span>
+<span class="fc" id="L457">    }</span>
 
     private void download(URI source, String digest, long size, Path target) {
-<span class="fc" id="L365">        Path tmp = null;</span>
+<span class="fc" id="L460">        Path tmp = null;</span>
         try {
-<span class="fc" id="L367">            Files.createDirectories(target.toAbsolutePath().getParent());</span>
-<span class="fc" id="L368">            long free = freeBytes(target.toAbsolutePath().getParent());</span>
-<span class="pc bpc" id="L369" title="2 of 4 branches missed.">            if (free &gt;= 0 &amp;&amp; free &lt; size) {</span>
-<span class="nc" id="L370">                throw new StoreException(&quot;Only &quot; + free + &quot; bytes are free in &quot; + target.toAbsolutePath().getParent() + &quot;, the archive needs &quot; + size);</span>
+<span class="fc" id="L462">            Files.createDirectories(target.toAbsolutePath().getParent());</span>
+<span class="fc" id="L463">            long free = freeBytes(target.toAbsolutePath().getParent());</span>
+<span class="pc bpc" id="L464" title="2 of 4 branches missed.">            if (free &gt;= 0 &amp;&amp; free &lt; size) {</span>
+<span class="nc" id="L465">                throw new StoreException(&quot;Only &quot; + free + &quot; bytes are free in &quot; + target.toAbsolutePath().getParent() + &quot;, the archive needs &quot; + size);</span>
             }
-<span class="fc" id="L372">            tmp = Files.createTempFile(target.toAbsolutePath().getParent(), target.getFileName().toString(), &quot;.part&quot;);</span>
-<span class="fc" id="L373">            HttpResponse&lt;InputStream&gt; r = call(&quot;GET&quot;, source, Map.of(), null, BodyHandlers.ofInputStream(), &quot;pull&quot;);</span>
-<span class="pc bpc" id="L374" title="1 of 2 branches missed.">            if (r.statusCode() != 200) {</span>
-<span class="nc" id="L375">                closeQuietly(r.body());</span>
-<span class="nc" id="L376">                throw failure(&quot;download archive&quot;, r);</span>
+<span class="fc" id="L467">            tmp = Files.createTempFile(target.toAbsolutePath().getParent(), target.getFileName().toString(), &quot;.part&quot;);</span>
+<span class="fc" id="L468">            HttpResponse&lt;InputStream&gt; r = call(&quot;GET&quot;, source, Map.of(), null, BodyHandlers.ofInputStream(), &quot;pull&quot;);</span>
+<span class="pc bpc" id="L469" title="1 of 2 branches missed.">            if (r.statusCode() != 200) {</span>
+<span class="nc" id="L470">                closeQuietly(r.body());</span>
+<span class="nc" id="L471">                throw failure(&quot;download archive&quot;, r);</span>
             }
-<span class="fc" id="L378">            MessageDigest md = sha256();</span>
-<span class="fc" id="L379">            long written = copyWithIdleLimit(new DigestInputStream(r.body(), md), tmp, size);</span>
-<span class="pc bpc" id="L380" title="1 of 4 branches missed.">            if (written != size || !digest.equals(&quot;sha256:&quot; + HexFormat.of().formatHex(md.digest()))) {</span>
-<span class="fc" id="L381">                throw new StoreException(&quot;Downloaded archive failed verification (size or digest mismatch)&quot;);</span>
+<span class="fc" id="L473">            MessageDigest md = sha256();</span>
+<span class="fc" id="L474">            long written = copyWithIdleLimit(new DigestInputStream(r.body(), md), tmp, size);</span>
+<span class="pc bpc" id="L475" title="1 of 4 branches missed.">            if (written != size || !digest.equals(&quot;sha256:&quot; + HexFormat.of().formatHex(md.digest()))) {</span>
+<span class="fc" id="L476">                throw new StoreException(&quot;Downloaded archive failed verification (size or digest mismatch)&quot;);</span>
             }
-<span class="fc" id="L383">            Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);</span>
-<span class="fc" id="L384">            tmp = null;</span>
-<span class="nc" id="L385">        } catch (IOException e) {</span>
-<span class="nc" id="L386">            throw new StoreException(&quot;Cannot download the archive: &quot; + e.getMessage(), e);</span>
+<span class="fc" id="L478">            Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);</span>
+<span class="fc" id="L479">            tmp = null;</span>
+<span class="nc" id="L480">        } catch (IOException e) {</span>
+<span class="nc" id="L481">            throw new StoreException(&quot;Cannot download the archive: &quot; + e.getMessage(), e);</span>
         } finally {
-<span class="fc bfc" id="L388" title="All 2 branches covered.">            if (tmp != null) {</span>
+<span class="fc bfc" id="L483" title="All 2 branches covered.">            if (tmp != null) {</span>
                 try {
-<span class="fc" id="L390">                    Files.deleteIfExists(tmp);</span>
-<span class="nc" id="L391">                } catch (IOException ignored) {</span>
+<span class="fc" id="L485">                    Files.deleteIfExists(tmp);</span>
+<span class="nc" id="L486">                } catch (IOException ignored) {</span>
                     // best effort
-<span class="fc" id="L393">                }</span>
+<span class="fc" id="L488">                }</span>
             }
         }
-<span class="fc" id="L396">    }</span>
+<span class="fc" id="L491">    }</span>
 
     /**
      * Copies the body to {@code target}, closing the stream if no byte arrives for {@link #timeout}
@@ -401,91 +496,91 @@ public final class OciArchiveStore implements ArchiveStore {
      * refusing more than {@code expectedSize} bytes.
      */
     private long copyWithIdleLimit(InputStream in, Path target, long expectedSize) throws IOException {
-<span class="fc" id="L404">        long[] lastProgress = {System.nanoTime()};</span>
-<span class="fc" id="L405">        boolean[] stalled = {false};</span>
-<span class="fc" id="L406">        boolean[] deadlineHit = {false};</span>
-<span class="fc" id="L407">        long deadlineAt = registry.deadlineAtNanos();</span>
-<span class="fc" id="L408">        var watchdog = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -&gt; {</span>
-<span class="fc" id="L409">            Thread t = new Thread(r, &quot;oci-download-watchdog&quot;);</span>
-<span class="fc" id="L410">            t.setDaemon(true);</span>
-<span class="fc" id="L411">            return t;</span>
+<span class="fc" id="L499">        long[] lastProgress = {System.nanoTime()};</span>
+<span class="fc" id="L500">        boolean[] stalled = {false};</span>
+<span class="fc" id="L501">        boolean[] deadlineHit = {false};</span>
+<span class="fc" id="L502">        long deadlineAt = registry.deadlineAtNanos();</span>
+<span class="fc" id="L503">        var watchdog = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -&gt; {</span>
+<span class="fc" id="L504">            Thread t = new Thread(r, &quot;oci-download-watchdog&quot;);</span>
+<span class="fc" id="L505">            t.setDaemon(true);</span>
+<span class="fc" id="L506">            return t;</span>
         });
-<span class="fc" id="L413">        long period = Math.max(50, Math.min(1000, timeout.toMillis() / 4));</span>
-<span class="fc" id="L414">        watchdog.scheduleAtFixedRate(() -&gt; {</span>
+<span class="fc" id="L508">        long period = Math.max(50, Math.min(1000, timeout.toMillis() / 4));</span>
+<span class="fc" id="L509">        watchdog.scheduleAtFixedRate(() -&gt; {</span>
             // The total deadline ends the download however steadily bytes arrive; the idle timeout only catches silence.
-<span class="pc bpc" id="L416" title="1 of 4 branches missed.">            if (deadlineAt != 0 &amp;&amp; System.nanoTime() - deadlineAt &gt; 0) {</span>
-<span class="fc" id="L417">                deadlineHit[0] = true;</span>
+<span class="pc bpc" id="L511" title="1 of 4 branches missed.">            if (deadlineAt != 0 &amp;&amp; System.nanoTime() - deadlineAt &gt; 0) {</span>
+<span class="fc" id="L512">                deadlineHit[0] = true;</span>
                 try {
-<span class="fc" id="L419">                    in.close();</span>
-<span class="nc" id="L420">                } catch (IOException ignored) {</span>
+<span class="fc" id="L514">                    in.close();</span>
+<span class="nc" id="L515">                } catch (IOException ignored) {</span>
                     // the read below fails and reports the deadline
-<span class="pc" id="L422">                }</span>
-<span class="fc bfc" id="L423" title="All 2 branches covered.">            } else if (System.nanoTime() - lastProgress[0] &gt; timeout.toNanos()) {</span>
-<span class="fc" id="L424">                stalled[0] = true;</span>
+<span class="pc" id="L517">                }</span>
+<span class="fc bfc" id="L518" title="All 2 branches covered.">            } else if (System.nanoTime() - lastProgress[0] &gt; timeout.toNanos()) {</span>
+<span class="fc" id="L519">                stalled[0] = true;</span>
                 try {
-<span class="fc" id="L426">                    in.close();</span>
-<span class="nc" id="L427">                } catch (IOException ignored) {</span>
+<span class="fc" id="L521">                    in.close();</span>
+<span class="nc" id="L522">                } catch (IOException ignored) {</span>
                     // the read below fails and reports the stall
-<span class="fc" id="L429">                }</span>
+<span class="fc" id="L524">                }</span>
             }
-<span class="fc" id="L431">        }, period, period, java.util.concurrent.TimeUnit.MILLISECONDS);</span>
-<span class="fc" id="L432">        long total = 0;</span>
-<span class="fc" id="L433">        try (in; var out = Files.newOutputStream(target)) {</span>
-<span class="fc" id="L434">            byte[] buffer = new byte[64 * 1024];</span>
-<span class="fc bfc" id="L435" title="All 2 branches covered.">            for (int n; (n = in.read(buffer)) &gt;= 0; ) {</span>
-<span class="fc" id="L436">                lastProgress[0] = System.nanoTime();</span>
-<span class="fc" id="L437">                total += n;</span>
-<span class="pc bpc" id="L438" title="1 of 2 branches missed.">                if (total &gt; expectedSize) {</span>
-<span class="nc" id="L439">                    throw new StoreException(&quot;Registry sent more bytes than the manifest declares&quot;);</span>
+<span class="fc" id="L526">        }, period, period, java.util.concurrent.TimeUnit.MILLISECONDS);</span>
+<span class="fc" id="L527">        long total = 0;</span>
+<span class="fc" id="L528">        try (in; var out = Files.newOutputStream(target)) {</span>
+<span class="fc" id="L529">            byte[] buffer = new byte[64 * 1024];</span>
+<span class="fc bfc" id="L530" title="All 2 branches covered.">            for (int n; (n = in.read(buffer)) &gt;= 0; ) {</span>
+<span class="fc" id="L531">                lastProgress[0] = System.nanoTime();</span>
+<span class="fc" id="L532">                total += n;</span>
+<span class="pc bpc" id="L533" title="1 of 2 branches missed.">                if (total &gt; expectedSize) {</span>
+<span class="nc" id="L534">                    throw new StoreException(&quot;Registry sent more bytes than the manifest declares&quot;);</span>
                 }
-<span class="fc" id="L441">                out.write(buffer, 0, n);</span>
+<span class="fc" id="L536">                out.write(buffer, 0, n);</span>
             }
-<span class="fc" id="L443">        } catch (IOException e) {</span>
-<span class="fc bfc" id="L444" title="All 2 branches covered.">            if (deadlineHit[0]) {</span>
-<span class="fc" id="L445">                throw registry.deadlineExceeded();</span>
+<span class="fc" id="L538">        } catch (IOException e) {</span>
+<span class="fc bfc" id="L539" title="All 2 branches covered.">            if (deadlineHit[0]) {</span>
+<span class="fc" id="L540">                throw registry.deadlineExceeded();</span>
             }
-<span class="pc bpc" id="L447" title="1 of 2 branches missed.">            if (stalled[0]) {</span>
-<span class="fc" id="L448">                throw new StoreException(&quot;Download stalled: no data for &quot; + timeout.toSeconds() + &quot; s&quot;, e);</span>
+<span class="pc bpc" id="L542" title="1 of 2 branches missed.">            if (stalled[0]) {</span>
+<span class="fc" id="L543">                throw new StoreException(&quot;Download stalled: no data for &quot; + timeout.toSeconds() + &quot; s&quot;, e);</span>
             }
-<span class="nc" id="L450">            throw e;</span>
+<span class="nc" id="L545">            throw e;</span>
         } finally {
-<span class="fc" id="L452">            watchdog.shutdownNow();</span>
+<span class="fc" id="L547">            watchdog.shutdownNow();</span>
         }
-<span class="fc" id="L454">        return total;</span>
+<span class="fc" id="L549">        return total;</span>
     }
 
     /** Space available to this process in {@code dir}, or -1 when it cannot be read (the check is then skipped). */
     private static long freeBytes(Path dir) {
         try {
-<span class="fc" id="L460">            return Files.getFileStore(dir).getUsableSpace();</span>
-<span class="nc" id="L461">        } catch (IOException e) {</span>
-<span class="nc" id="L462">            return -1;</span>
+<span class="fc" id="L555">            return Files.getFileStore(dir).getUsableSpace();</span>
+<span class="nc" id="L556">        } catch (IOException e) {</span>
+<span class="nc" id="L557">            return -1;</span>
         }
     }
 
     private static Map&lt;String, Object&gt; descriptor(String mediaType, String digest, long size) {
-<span class="fc" id="L467">        Map&lt;String, Object&gt; d = new LinkedHashMap&lt;&gt;();</span>
-<span class="fc" id="L468">        d.put(&quot;mediaType&quot;, mediaType);</span>
-<span class="fc" id="L469">        d.put(&quot;digest&quot;, digest);</span>
-<span class="fc" id="L470">        d.put(&quot;size&quot;, size);</span>
-<span class="fc" id="L471">        return d;</span>
+<span class="fc" id="L562">        Map&lt;String, Object&gt; d = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L563">        d.put(&quot;mediaType&quot;, mediaType);</span>
+<span class="fc" id="L564">        d.put(&quot;digest&quot;, digest);</span>
+<span class="fc" id="L565">        d.put(&quot;size&quot;, size);</span>
+<span class="fc" id="L566">        return d;</span>
     }
 
     // ---- HTTP with auth and redirects ----
 
     private URI uri(String path) {
-<span class="fc" id="L477">        return base.resolve(path);</span>
+<span class="fc" id="L572">        return base.resolve(path);</span>
     }
 
     private URI manifestUri(String tag) {
-<span class="fc" id="L481">        return uri(&quot;/v2/&quot; + repository + &quot;/manifests/&quot; + tag);</span>
+<span class="fc" id="L576">        return uri(&quot;/v2/&quot; + repository + &quot;/manifests/&quot; + tag);</span>
     }
 
     private URI blobUri(String digest) {
-<span class="pc bpc" id="L485" title="1 of 2 branches missed.">        if (!digest.matches(&quot;sha256:[0-9a-f]{64}&quot;)) {</span>
-<span class="nc" id="L486">            throw new StoreException(&quot;Registry returned an unsupported digest: &quot; + digest);</span>
+<span class="pc bpc" id="L580" title="1 of 2 branches missed.">        if (!digest.matches(&quot;sha256:[0-9a-f]{64}&quot;)) {</span>
+<span class="nc" id="L581">            throw new StoreException(&quot;Registry returned an unsupported digest: &quot; + digest);</span>
         }
-<span class="fc" id="L488">        return uri(&quot;/v2/&quot; + repository + &quot;/blobs/&quot; + digest);</span>
+<span class="fc" id="L583">        return uri(&quot;/v2/&quot; + repository + &quot;/blobs/&quot; + digest);</span>
     }
 
     /**
@@ -499,56 +594,56 @@ public final class OciArchiveStore implements ArchiveStore {
             Supplier&lt;BodyPublisher&gt; body,
             BodyHandler&lt;T&gt; handler,
             String actions) {
-<span class="fc" id="L502">        return registry.call(method, uri, headers, body, handler, actions);</span>
+<span class="fc" id="L597">        return registry.call(method, uri, headers, body, handler, actions);</span>
     }
 
     /** Same scheme, host and port: the only place the registry's Authorization header may go. */
     static boolean sameOrigin(URI registry, URI other) {
-<span class="fc" id="L507">        return OciRegistryHttp.sameOrigin(registry, other);</span>
+<span class="fc" id="L602">        return OciRegistryHttp.sameOrigin(registry, other);</span>
     }
 
     /** An https registry may never send us to a plain-http URL (redirect, upload location or token realm). */
     static void checkTransport(URI registry, URI target) {
-<span class="fc" id="L512">        OciRegistryHttp.checkTransport(registry, target);</span>
-<span class="fc" id="L513">    }</span>
+<span class="fc" id="L607">        OciRegistryHttp.checkTransport(registry, target);</span>
+<span class="fc" id="L608">    }</span>
 
     private StoreException failure(String what, HttpResponse&lt;?&gt; r) {
-<span class="fc" id="L516">        return new StoreException(&quot;Registry &quot; + base.getAuthority() + &quot; could not &quot; + what + &quot; (HTTP &quot; + r.statusCode() + &quot;)&quot;);</span>
+<span class="fc" id="L611">        return new StoreException(&quot;Registry &quot; + base.getAuthority() + &quot; could not &quot; + what + &quot; (HTTP &quot; + r.statusCode() + &quot;)&quot;);</span>
     }
 
     private static void closeQuietly(Object body) {
-<span class="nc bnc" id="L520" title="All 2 branches missed.">        if (body instanceof AutoCloseable c) {</span>
+<span class="nc bnc" id="L615" title="All 2 branches missed.">        if (body instanceof AutoCloseable c) {</span>
             try {
-<span class="nc" id="L522">                c.close();</span>
-<span class="nc" id="L523">            } catch (Exception ignored) {</span>
+<span class="nc" id="L617">                c.close();</span>
+<span class="nc" id="L618">            } catch (Exception ignored) {</span>
                 // nothing to do
-<span class="nc" id="L525">            }</span>
+<span class="nc" id="L620">            }</span>
         }
-<span class="nc" id="L527">    }</span>
+<span class="nc" id="L622">    }</span>
 
     // ---- hashing ----
 
     private static MessageDigest sha256() {
         try {
-<span class="fc" id="L533">            return MessageDigest.getInstance(&quot;SHA-256&quot;);</span>
-<span class="nc" id="L534">        } catch (NoSuchAlgorithmException e) {</span>
-<span class="nc" id="L535">            throw new IllegalStateException(&quot;SHA-256 is not available&quot;, e);</span>
+<span class="fc" id="L628">            return MessageDigest.getInstance(&quot;SHA-256&quot;);</span>
+<span class="nc" id="L629">        } catch (NoSuchAlgorithmException e) {</span>
+<span class="nc" id="L630">            throw new IllegalStateException(&quot;SHA-256 is not available&quot;, e);</span>
         }
     }
 
     private static String hex(byte[] bytes) {
-<span class="fc" id="L540">        return HexFormat.of().formatHex(sha256().digest(bytes));</span>
+<span class="fc" id="L635">        return HexFormat.of().formatHex(sha256().digest(bytes));</span>
     }
 
     private static String hex(Path file) throws IOException {
-<span class="fc" id="L544">        MessageDigest md = sha256();</span>
-<span class="fc" id="L545">        try (InputStream in = Files.newInputStream(file)) {</span>
-<span class="fc" id="L546">            byte[] buffer = new byte[64 * 1024];</span>
-<span class="fc bfc" id="L547" title="All 2 branches covered.">            for (int n; (n = in.read(buffer)) &gt; 0; ) {</span>
-<span class="fc" id="L548">                md.update(buffer, 0, n);</span>
+<span class="fc" id="L639">        MessageDigest md = sha256();</span>
+<span class="fc" id="L640">        try (InputStream in = Files.newInputStream(file)) {</span>
+<span class="fc" id="L641">            byte[] buffer = new byte[64 * 1024];</span>
+<span class="fc bfc" id="L642" title="All 2 branches covered.">            for (int n; (n = in.read(buffer)) &gt; 0; ) {</span>
+<span class="fc" id="L643">                md.update(buffer, 0, n);</span>
             }
         }
-<span class="fc" id="L551">        return HexFormat.of().formatHex(md.digest());</span>
+<span class="fc" id="L646">        return HexFormat.of().formatHex(md.digest());</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

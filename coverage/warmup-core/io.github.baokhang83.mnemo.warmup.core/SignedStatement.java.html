@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>SignedStatement.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">SignedStatement.java</span></div><h1>SignedStatement.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.nio.charset.StandardCharsets;
+import java.util.regex.Pattern;
+
+/**
+ * The statement an archive signature covers (docs/adr/0013-signed-archives.md). A verifier never reads this text from the registry:
+ * it builds it from what it actually observed, so a valid signature cannot be moved to another fingerprint, manifest, archive or
+ * repository. The Go launcher builds the same bytes (launcher/signing.go); launcher/testdata/signing/vector.json is the frozen
+ * contract both sides must reproduce.
+ *
+ * @param fingerprint {@code sha256:&lt;64 hex&gt;}: what the archive was trained for
+ * @param manifest    {@code sha256:&lt;64 hex&gt;}: the stored manifest, which is the OCI config blob
+ * @param archive     {@code sha256:&lt;64 hex&gt;}: the archive, which is the OCI layer
+ * @param size        the archive's size in bytes
+ * @param repository  the repository path as the operator configured it, without the registry host
+ */
+public record SignedStatement(String fingerprint, String manifest, String archive, long size, String repository) {
+
+    public static final String HEADER = &quot;mnemo-warmup-archive-v1&quot;;
+
+    // matches() needs the whole string to fit, so a trailing newline is refused (it would otherwise change the framing)
+<span class="fc" id="L23">    private static final Pattern DIGEST = Pattern.compile(&quot;sha256:[0-9a-f]{64}&quot;);</span>
+<span class="fc" id="L24">    private static final Pattern REPOSITORY = Pattern.compile(&quot;[a-z0-9]+([._/-][a-z0-9]+)*&quot;);</span>
+
+    /** Refuses a field that is not what it claims to be, which also means no field can contain a newline. */
+<span class="fc" id="L27">    public SignedStatement {</span>
+<span class="fc" id="L28">        requireDigest(&quot;fingerprint&quot;, fingerprint);</span>
+<span class="fc" id="L29">        requireDigest(&quot;manifest&quot;, manifest);</span>
+<span class="fc" id="L30">        requireDigest(&quot;archive&quot;, archive);</span>
+<span class="fc bfc" id="L31" title="All 2 branches covered.">        if (size &lt;= 0) {</span>
+<span class="fc" id="L32">            throw new IllegalArgumentException(&quot;signed statement: size must be positive&quot;);</span>
+        }
+<span class="fc bfc" id="L34" title="All 4 branches covered.">        if (repository == null || !REPOSITORY.matcher(repository).matches()) {</span>
+<span class="fc" id="L35">            throw new IllegalArgumentException(&quot;signed statement: \&quot;&quot; + repository + &quot;\&quot; is not a repository path&quot;);</span>
+        }
+<span class="fc" id="L37">    }</span>
+
+    private static void requireDigest(String name, String value) {
+<span class="fc bfc" id="L40" title="All 4 branches covered.">        if (value == null || !DIGEST.matcher(value).matches()) {</span>
+<span class="fc" id="L41">            throw new IllegalArgumentException(&quot;signed statement: &quot; + name + &quot; is not a sha256 digest&quot;);</span>
+        }
+<span class="fc" id="L43">    }</span>
+
+    /** The exact text that is signed. */
+    public String text() {
+<span class="fc" id="L47">        return HEADER + &quot;\n&quot;</span>
+                + &quot;fingerprint: &quot; + fingerprint + &quot;\n&quot;
+                + &quot;manifest: &quot; + manifest + &quot;\n&quot;
+                + &quot;archive: &quot; + archive + &quot;\n&quot;
+                + &quot;size: &quot; + size + &quot;\n&quot;
+                + &quot;repository: &quot; + repository + &quot;\n&quot;;
+    }
+
+    /** The bytes that are signed (UTF-8; every field is ASCII). */
+    public byte[] bytes() {
+<span class="fc" id="L57">        return text().getBytes(StandardCharsets.UTF_8);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

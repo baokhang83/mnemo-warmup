@@ -44,9 +44,9 @@ _No stance recorded yet._
 
 ### §2 Verify before use
 
-**Rule:** An archive obtained from a store is digest-checked before the JVM can load it. A size or digest mismatch discards the download and means "no archive" (§1), never a partial or unverified file.
+**Rule:** An archive obtained from a store is digest-checked before the JVM can load it, and, when the operator lists public keys, signature-checked as well: only an archive signed by a listed key is used. A size or digest mismatch, and any missing or invalid signature, discards the download and means "no archive" (§1), never a partial or unverified file.
 
-**Why:** A truncated or tampered archive handed to the JVM can crash it or run unintended code. Verification keeps a bad store or network from becoming an outage or a code-execution path.
+**Why:** A truncated or tampered archive handed to the JVM can crash it or run unintended code. Verification keeps a bad store or network from becoming an outage or a code-execution path. A digest only proves the archive matches what the same registry says it is, so it cannot tell a genuine archive from one a registry writer planted; a signature can.
 
 ### §3 Startup helpers fail open
 

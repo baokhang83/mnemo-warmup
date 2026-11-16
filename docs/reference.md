@@ -117,6 +117,21 @@ download, bad options). An init container that exits non-zero keeps the pod from
 failure is logged and any old flags file is removed instead. `push` uses exit codes normally:
 `0` success, `1` store failure, `2` invalid input (including an archive that does not match its manifest).
 
+### Sign archives: `keygen`
+
+```bash
+mnemo-warmup keygen --out signing.key [--secret-name my-app-signing]
+```
+
+Creates an Ed25519 key pair for [signed archives](configuration.md#signed-archives-opt-in). The private key is written to `--out`
+(default `mnemo-warmup-signing.key`), created readable by you only, and **never overwritten**; it is never printed. The command prints
+the key id, the public key as `id=base64`, a `kubectl create secret` command and the variable to give pods.
+
+| Variable | Used by | Meaning |
+|---|---|---|
+| `MNEMO_WARMUP_SIGNING_PUBLIC_KEYS` | `fetch`, `run` | The public keys to trust (`id=base64,...`). Setting it makes a valid signature mandatory; a list with nothing usable refuses every archive. |
+| `MNEMO_WARMUP_SIGNING_KEY_FILE` | `train`, `push` | The key file `keygen` wrote. The trainer signs what it publishes; if the file cannot be used, it refuses to publish rather than publish unsigned. |
+
 ### Start the app: `run`
 
 ```bash

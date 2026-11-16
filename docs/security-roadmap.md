@@ -76,8 +76,8 @@ Goal: a bad or hostile registry cannot stall or crash a pod start (§1, §3), an
 
 Goal: close S1 and S3.
 
-- [ ] **Design the signing model (ADR first).** Constraint from §4: the launcher and `warmup-core` take no runtime dependencies, so verification must use the standard library. Candidates: a keyed digest or Ed25519 signature over the manifest and archive digest, with the public key supplied by the operator (annotation, ConfigMap or chart value), verified by the launcher with Go's `crypto/ed25519`; optionally cosign-compatible signing in the trainer. Decide the failure rule: an archive that fails verification is treated as a miss (ordinary start, §1), never an error.
-- [ ] Implement signing in the trainer and verification in the Go launcher and the Java fetch; make it opt-in in the beta, default-on when stable.
+- [x] **Design the signing model (ADR first).** Done: [ADR 0013](adr/0013-signed-archives.md). Constraint from §4: the launcher and `warmup-core` take no runtime dependencies, so verification must use the standard library. Candidates: a keyed digest or Ed25519 signature over the manifest and archive digest, with the public key supplied by the operator (annotation, ConfigMap or chart value), verified by the launcher with Go's `crypto/ed25519`; optionally cosign-compatible signing in the trainer. Decide the failure rule: an archive that fails verification is treated as a miss (ordinary start, §1), never an error.
+- [x] Implement signing in the trainer and verification in the Go launcher and the Java fetch (stage A, #145, opt-in). Default-on when stable is still open.
 - [ ] Separate the push credential from the container that runs application code: upload in a separate container or step that starts after training; scrub `AWS_*`, `MNEMO_WARMUP_*` and `KUBERNETES_*` from the application child's environment; mount Secrets with `defaultMode: 0400` (S3).
 - [ ] Harden the shared cache directory: a mode-0700 subdirectory with an owner check; hash the opened file rather than the path (S14).
 - [ ] Node cache: concurrency limit and negative caching for failed TokenReview, owner check on the store, an optional NetworkPolicy (S19, S18).

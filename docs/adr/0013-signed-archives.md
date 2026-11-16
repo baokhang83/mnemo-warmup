@@ -1,6 +1,6 @@
 # ADR 0013: sign archives, and keep the signing key away from application code
 
-Status: proposed. Tracking issue: #145. Security roadmap findings S1 and S3 ([security-roadmap.md](../security-roadmap.md)).
+Status: accepted. Stage A (signed archives) is implemented, opt-in; stage B (splitting the trainer pod) is open. Tracking issue: #145. Security roadmap findings S1 and S3 ([security-roadmap.md](../security-roadmap.md)).
 
 ## Context
 

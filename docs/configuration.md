@@ -47,6 +47,8 @@ Set these on the Deployment's **pod template** (`spec.template.metadata.annotati
 | `warmup.mnemo.io/push-secret` | no | The same with **push** access, used by the trainer. |
 | `warmup.mnemo.io/plain-http` | no | `"true"` talks plain HTTP to the registry. Local registries and tests only. |
 | `warmup.mnemo.io/tools-delivery` | no | How the tools reach the pod: `init-container` (the default) or `image-volume`. A pull Secret or node cache uses a fetch init container even with an image volume. See [Tools delivery](#tools-delivery-init-containers-or-an-image-volume). |
+| `warmup.mnemo.io/signing-public-keys` | no | The public keys pods trust, as printed by `mnemo-warmup keygen`: `id=base64`, several separated by commas. **Setting it makes every pod require a valid signature.** See [Signed archives](#signed-archives-opt-in). |
+| `warmup.mnemo.io/signing-key-secret` | no | Name of a Secret with the private key under `signing.key`. Mounted into the trainer only, which then signs everything it publishes. |
 | `warmup.mnemo.io/node-cache-url` | with node cache | HTTPS origin of the node-local cache Service. |
 | `warmup.mnemo.io/node-cache-ca-configmap` | with node cache | ConfigMap containing the cache CA certificate under `ca.crt`. |
 | `warmup.mnemo.io/node-cache-audience` | with node cache | Audience for the projected service-account token. |
@@ -107,6 +109,37 @@ The optional [node-local archive cache](../deploy/helm/mnemo-nodecache/README.md
 To go back, remove the annotation or set it to `init-container` and render again: the injector records the mode it applied and restores the original Deployment either way.
 
 The trainer copies what the application needs to start: environment variables and `envFrom` references, volumes and mounts, the image pull policy and security context, image pull secrets, node selector, tolerations and affinity. The preview lists these by **name only**; review it, because the trainer starts your application with that configuration.
+
+## Signed archives (opt-in)
+
+By default a pod checks that an archive is intact, not who published it. Signing closes that: the trainer signs each archive, and a pod that has been given the matching public key uses an archive only if the signature checks out. Anything else (unsigned, signed by another key, altered, or moved from another repository) is treated as missing: the pod starts without a cache and the log says why. It never stops the application.
+
+**Turn it on**
+
+1. Make a key pair. The private key goes to a file that only you can read and is never printed or overwritten; the public key is printed.
+   ```bash
+   mnemo-warmup keygen --out signing.key
+   ```
+2. Give the private key to the trainer as a Secret in the workload's namespace, then keep `signing.key` somewhere safe (a password manager or secret store) and remove the local copy.
+   ```bash
+   kubectl -n my-namespace create secret generic my-app-signing --from-file=signing.key=signing.key
+   ```
+3. Add two annotations to the Deployment's pod template (or, with the Helm chart, `signing.publicKeys` and `signing.keySecret`):
+   ```yaml
+   warmup.mnemo.io/signing-public-keys: "21fe31dfa154a261=11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo="   # from keygen
+   warmup.mnemo.io/signing-key-secret: my-app-signing
+   ```
+4. Run the preview. It lists the key ids pods will trust and the Secret the trainer signs with, and warns if only one of the two annotations is set. A typo in the key list is an error here, not a key that silently trusts nothing.
+
+**What to expect on the first rollout.** Existing archives are unsigned, so the trainer counts them as incomplete and publishes signed ones on its next run (the CronJob runs every 10 minutes). Until then pods start without a cache and the fetch log says `... is not signed; not using it`. That is the normal, safe behaviour.
+
+**Rotate a key.** (1) `keygen` a new key. (2) Add its public key to the pods' list next to the old one and roll out; pods now accept both. (3) Switch the trainer's Secret to the new key; it re-publishes entries under it. (4) Once nothing signed with the old key is wanted, remove the old public key from the list.
+
+**If you lose the private key,** no pod breaks: archives it signed keep verifying, because pods hold only the public key. You just cannot publish new archives until you create a new key and roll it out as above.
+
+**What it protects, and what it does not.** It stops anyone who can write to the archive repository, or sit on the network path, but does not hold the private key. It does **not** stop code running inside the trainer container during training, because that container runs your application and also holds the key. Splitting the trainer so the key never meets application code is the next stage ([ADR 0013](adr/0013-signed-archives.md), stage B); until then, give a workload that runs untrusted code its own key (one key per namespace is the default, one per workload where the trust differs).
+
+**How it works, briefly.** The signed text is fixed: the archive's fingerprint, the digest of the stored manifest, the digest and size of the archive, and the repository. A pod rebuilds that text from what it actually received and checks the signature against it, so a valid signature cannot be moved to another archive or repository. `fetch` checks before it downloads the archive, and `run` checks again at every start against the files on disk, so the shared cache directory is tamper-evident too.
 
 ## Limits on the fetch
 

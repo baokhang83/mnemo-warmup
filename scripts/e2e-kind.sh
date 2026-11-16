@@ -17,6 +17,9 @@
 # store.pushSecret. Nothing can then fetch or push without the Secret, so the run proves the Secret reaches the fetch and the
 # trainer, and (with image-volume, where the fetch stays in one isolated init container) that the application container
 # never sees it.
+# WITH_SIGNING=1 adds the signed-archive scenario (docs/adr/0013): with an unsigned archive already in use, turn signing on and
+# watch the pod refuse it and still start; the trainer re-publishes it signed and the pod uses it; then give the pod the WRONG
+# public key and watch it refuse the archive and still start. Needs no Java on this machine: keys are made with the example image's JDK.
 # Usage: scripts/e2e-kind.sh [jdk ...]       Needs docker, kind, kubectl, helm and network access (Maven Central, image pulls).
 # KEEP=1 keeps the cluster and registry for debugging. Logs of a failed run are written to $ARTIFACTS.
 set -uo pipefail
@@ -30,6 +33,8 @@ case "$WITH_PULL_SECRET" in 0|1) ;; *) echo "WITH_PULL_SECRET must be 0 or 1"; e
 # the fetch runs inside the application container only with an image volume and no pull Secret
 INLINE_FETCH=0; [ "$TOOLS_DELIVERY" = image-volume ] && [ "$WITH_PULL_SECRET" = 0 ] && INLINE_FETCH=1
 REG_USER=mnemo; REG_PASS=e2e-$RANDOM$RANDOM
+WITH_SIGNING=${WITH_SIGNING:-0}
+case "$WITH_SIGNING" in 0|1) ;; *) echo "WITH_SIGNING must be 0 or 1"; exit 2 ;; esac
 RUN="$$-$(date +%s)"
 CLUSTER="mw-e2e-$RUN"
 CTX="kind-$CLUSTER"
@@ -102,11 +107,24 @@ fi
 REG_IP=$(docker inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' "$REG")
 [ -n "$REG_IP" ] || { echo "no registry address on the kind network"; exit 1; }
 for img in "${IMAGES[@]}"; do kind load docker-image "$img" --name "$CLUSTER" >/dev/null 2>&1 || { echo "kind load failed for $img"; exit 1; }; done
+if [ "$WITH_SIGNING" = 1 ]; then
+  # the CLI jar comes out of the tools image; keygen runs in a container that has a JDK (no Java needed on this machine)
+  mkdir -p "$WORK/cli" "$WORK/keys"
+  cid=$(docker create "$TOOLS_IMAGE" true) || { echo "cannot read the tools image"; exit 1; }
+  docker cp "$cid:/opt/mnemo-warmup/mnemo-warmup.jar" "$WORK/cli/mnemo-warmup.jar" >/dev/null || { docker rm "$cid" >/dev/null; echo "no CLI jar in the tools image"; exit 1; }
+  docker rm "$cid" >/dev/null
+fi
 mkdir -p "$WORK/deploy" "$WORK/examples"
 cp -R deploy/helm "$WORK/deploy/helm"
 cp -R examples/helm "$WORK/examples/helm"
 CHART="$WORK/examples/helm/example-app"
 helm dependency build "$CHART" >/dev/null 2>&1 || { echo "helm dependency build failed"; exit 1; }
+
+# keygen <jdk> <name>: writes $WORK/keys/<name>.key and prints the public key entry (id=base64)
+keygen() {
+  docker run --rm --user "$(id -u):$(id -g)" -v "$WORK/cli:/cli:ro" -v "$WORK/keys:/keys" --entrypoint java "mnemo-example:$1-$RUN" \
+    -jar /cli/mnemo-warmup.jar keygen --out "/keys/$2.key" 2>/dev/null | sed -n 's/^Public key: *//p'
+}
 
 for n in "${JDKS[@]}"; do
   ns="e2e-$n"
@@ -235,8 +253,60 @@ YAML
     if k -n "$ns" exec "$podname" -c app -- sh -c 'test ! -e /var/run/mnemo-warmup/registry/config.json' >/dev/null 2>&1; then ok "the Secret's file does not exist inside the application container"; else fail "the registry login is readable inside the application container"; fi
   fi
 
+  SIGNING_ARGS=()
+  # ---- S. signed archives (WITH_SIGNING=1) ----
+  if [ "$WITH_SIGNING" = 1 ]; then
+    key_a=$(keygen "$n" a); key_b=$(keygen "$n" b)
+    if [ -n "$key_a" ] && [ -n "$key_b" ] && [ "${key_a%%=*}" != "${key_b%%=*}" ]; then ok "keygen made two different keys (${key_a%%=*}, ${key_b%%=*})"; else die "$ns" "keygen failed: '$key_a' '$key_b'"; fi
+    if [ "$(stat -c %a "$WORK/keys/a.key" 2>/dev/null || stat -f %Lp "$WORK/keys/a.key")" = 600 ]; then ok "the private key file is readable by its owner only"; else fail "private key file mode"; fi
+    k -n "$ns" create secret generic sign-a --from-file=signing.key="$WORK/keys/a.key" >/dev/null || die "$ns" "cannot create the signing Secret"
+    sign_values() { printf 'warmup:\n  signing:\n    publicKeys: "%s"\n    keySecret: sign-a\n' "$1" >"$ARTIFACTS.signing-$n.yaml"; }
+
+    # S1. signing turned on while an UNSIGNED archive is the one in the registry: it is refused, the pod still starts uncached
+    sign_values "$key_a"; SIGNING_ARGS=(-f "$ARTIFACTS.signing-$n.yaml")
+    helm --kube-context "$CTX" upgrade ex "$CHART" -n "$ns" -f "$ARTIFACTS.values-$n.yaml" -f "$ARTIFACTS.secret-$n.yaml" "${SIGNING_ARGS[@]}" --wait --timeout 6m >/dev/null 2>&1 \
+      || die "$ns" "the Deployment with signing on did not become ready (an unsigned archive must never stop a pod)"
+    settle
+    pod=$(app_pods | head -1)
+    fetch_log=$(fetch_logs "$pod")
+    if has "$fetch_log" "not signed"; then ok "an unsigned archive is refused once signing is on"; else fail "fetch log: $fetch_log"; fi
+    if line=$(source_line "$pod") && has "$line" "DemoApplication source: file:"; then ok "and the pod is healthy, running without the cache"; else fail "expected an uncached start, got: '${line:-<none>}'"; fi
+
+    # S2. the trainer counts that unsigned entry as incomplete and re-publishes it signed
+    k -n "$ns" create job t3 --from="cronjob/$(cronjob)" >/dev/null || die "$ns" "cannot create the signing job"
+    k -n "$ns" wait --for=condition=complete job/t3 --timeout=600s >/dev/null 2>&1 || die "$ns" "the signing job did not complete"
+    sign_log=$(k -n "$ns" logs job/t3 -c trainer 2>&1)
+    if has "$sign_log" "train: TRAINED"; then ok "the trainer re-published the unsigned entry, signed"; else fail "trainer log: $sign_log"; fi
+    k -n "$ns" create job t4 --from="cronjob/$(cronjob)" >/dev/null || die "$ns" "cannot create the second signing job"
+    k -n "$ns" wait --for=condition=complete job/t4 --timeout=300s >/dev/null 2>&1 || die "$ns" "the second signing job did not complete"
+    if has "$(k -n "$ns" logs job/t4 -c trainer 2>&1)" "ALREADY_STORED"; then ok "a signed entry counts as complete"; else fail "second signing run: $(k -n "$ns" logs job/t4 -c trainer 2>&1)"; fi
+
+    # S3. the signed archive is used, and the evidence is on disk
+    k -n "$ns" rollout restart deploy/ex-app >/dev/null
+    k -n "$ns" rollout status deploy/ex-app --timeout=300s >/dev/null 2>&1 || die "$ns" "the restarted Deployment did not become ready"
+    settle
+    pod=$(app_pods | head -1)
+    if has "$(fetch_logs "$pod")" "($expect_type)"; then ok "the signed $expect_type archive was fetched"; else fail "fetch log: $(fetch_logs "$pod")"; fi
+    if line=$(source_line "$pod") && has "$line" "DemoApplication source: shared objects file"; then ok "and the application's own class loads from it"; else fail "expected the class to load from the signed archive, got: '${line:-<none>}'"; fi
+    if k -n "$ns" exec "${pod#pod/}" -c app -- sh -c 'test -s /mnemo-cache/mnemo-warmup.signature' >/dev/null 2>&1; then ok "the signature file is next to the archive"; else fail "no mnemo-warmup.signature in the cache directory"; fi
+    if k -n "$ns" exec "${pod#pod/}" -c app -- sh -c 'test ! -e /var/run/mnemo-warmup/signing' >/dev/null 2>&1; then ok "the application container has no private key"; else fail "the private key is visible in the application container"; fi
+
+    # S4. the pods are given the WRONG public key: the archive is refused, the pod still starts
+    sign_values "$key_b"
+    helm --kube-context "$CTX" upgrade ex "$CHART" -n "$ns" -f "$ARTIFACTS.values-$n.yaml" -f "$ARTIFACTS.secret-$n.yaml" "${SIGNING_ARGS[@]}" --wait --timeout 6m >/dev/null 2>&1 \
+      || die "$ns" "the Deployment with a different trusted key did not become ready"
+    settle
+    pod=$(app_pods | head -1)
+    if has "$(fetch_logs "$pod")" "not trusted"; then ok "an archive signed by a key the pod does not trust is refused"; else fail "fetch log: $(fetch_logs "$pod")"; fi
+    if line=$(source_line "$pod") && has "$line" "DemoApplication source: file:"; then ok "and the pod is healthy, running without the cache"; else fail "expected an uncached start, got: '${line:-<none>}'"; fi
+    sign_values "$key_a" # back to the right key: the next scenario starts from a trusted, signed archive
+    helm --kube-context "$CTX" upgrade ex "$CHART" -n "$ns" -f "$ARTIFACTS.values-$n.yaml" -f "$ARTIFACTS.secret-$n.yaml" "${SIGNING_ARGS[@]}" --wait --timeout 6m >/dev/null 2>&1 \
+      || die "$ns" "the Deployment with the right key again did not become ready"
+    settle
+  fi
+
   # ---- E. a changed JVM option: still starts, uncached, with a reason ----
-  helm --kube-context "$CTX" upgrade ex "$CHART" -n "$ns" -f "$ARTIFACTS.values-$n.yaml" -f "$ARTIFACTS.secret-$n.yaml" -f "$ARTIFACTS.fallback-$n.yaml" --wait --timeout 6m >/dev/null 2>&1 \
+  helm --kube-context "$CTX" upgrade ex "$CHART" -n "$ns" -f "$ARTIFACTS.values-$n.yaml" -f "$ARTIFACTS.secret-$n.yaml" ${SIGNING_ARGS[@]+"${SIGNING_ARGS[@]}"} -f "$ARTIFACTS.fallback-$n.yaml" --wait --timeout 6m >/dev/null 2>&1 \
     || die "$ns" "the Deployment with a changed JVM option did not become ready"
   settle
   pod=$(app_pods | head -1)
@@ -245,6 +315,6 @@ YAML
   if line=$(source_line "$pod") && has "$line" "DemoApplication source: file:"; then ok "and the pod runs uncached but healthy"; else fail "expected the class to load from the JAR after the mismatch, got: '${line:-<no class-load line>}'"; fi
 done
 
-rm -f "$ARTIFACTS".values-*.yaml "$ARTIFACTS".fallback-*.yaml "$ARTIFACTS".secret-*.yaml
+rm -f "$ARTIFACTS".values-*.yaml "$ARTIFACTS".fallback-*.yaml "$ARTIFACTS".secret-*.yaml "$ARTIFACTS".signing-*.yaml
 summary
 [ "$failures" -eq 0 ]

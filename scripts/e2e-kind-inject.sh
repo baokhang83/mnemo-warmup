@@ -101,6 +101,11 @@ JAR=$(cd "$(dirname "$JAR")" && pwd)/$(basename "$JAR")
 # the Helm post-renderer adapter and the preview both call `mnemo-warmup` on PATH
 printf '#!/bin/sh\nexec java -jar "%s" "$@"\n' "$JAR" >"$BIN/mnemo-warmup"; chmod +x "$BIN/mnemo-warmup"
 export PATH="$BIN:$PATH"
+# The generated CronJob runs every 10 minutes on the real clock. If a scenario reaches the training step on a 10-minute
+# boundary, the CronJob's own job trains first and the test's job sees ALREADY_STORED. The test starts every job itself, so
+# it suspends the CronJob in the rendered output, before it reaches the cluster (a suspended CronJob can still be run by hand).
+printf '#!/usr/bin/env bash\nset -eo pipefail\n"%s" "$@" | awk '"'"'{ print } /^  schedule: / { print "  suspend: true" }'"'"'\n' "$ROOT/scripts/mnemo-warmup-inject" >"$BIN/inject-suspended"
+chmod +x "$BIN/inject-suspended"
 
 # ---- helpers shared by the scenarios -------------------------------------------------------------------------------
 
@@ -165,7 +170,7 @@ cronjob() { k -n "$NS" get cronjob -l warmup.mnemo.io/owner=demo -o name | head 
 
 deploy() { # <extra helm args...>; installs or upgrades the annotated chart through the injector
   helm --kube-context "$CTX" upgrade --install demo examples/annotated-app -n "$NS" -f "$VALUES" \
-    --post-renderer "$ROOT/scripts/mnemo-warmup-inject" \
+    --post-renderer "$BIN/inject-suspended" \
     --post-renderer-args="--namespace=$NS" --post-renderer-args="--tools-image=$TOOLS_IMAGE" \
     "$@"
 }

@@ -30,6 +30,38 @@ public final class IsolatedTrainingPodRunner {
     }
 
     /**
+     * Reads the bound coordinator token's subject so a training pod cannot be assigned the same
+     * service account. The API server authenticates this token when the coordinator makes requests;
+     * this local parsing is only an identity comparison, not JWT signature verification.
+     */
+    public static String coordinatorServiceAccount(String namespace) {
+        try (var in = java.nio.file.Files.newInputStream(KubeApi.SERVICE_ACCOUNT.resolve("token"))) {
+            byte[] bytes = in.readNBytes(64 * 1024 + 1);
+            if (bytes.length > 64 * 1024) throw new IllegalArgumentException("service-account token is too large");
+            return serviceAccountFromToken(new String(bytes, java.nio.charset.StandardCharsets.UTF_8).trim(), namespace);
+        } catch (java.io.IOException | IllegalArgumentException e) {
+            throw new StoreException("Cannot determine coordinator service account from its projected token", e);
+        }
+    }
+
+    static String serviceAccountFromToken(String token, String namespace) {
+        if (namespace == null || !namespace.matches("[a-z0-9]([-a-z0-9]*[a-z0-9])?") || namespace.length() > 63) {
+            throw new IllegalArgumentException("invalid coordinator namespace");
+        }
+        String[] parts = token.split("\\.", -1);
+        if (parts.length != 3) throw new IllegalArgumentException("invalid projected token");
+        Object decoded = Json.parse(new String(java.util.Base64.getUrlDecoder().decode(parts[1]), java.nio.charset.StandardCharsets.UTF_8));
+        String subject = string(map(decoded).get("sub"));
+        String prefix = "system:serviceaccount:" + namespace + ":";
+        if (subject == null || !subject.startsWith(prefix)) throw new IllegalArgumentException("coordinator token namespace mismatch");
+        String account = subject.substring(prefix.length());
+        if (!account.matches("[a-z0-9]([-a-z0-9]*[a-z0-9])?") || account.length() > 63) {
+            throw new IllegalArgumentException("invalid coordinator service account");
+        }
+        return account;
+    }
+
+    /**
      * Runs an explicitly named pod in one namespace. A successful create must return a UID so that
      * cleanup cannot delete a replacement pod with the same name. The caller owns volume cleanup.
      */

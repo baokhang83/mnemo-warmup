@@ -13,6 +13,9 @@ import io.github.baokhang83.mnemo.warmup.core.FetchLimits;
 import io.github.baokhang83.mnemo.warmup.core.HttpProbeExitMode;
 import io.github.baokhang83.mnemo.warmup.core.JarExtractor;
 import io.github.baokhang83.mnemo.warmup.core.IsolatedArchivePublisher;
+import io.github.baokhang83.mnemo.warmup.core.IsolatedTrainingCoordinator;
+import io.github.baokhang83.mnemo.warmup.core.IsolatedTrainingPodFactory;
+import io.github.baokhang83.mnemo.warmup.core.IsolatedTrainingPodRunner;
 import io.github.baokhang83.mnemo.warmup.core.JdkInfo;
 import io.github.baokhang83.mnemo.warmup.core.AwsRegistryAuth;
 import io.github.baokhang83.mnemo.warmup.core.OciArchiveStore;
@@ -45,7 +48,7 @@ import picocli.CommandLine.Spec;
         mixinStandardHelpOptions = true,
         versionProvider = Main.VersionProvider.class,
         description = "Build, validate and benchmark AppCDS / Leyden AOT caches.",
-        subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class, Main.Fetch.class, Main.Run.class, Main.Train.class, Main.IsolatedPublish.class, Main.Inject.class, Main.Keygen.class})
+        subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class, Main.Fetch.class, Main.Run.class, Main.Train.class, Main.IsolatedPublish.class, Main.IsolatedCoordinate.class, Main.Inject.class, Main.Keygen.class})
 public class Main implements Runnable {
 
     @Command(name = "inject", mixinStandardHelpOptions = true,
@@ -910,7 +913,7 @@ public class Main implements Runnable {
                     throw new IllegalArgumentException("publish-isolated requires a signing key");
                 if (JarExtractor.needsExtraction(opts.jar))
                     throw new IllegalArgumentException("publish-isolated requires a pre-extracted application layout");
-                JdkInfo jdk = JdkInfo.detect(opts.javaHome, System.getenv());
+                JdkInfo jdk = isolatedPublisherJdk(opts.javaHome);
                 CacheStrategy strategy = CacheType.parse(cacheType).resolve(jdk);
                 var app = new JarExtractor().prepare(opts.jar, jdk, opts.workDir.resolve("unused"));
                 // The target options are data, not JVM startup options for this trusted process.
@@ -924,6 +927,131 @@ public class Main implements Runnable {
                 return outcome.status() == TrainingOrchestrator.Status.FAILED ? 1 : 0;
             } catch (IllegalArgumentException | IllegalStateException | StoreException e) {
                 err.println("publish-isolated: " + e.getMessage());
+                return 1;
+            }
+        }
+    }
+
+    /** The isolated publisher must not execute a Java binary selected from an application image. */
+    static JdkInfo isolatedPublisherJdk(Path requested) {
+        try {
+            Path current = Path.of(System.getProperty("java.home")).toRealPath();
+            if (requested != null && !current.equals(requested.toRealPath())) {
+                throw new IllegalArgumentException("isolated publisher must use its own trusted JDK");
+            }
+            return JdkInfo.detect(current, java.util.Map.of());
+        } catch (java.io.IOException e) {
+            throw new IllegalArgumentException("cannot resolve the isolated publisher JDK", e);
+        }
+    }
+
+    @Command(name = "coordinate-isolated", mixinStandardHelpOptions = true,
+            description = "Coordinate training in a separate pod and publish its archive.")
+    static class IsolatedCoordinate implements Callable<Integer> {
+        @Spec CommandSpec spec;
+        @Mixin AppOptions opts;
+        @Option(names = "--store", required = true) String store;
+        @Option(names = "--registry-auth") Path registryAuth;
+        @Option(names = "--training-template", required = true) Path trainingTemplate;
+        @Option(names = "--training-service-account", required = true) String trainingServiceAccount;
+        @Option(names = "--handoff-claim", required = true) String claim;
+        @Option(names = "--handoff-root", required = true) Path claimRoot;
+        @Option(names = "--signing-secret-name", required = true) String signingSecret;
+        @Option(names = "--push-secret-name") String pushSecret;
+        @Option(names = "--cache-type", defaultValue = "auto") String cacheType;
+        @Option(names = "--image-digest") String imageDigest;
+        @Option(names = "--plain-http") boolean plainHttp;
+        @Option(names = "--training-timeout-seconds", defaultValue = "900") long trainingTimeout;
+        @Option(names = "--store-timeout-seconds", defaultValue = "1800") long storeTimeout;
+        @Option(names = "--lease-seconds", defaultValue = "1800") long leaseSeconds;
+        @Option(names = "--max-archive-bytes", defaultValue = "1073741824") long maxArchiveBytes;
+
+        static java.util.Map<String, Object> readTemplate(Path path) throws java.io.IOException {
+            try (var in = Files.newInputStream(path)) {
+                byte[] bytes = in.readNBytes((1 << 20) + 1);
+                if (bytes.length > (1 << 20)) throw new IllegalArgumentException("training template is too large");
+                var documents = ManifestStream.parse(new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
+                if (documents.size() != 1) throw new IllegalArgumentException("training template must contain one pod spec");
+                return documents.get(0);
+            }
+        }
+
+        static java.util.Set<String> protectedSecretNames(String signing, String push, boolean hasRegistryAuth) {
+            if (!validSecretName(signing)) throw new IllegalArgumentException("a valid signing Secret name is required");
+            if (hasRegistryAuth && (push == null || push.isBlank())) {
+                throw new IllegalArgumentException("the registry push Secret name is required when registry credentials are mounted");
+            }
+            var names = new java.util.HashSet<String>();
+            names.add(signing);
+            if (push != null && !push.isBlank()) {
+                if (!validSecretName(push)) throw new IllegalArgumentException("invalid registry push Secret name");
+                names.add(push);
+            }
+            return java.util.Set.copyOf(names);
+        }
+
+        static void requireDistinctServiceAccounts(String coordinator, String training) {
+            if (coordinator == null || coordinator.isBlank() || training == null || training.isBlank()
+                    || coordinator.equals(training)) {
+                throw new IllegalArgumentException("training and coordinator service accounts must be different");
+            }
+        }
+
+        static void requireMatchingHandoffGroup(Path root, java.util.Map<String, Object> template) throws java.io.IOException {
+            Object raw = template.get("securityContext");
+            Object fsGroup = raw instanceof java.util.Map<?, ?> sc ? sc.get("fsGroup") : null;
+            Object group = Files.getAttribute(root, "unix:gid", java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            if (!(fsGroup instanceof Number n) || !(group instanceof Number g)
+                    || n.longValue() <= 0 || n.longValue() != g.longValue()) {
+                throw new IllegalArgumentException("training fsGroup must match the handoff claim root group");
+            }
+        }
+
+        private static boolean validSecretName(String name) {
+            if (name == null || name.length() > 253 || name.isBlank()) return false;
+            for (String label : name.split("\\.", -1)) {
+                if (label.length() > 63 || !label.matches("[a-z0-9]([-a-z0-9]*[a-z0-9])?")) return false;
+            }
+            return true;
+        }
+
+        @Override public Integer call() {
+            var out = spec.commandLine().getOut();
+            var err = spec.commandLine().getErr();
+            try {
+                if (opts.jar == null) throw new IllegalArgumentException("coordinate-isolated needs --jar");
+                if (trainingTimeout < 1 || trainingTimeout > 86400 || storeTimeout <= 0 || leaseSeconds < 3 || maxArchiveBytes <= 0)
+                    throw new IllegalArgumentException("invalid training timeout, store timeout, lease duration or archive limit");
+                String key = System.getenv(ENV_SIGNING_KEY_FILE);
+                if (key == null || key.isBlank()) throw new IllegalArgumentException("coordinate-isolated requires a signing key");
+                String namespace = System.getenv("POD_NAMESPACE");
+                String coordinatorAccount = IsolatedTrainingPodRunner.coordinatorServiceAccount(namespace);
+                requireDistinctServiceAccounts(coordinatorAccount, trainingServiceAccount);
+                if (JarExtractor.needsExtraction(opts.jar)) throw new IllegalArgumentException("coordinate-isolated requires a pre-extracted application layout");
+                JdkInfo jdk = isolatedPublisherJdk(opts.javaHome);
+                CacheStrategy strategy = CacheType.parse(cacheType).resolve(jdk);
+                var app = new JarExtractor().prepare(opts.jar, jdk, opts.workDir.resolve("unused"));
+                ArchiveManifest live = ArchiveManifest.describe(app, jdk, strategy, opts.jvmArgs,
+                        IsolatedPublish.targetJavaEnvironment(System.getenv()), imageDigest);
+                var target = withSigning(openStore(store, registryAuth, plainHttp, storeTimeout), System.getenv(), true);
+                var template = readTemplate(trainingTemplate);
+                requireMatchingHandoffGroup(claimRoot, template);
+                var protectedSecrets = protectedSecretNames(signingSecret, pushSecret,
+                        registryAuth != null || System.getenv("MNEMO_WARMUP_REGISTRY_AUTH") != null);
+                var runner = IsolatedTrainingPodRunner.inCluster();
+                var result = new IsolatedTrainingCoordinator().run(live, target, claimRoot, handoff -> {
+                    String name = "mnemo-train-" + java.util.UUID.randomUUID().toString().replace("-", "");
+                    var pod = IsolatedTrainingPodFactory.build(template, namespace, name, trainingServiceAccount, claim,
+                            handoff, protectedSecrets, trainingTimeout);
+                    return runner.run(namespace, pod, Duration.ofSeconds(trainingTimeout), Duration.ofSeconds(1));
+                }, dir -> new IsolatedArchivePublisher().publish(live, target, KubernetesLeaseLock.inCluster(Duration.ofSeconds(leaseSeconds)),
+                        dir.resolve("app." + strategy.extension()), maxArchiveBytes));
+                (result.status() == IsolatedTrainingCoordinator.Status.FAILED ? err : out)
+                        .printf("coordinate-isolated: %s: %s%n", result.status(), result.detail());
+                if (result.retainedHandoff() != null) err.println("coordinate-isolated: retained handoff " + result.retainedHandoff());
+                return result.status() == IsolatedTrainingCoordinator.Status.FAILED ? 1 : 0;
+            } catch (java.io.IOException | IllegalArgumentException | IllegalStateException | StoreException e) {
+                err.println("coordinate-isolated: " + e.getMessage());
                 return 1;
             }
         }

@@ -26,6 +26,15 @@ class IsolatedTrainingPodRunnerTest {
         return "{\"metadata\":{\"uid\":\"" + uid + "\"},\"status\":{\"phase\":\"" + phase + "\"}}";
     }
 
+    @Test void comparesCoordinatorIdentityFromItsProjectedToken() {
+        String payload = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
+                "{\"sub\":\"system:serviceaccount:test:publisher\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String token = "header." + payload + ".signature";
+        assertEquals("publisher", IsolatedTrainingPodRunner.serviceAccountFromToken(token, "test"));
+        assertThrows(IllegalArgumentException.class, () -> IsolatedTrainingPodRunner.serviceAccountFromToken(token, "other"));
+        assertThrows(IllegalArgumentException.class, () -> IsolatedTrainingPodRunner.serviceAccountFromToken("not-a-token", "test"));
+    }
+
     @Test void waitsForCompletionAndDeletesUsingTheCreatedUid() {
         List<String> calls = new ArrayList<>();
         IsolatedTrainingPodRunner.Api api = (method, path, body) -> {

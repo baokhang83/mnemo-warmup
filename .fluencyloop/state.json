@@ -3,7 +3,7 @@
   "feature": "145-isolate-archive-signing-and-publishing-from-application",
   "branch": "feature/145-isolate-archive-signing-and-publishing-from-application",
   "stage": "build",
-  "last_session": "010-check-training-compatibility-before-signing",
+  "last_session": "011-connect-the-isolated-coordinator-command",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

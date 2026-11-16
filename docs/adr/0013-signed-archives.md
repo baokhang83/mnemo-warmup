@@ -67,17 +67,19 @@ Delivered in two stages, because stage A is useful on its own and stage B is a l
 
 **Stage A: signed archives.** The trainer signs in its current container. This stops a registry writer, a network attacker and anyone else who can push but does not hold the private key. It does **not** stop code running inside the trainer, which can read the key. This limit is stated in the documentation.
 
-**Stage B: split the trainer pod** into three steps that share a volume:
+**Stage B: separate training and publication into different pods.** A trusted coordinator checks the store and starts a training pod only when an archive is needed. After training finishes, it starts a separate publisher pod. The pods use distinct Kubernetes ServiceAccounts and exchange the archive through a bounded, per-run shared volume. The publisher rechecks the store under a Lease, then derives the archive digest and size from the handoff before signing and uploading.
 
-| Step | Runs application code | Holds secrets |
+| Step | Runs application code | Identity and credentials |
 |---|---|---|
-| `check` (init) | no | pull credential, service-account token: looks the fingerprint up, and writes a "skip" marker if a valid entry exists |
-| `train` (init) | **yes** | **none**: no push credential, no signing key, no service-account token (`automountServiceAccountToken: false`) |
-| `publish` (main) | no | push credential, signing key, token: takes the lease, checks the store again, verifies and signs what `train` wrote, uploads |
+| `check` / coordinate | no | pull access and permission to coordinate the training and publisher pods |
+| `train` pod | **yes** | dedicated ServiceAccount without archive-publish or signing permissions; no signing key, push credential or projected Kubernetes token |
+| `publish` pod | no application workload | separate ServiceAccount, signing key, push access and a token for the Lease |
 
-`train` can only leave files in the shared volume. `publish` treats them as untrusted input: it recomputes the manifest and hashes from the archive, then signs. The lease moves to `publish` (a short window around the upload). Training is no longer protected from a second trainer by a lease held through the run; a duplicate training run only wastes CPU, `concurrencyPolicy: Forbid` still serialises one workload's trainers, and the store re-check before upload still prevents a double publish.
+Separate pod identities let the cluster apply distinct cloud permissions. A missing Kubernetes token mount alone does not prevent GKE metadata-server credentials or credentials injected by an EKS identity webhook. The training ServiceAccount and node configuration must therefore be restricted from obtaining archive-publish privileges, including through node metadata; deployments must verify their cloud identity settings. The coordinator's ability to create pods and volumes is privileged and must be restricted to the intended namespace and workflow.
 
-`check` and `publish` need a JVM for the Java tool, so they run the application image (its JDK, our jar), but never the application itself.
+The publisher must not inherit application-controlled JVM options or execute application JARs as tools. Its runtime and image remain part of the trusted computing base. The training output is untrusted input: a signature authenticates the publisher and the bytes it signed; it does not establish that application-produced archive contents are benign. The handoff must use a per-run volume, fixed paths, bounded file reads, and no concurrent writers during publication. Cleanup must handle retries and failed jobs without exposing a previous run's output.
+
+The Lease covers the store recheck and upload, not the training run. Duplicate training can waste CPU, but a second check under the Lease prevents redundant publication for a shared fingerprint. `concurrencyPolicy: Forbid` still serializes runs of one workload's CronJob.
 
 ### 6. Defaults
 

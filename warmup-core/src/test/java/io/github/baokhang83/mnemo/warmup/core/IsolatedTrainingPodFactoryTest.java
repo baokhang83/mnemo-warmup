@@ -125,4 +125,23 @@ class IsolatedTrainingPodFactoryTest {
         assertThrows(IllegalArgumentException.class, () -> IsolatedTrainingPodFactory.build(template(container(), List.of()), "test", "train-one",
                 "training-only", "handoff-claim", "mnemo-run-123", PROTECTED, Set.of("signing-secret"), 600, null));
     }
+
+    @Test void allowsOnlyReviewedContainerFieldsAndNoHostPorts() {
+        java.util.function.Function<Map<String, Object>, Map<String, Object>> with = extra -> {
+            var c = new java.util.HashMap<String, Object>(container()); c.putAll(extra); return c;
+        };
+        build(template(with.apply(Map.of("ports", List.of(Map.of("name", "http", "containerPort", 8080, "protocol", "TCP")))), List.of()));
+        List<Map<String, Object>> refused = List.of(
+                Map.of("ports", List.of(Map.of("containerPort", 8080, "hostPort", 8080))),
+                Map.of("ports", List.of(Map.of("containerPort", 8080, "hostIP", "0.0.0.0"))),
+                Map.of("livenessProbe", Map.of("httpGet", Map.of("host", "169.254.169.254", "port", 80))),
+                Map.of("lifecycle", Map.of("postStart", Map.of("httpGet", Map.of("host", "10.0.0.1", "port", 80)))),
+                Map.of("restartPolicy", "Always"), Map.of("stdin", true), Map.of("volumeDevices", List.of()));
+        for (var extra : refused) {
+            assertThrows(IllegalArgumentException.class, () -> build(template(with.apply(extra), List.of())), extra.toString());
+            var init = Map.<String, Object>of("containers", List.of(container()), "initContainers", List.of(with.apply(extra)),
+                    "securityContext", Map.of("fsGroup", 1000));
+            assertThrows(IllegalArgumentException.class, () -> build(init), "init " + extra);
+        }
+    }
 }

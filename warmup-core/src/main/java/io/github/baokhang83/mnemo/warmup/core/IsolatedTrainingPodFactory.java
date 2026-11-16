@@ -19,6 +19,13 @@ public final class IsolatedTrainingPodFactory {
     /** Allow-lists, not deny-lists: a field Kubernetes adds later is refused until it has been reviewed. */
     private static final Set<String> POD_SECURITY_FIELDS = Set.of("runAsUser", "runAsGroup", "runAsNonRoot", "fsGroup",
             "fsGroupChangePolicy", "supplementalGroups", "supplementalGroupsPolicy", "seccompProfile", "appArmorProfile");
+    /**
+     * No probes or lifecycle hooks (their httpGet.host makes the kubelet send requests elsewhere), no restartPolicy (a sidecar would
+     * keep the pod from ever succeeding), no stdin or tty: training needs none of them.
+     */
+    private static final Set<String> CONTAINER_FIELDS = Set.of("name", "image", "imagePullPolicy", "command", "args", "workingDir",
+            "env", "envFrom", "volumeMounts", "resources", "securityContext", "ports", "terminationMessagePath", "terminationMessagePolicy");
+    private static final Set<String> PORT_FIELDS = Set.of("name", "containerPort", "protocol");
     private static final Set<String> CONTAINER_SECURITY_FIELDS = Set.of("runAsUser", "runAsGroup", "runAsNonRoot", "readOnlyRootFilesystem",
             "allowPrivilegeEscalation", "privileged", "capabilities", "seccompProfile", "appArmorProfile", "procMount");
 
@@ -163,6 +170,15 @@ public final class IsolatedTrainingPodFactory {
     }
 
     private static void checkContainer(Map<String, Object> container, SecretPolicy secrets) {
+        for (String field : container.keySet()) {
+            if (!CONTAINER_FIELDS.contains(field)) throw new IllegalArgumentException("container field " + field + " is not allowed for training");
+        }
+        for (Object raw : array(container.get("ports"), "ports", true)) {
+            for (String field : object(raw, "port").keySet()) {
+                // hostPort and hostIP bind on the node: Pod Security baseline, and so restricted, forbids them
+                if (!PORT_FIELDS.contains(field)) throw new IllegalArgumentException("port field " + field + " is not allowed for training");
+            }
+        }
         for (Object raw : array(container.get("env"), "env", true)) {
             Map<String, Object> env = object(raw, "env entry");
             Object name = env.get("name");
@@ -185,7 +201,6 @@ public final class IsolatedTrainingPodFactory {
             }
             if ("Bidirectional".equals(mount.get("mountPropagation"))) throw new IllegalArgumentException("bidirectional mount propagation is not allowed");
         }
-        if (container.containsKey("volumeDevices")) throw new IllegalArgumentException("training block devices are not supported");
         Map<String, Object> security = object(container.get("securityContext"), "container securityContext", true);
         checkSecurity(security, CONTAINER_SECURITY_FIELDS, "container");
         if (Boolean.TRUE.equals(security.get("privileged")) || Boolean.TRUE.equals(security.get("allowPrivilegeEscalation"))) {

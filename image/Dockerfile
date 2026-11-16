@@ -12,7 +12,7 @@
 #
 # Build from the repository root:  docker build -f image/Dockerfile -t mnemo-warmup-tools .
 
-FROM maven:3.9-eclipse-temurin-21 AS build
+FROM maven:3.9-eclipse-temurin-26 AS build
 # The release version (the image tag). Stamped into the jar so `mnemo-warmup --version` and the injector's default tools image
 # (ghcr.io/baokhang83/mnemo-warmup-tools:<this CLI's version>) agree with the tag the image is published under.
 ARG VERSION=dev

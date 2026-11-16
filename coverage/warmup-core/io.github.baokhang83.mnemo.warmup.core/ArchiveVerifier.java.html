@@ -98,8 +98,8 @@ public final class ArchiveVerifier {
 <span class="fc" id="L98">            verifier.initVerify(SigningKey.publicKeyFrom(publicKey));</span>
 <span class="fc" id="L99">            verifier.update(message);</span>
 <span class="fc" id="L100">            return verifier.verify(signature);</span>
-<span class="fc" id="L101">        } catch (GeneralSecurityException e) {</span>
-<span class="fc" id="L102">            return false; // a malformed signature is simply not valid</span>
+<span class="nc" id="L101">        } catch (GeneralSecurityException e) {</span>
+<span class="nc" id="L102">            return false; // a malformed signature is simply not valid</span>
         }
     }
 }

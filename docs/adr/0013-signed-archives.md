@@ -99,7 +99,11 @@ Opt-in through the beta. At 1.0 (or earlier if the opt-in proves safe) the injec
 - The Go launcher and the Java tool both implement the statement, the verifier and the sidecar file; they must agree byte for byte, and a shared test fixture (the same approach as `launcher/testdata/compat`) is part of the work.
 - The trainer-pod split changes the injector's output and the chart. It is breaking only for deployments that opt in.
 
-## Open questions
+## Decisions on the questions raised in review
 
-- Should the repository path in the statement be the path as the operator configures it (`team/app`), or normalised? The proposal uses the configured path as the launcher already parses it.
-- Is one key per cluster enough, or should the key id be selectable per workload (different teams, different keys)? The design allows several keys on a pod; per-workload private keys need no change.
+- **The repository in the signed statement is the path as the operator configures it** (`team/app` from `oci://registry/team/app`), exactly as the launcher parses it. No normalisation, so the trainer and the pods build the same text from the same annotation.
+- **Key scope: one key per namespace by default, one per workload where the trust differs.**
+  - The private key is a Kubernetes Secret, and a Secret lives in one namespace. A cluster-wide key would have to be copied into every namespace, and one leaked copy would let its holder sign for every workload that trusts the key.
+  - One key per workload is the safest but needs a `keygen`, a Secret and an annotation for every application, and that friction would keep people from turning signing on.
+  - A key per namespace keeps the private key next to the trainer that uses it and limits a leak to one team. Pods accept a list of public keys, so a workload that needs its own key (one that runs third-party plugins, or processes untrusted input) just uses a different one. The design needs no change to allow either.
+  - Until stage B ships, application code in the trainer can read the key. In a namespace where workloads have different trust levels, the riskier ones should have their own key, so a compromised one cannot sign for the others.

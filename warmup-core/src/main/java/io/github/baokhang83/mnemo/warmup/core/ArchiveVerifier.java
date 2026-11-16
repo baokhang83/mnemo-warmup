@@ -56,8 +56,9 @@ public final class ArchiveVerifier {
                     note.accept("ignoring signing public key " + id + ": not valid base64");
                     continue;
                 }
-                if (publicKey.length != 32) {
-                    note.accept("ignoring signing public key " + id + ": an Ed25519 public key is 32 bytes");
+                String weak = SigningKey.weakness(publicKey);
+                if (weak != null) {
+                    note.accept("ignoring signing public key " + id + ": " + weak);
                 } else if (!SigningKey.keyId(publicKey).equals(id)) {
                     note.accept("ignoring signing public key " + id + ": the id is not the id of that key (expected " + SigningKey.keyId(publicKey) + ")");
                 } else {
@@ -76,6 +77,11 @@ public final class ArchiveVerifier {
     /** No usable key. Handed to a store as its verifier, this refuses every archive (the key list was given, but nothing in it can be trusted). */
     public boolean isEmpty() {
         return keys.isEmpty();
+    }
+
+    /** Whether a key with this id is listed. */
+    public boolean trusts(String keyId) {
+        return keys.containsKey(keyId);
     }
 
     public Result verify(SignedStatement statement, ArchiveSignature signature) {

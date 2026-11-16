@@ -271,4 +271,69 @@ class OciArchiveStoreSigningTest {
             assertFalse(Files.exists(out.resolve(ArchiveFetcher.SIGNATURE_FILE)));
         }
     }
+
+    // ---- two trainers, one tag; and a key rotation (docs/adr/0013) ----
+
+    private OciArchiveStore trainerOf(FakeRegistry registry, SigningKey key, SigningKey... trusted) {
+        return store(registry, "test/archives").withSigningKey(key).withVerifier(trusting(trusted));
+    }
+
+    private static TrainingOrchestrator.Status ensure(OciArchiveStore trainer, ArchiveManifest manifest, Path file) {
+        return new TrainingOrchestrator().ensure(manifest, trainer, TrainingLock.none(), () -> file).status();
+    }
+
+    // two clusters share one repository and use different keys, and every pod trusts both: neither may overwrite the other's entry
+    @Test
+    void twoTrainersWithDifferentTrustedKeysNeverOverwriteEachOther() throws Exception {
+        try (var registry = new FakeRegistry()) {
+            SigningKey a = SigningKey.generate();
+            SigningKey b = SigningKey.generate();
+            Path file = archive("s".repeat(5_000));
+            ArchiveManifest manifest = manifestFor(file);
+            var trainerA = trainerOf(registry, a, a, b);
+            var trainerB = trainerOf(registry, b, a, b);
+            assertEquals(TrainingOrchestrator.Status.TRAINED, ensure(trainerA, manifest, file));
+            for (int round = 0; round < 3; round++) {
+                assertEquals(TrainingOrchestrator.Status.ALREADY_STORED, ensure(trainerB, manifest, file), "round " + round);
+                assertEquals(TrainingOrchestrator.Status.ALREADY_STORED, ensure(trainerA, manifest, file), "round " + round);
+            }
+            assertEquals(1, registry.manifestPuts.get(), "the entry was published once and never overwritten");
+            // the entry is signed by A, and every pod that trusts either key can use it
+            assertTrue(store(registry, "test/archives").withVerifier(trusting(b, a)).get(manifest.fingerprint(), tmp.resolve("alt1")).isPresent());
+        }
+    }
+
+    // the whole rotation: add the new key to pods, switch the trainer, then drop the old key
+    @Test
+    void aKeyRotationMovesToTheNewKeyOnlyOnceTheOldOneIsDropped() throws Exception {
+        try (var registry = new FakeRegistry()) {
+            SigningKey oldKey = SigningKey.generate();
+            SigningKey newKey = SigningKey.generate();
+            Path file = archive("s".repeat(5_000));
+            ArchiveManifest manifest = manifestFor(file);
+            String tag = tagOf(manifest);
+
+            // 1. the trainer signs with the old key, pods trust it
+            assertEquals(TrainingOrchestrator.Status.TRAINED, ensure(trainerOf(registry, oldKey, oldKey), manifest, file));
+            assertTrue(store(registry, "test/archives").withVerifier(trusting(oldKey)).get(manifest.fingerprint(), tmp.resolve("r1")).isPresent());
+
+            // 2. pods now trust both keys; the trainer still signs with the old one: nothing to do
+            assertEquals(TrainingOrchestrator.Status.ALREADY_STORED, ensure(trainerOf(registry, oldKey, oldKey, newKey), manifest, file));
+
+            // 3. the trainer switches to the new key, with both keys still listed: the entry pods already trust stays as it is
+            assertEquals(TrainingOrchestrator.Status.ALREADY_STORED, ensure(trainerOf(registry, newKey, oldKey, newKey), manifest, file));
+            assertEquals(1, registry.manifestPuts.get());
+            assertEquals(oldKey.keyId(), ((Map<?, ?>) imageOf(registry, tag).get("annotations")).get(OciArchiveStore.ANNOTATION_KEY_ID), "still the old key's signature");
+            assertTrue(store(registry, "test/archives").withVerifier(trusting(oldKey, newKey)).get(manifest.fingerprint(), tmp.resolve("r3")).isPresent());
+
+            // 4. the old key is dropped from the list: pods would refuse the entry, so the trainer re-publishes it under the new key
+            var inspection = trainerOf(registry, newKey, newKey).inspect(manifest.fingerprint());
+            assertEquals(ArchiveStore.Presence.BROKEN, inspection.presence(), inspection.detail());
+            assertEquals(TrainingOrchestrator.Status.TRAINED, ensure(trainerOf(registry, newKey, newKey), manifest, file));
+            assertEquals(2, registry.manifestPuts.get());
+            assertEquals(newKey.keyId(), ((Map<?, ?>) imageOf(registry, tag).get("annotations")).get(OciArchiveStore.ANNOTATION_KEY_ID));
+            assertTrue(store(registry, "test/archives").withVerifier(trusting(newKey)).get(manifest.fingerprint(), tmp.resolve("r4")).isPresent());
+            assertThrows(StoreException.class, () -> store(registry, "test/archives").withVerifier(trusting(oldKey)).get(manifest.fingerprint(), tmp.resolve("r5")));
+        }
+    }
 }

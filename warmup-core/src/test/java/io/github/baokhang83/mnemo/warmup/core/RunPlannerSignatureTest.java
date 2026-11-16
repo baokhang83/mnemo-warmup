@@ -105,13 +105,13 @@ class RunPlannerSignatureTest {
     void withoutAKeyListNothingIsRequired(@TempDir Path dir) throws Exception {
         Cache c = cache(dir); // no signature file at all
         assertTrue(plan(c, Map.of()).archiveUsed());
-        assertTrue(plan(c, Map.of(ArchiveVerifier.ENV_PUBLIC_KEYS, "   ")).archiveUsed());
+        // (a variable that is present but blank is not "no key list": see aPresentButBlankKeyListTrustsNothing)
     }
 
     @Test
     void aMissingSignatureFileMeansAPlainStart(@TempDir Path dir) throws Exception {
         Cache c = cache(dir);
-        assertPlainStart(c, plan(c, trusting(SigningKey.generate())), "no signature next to it");
+        assertPlainStart(c, plan(c, trusting(SigningKey.generate())), "no usable signature next to it");
     }
 
     // the attack in the design: swap the archive AND rewrite the manifest so its hash and size match the new archive
@@ -182,5 +182,54 @@ class RunPlannerSignatureTest {
         sign(c, newKey, REPOSITORY);
         assertTrue(plan(c, trusting(oldKey, newKey)).archiveUsed());
         assertFalse(plan(c, trusting(oldKey)).archiveUsed());
+    }
+
+    // a variable that is present enforces even when blank: an empty value from a template must never switch the check off
+    @Test
+    void aPresentButBlankKeyListTrustsNothing(@TempDir Path dir) throws Exception {
+        Cache c = cache(dir);
+        sign(c, SigningKey.generate(), REPOSITORY);
+        for (String blank : new String[] {"", "   ", ","}) {
+            var plan = plan(c, Map.of(ArchiveVerifier.ENV_PUBLIC_KEYS, blank));
+            assertPlainStart(c, plan, "not trusted");
+        }
+    }
+
+    // the cache directory is a volume other processes may write: a huge file is never read whole on the application's start path
+    @Test
+    void anOversizedSignatureFileIsAPlainStart(@TempDir Path dir) throws Exception {
+        Cache c = cache(dir);
+        SigningKey key = SigningKey.generate();
+        sign(c, key, REPOSITORY);
+        Files.writeString(c.cacheDir().resolve(SignatureFile.FILE_NAME), "x".repeat(5_000));
+        assertPlainStart(c, plan(c, trusting(key)), "no usable signature");
+    }
+
+    @Test
+    void anOversizedFlagsFileOrManifestIsAPlainStart(@TempDir Path dir) throws Exception {
+        Cache c = cache(dir);
+        SigningKey key = SigningKey.generate();
+        sign(c, key, REPOSITORY);
+        Files.writeString(c.cacheDir().resolve(ArchiveFetcher.FLAGS_FILE), "x".repeat(5_000));
+        assertFalse(plan(c, trusting(key)).archiveUsed());
+
+        Cache m = cache(Files.createDirectory(dir.resolve("second")));
+        sign(m, key, REPOSITORY);
+        try (var out = Files.newOutputStream(m.manifestFile())) {
+            out.write(new byte[(8 << 20) + 1]);
+        }
+        var plan = plan(m, trusting(key));
+        assertFalse(plan.archiveUsed());
+        assertTrue(plan.notes().stream().anyMatch(n -> n.contains("larger than anything fetch writes")), plan.notes().toString());
+    }
+
+    @Test
+    void aSignatureFileThatIsADirectoryIsAPlainStart(@TempDir Path dir) throws Exception {
+        Cache c = cache(dir);
+        SigningKey key = SigningKey.generate();
+        sign(c, key, REPOSITORY);
+        Files.delete(c.cacheDir().resolve(SignatureFile.FILE_NAME));
+        Files.createDirectory(c.cacheDir().resolve(SignatureFile.FILE_NAME));
+        assertPlainStart(c, plan(c, trusting(key)), "no usable signature");
     }
 }

@@ -32,6 +32,8 @@ final class FakeRegistry implements AutoCloseable {
     volatile long trickleMillis;
     /** Counts every blob GET (not HEAD), so a test can prove an archive was never requested. */
     final AtomicInteger blobGets = new AtomicInteger();
+    /** Counts every manifest PUT: one per publish, so a test can prove nobody overwrote an entry. */
+    final AtomicInteger manifestPuts = new AtomicInteger();
     /** absolute-path (default), relative ("u1") or query ("?_state=x"). */
     volatile String locationStyle = "absolute-path";
     private final HttpServer server;
@@ -111,6 +113,7 @@ final class FakeRegistry implements AutoCloseable {
                 String tag = path.substring(path.indexOf("/manifests/") + "/manifests/".length());
                 switch (method) {
                     case "PUT" -> {
+                        manifestPuts.incrementAndGet();
                         manifests.put(tag, ex.getRequestBody().readAllBytes());
                         reply(ex, 201, new byte[0]);
                     }

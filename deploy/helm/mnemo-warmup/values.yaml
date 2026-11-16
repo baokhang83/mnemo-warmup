@@ -55,8 +55,10 @@ signing:
   # a cache. A list with nothing usable refuses every archive, so a typo cannot switch the check off.
   publicKeys: ""
   # A Secret holding the private key under the key signing.key (kubectl create secret generic NAME --from-file=signing.key=FILE).
-  # It is mounted into the trainer only, which then signs everything it publishes. Until the trainer is split (ADR 0013, stage B),
-  # application code that runs during training can read this key.
+  # It is mounted into the trainer only, which then signs everything it publishes. The file is readable by its owner (root) and its group
+  # (mode 0440): a trainer that runs as a non-root user needs trainer.podSecurityContext.fsGroup, and the render fails without it.
+  # The trainer also checks its key against publicKeys (when set) and refuses to sign with one that is not listed. Until the trainer is
+  # split (ADR 0013, stage B), application code that runs during training can read this key.
   keySecret: ""
 
 # The trainer (ADR 0002): a CronJob, not a Helm hook, so a failing trainer can never fail a release. Each run

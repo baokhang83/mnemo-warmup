@@ -63,6 +63,45 @@ const (
 
 var keyIDRe = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
+// smallOrderY are the y-coordinates (little-endian) of the Ed25519 points of order 1, 2, 4 and 8. A public key that is one of them makes
+// verification succeed for every message with a trivial signature, so no honest key looks like this. Java refuses the same set
+// (SigningKey.weakness). They were computed from the curve equation, not copied.
+var smallOrderY = []string{
+	"0000000000000000000000000000000000000000000000000000000000000000",
+	"0100000000000000000000000000000000000000000000000000000000000000",
+	"ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+	"26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+	"c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+}
+
+// publicKeyWeakness says why a public key must never be trusted ("" when it may be). The top bit of the last byte is only the sign of x,
+// so it is ignored; a y at or above p = 2^255-19 is a second spelling of a smaller y, and Go and the JDK treat those differently.
+func publicKeyWeakness(key []byte) string {
+	if len(key) != ed25519.PublicKeySize {
+		return "an Ed25519 public key is 32 bytes"
+	}
+	y := append([]byte(nil), key...)
+	y[31] &= 0x7f
+	if y[31] == 0x7f && y[0] >= 0xed {
+		canonical := false
+		for _, b := range y[1:31] {
+			if b != 0xff {
+				canonical = true
+				break
+			}
+		}
+		if !canonical {
+			return "its encoding is not canonical"
+		}
+	}
+	for _, bad := range smallOrderY {
+		if hex.EncodeToString(y) == bad {
+			return "it is a small-order point, for which any message verifies"
+		}
+	}
+	return ""
+}
+
 type signatureKeys map[string]ed25519.PublicKey
 
 // parseSignatureKeys reads "id=base64,id=base64". An entry that is malformed, or whose id is not the id of its own key, is skipped with
@@ -83,8 +122,8 @@ func parseSignatureKeys(entries string, note func(string)) signatureKeys {
 		switch {
 		case err != nil:
 			note("ignoring signing public key " + id + ": not valid base64")
-		case len(raw) != ed25519.PublicKeySize:
-			note("ignoring signing public key " + id + ": an Ed25519 public key is 32 bytes")
+		case publicKeyWeakness(raw) != "":
+			note("ignoring signing public key " + id + ": " + publicKeyWeakness(raw))
 		case signingKeyID(raw) != id:
 			note("ignoring signing public key " + id + ": the id is not the id of that key (expected " + signingKeyID(raw) + ")")
 		default:

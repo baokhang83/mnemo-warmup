@@ -24,6 +24,9 @@ public final class SignatureFile {
 
     /** @throws IllegalArgumentException if it is not exactly what {@link #text} writes */
     public static Contents parse(String text) {
+        if (text.indexOf('\r') >= 0) {
+            throw new IllegalArgumentException("not a mnemo-warmup signature file"); // Go refuses a carriage return; so must Java
+        }
         List<String> lines = text.lines().toList();
         if (lines.size() != 4 || !HEADER.equals(lines.get(0)) || !text.endsWith("\n")) {
             throw new IllegalArgumentException("not a mnemo-warmup signature file");

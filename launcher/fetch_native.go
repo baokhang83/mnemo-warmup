@@ -407,9 +407,14 @@ func (l launcher) openRegistry(o fetchOptions, env map[string]string) (*registry
 	}
 	r := &registry{base: &url.URL{Scheme: scheme, Host: host}, repo: repo, timeout: o.timeout}
 	r.deadlineLen, r.maxArchive = fetchLimits(env, l.note)
-	if entries := strings.TrimSpace(env[envSigningPublicKeys]); entries != "" {
+	// A variable that is present enforces, even when it is blank: an empty value from a template or a typo must never switch the check
+	// off. A list with no usable key then refuses every archive, which only costs a cache.
+	if entries, present := env[envSigningPublicKeys]; present {
 		r.enforce = true
 		r.keys = parseSignatureKeys(entries, func(m string) { l.note("%s", m) })
+		if len(r.keys) == 0 {
+			l.note("%s lists no usable key, so every archive will be refused", envSigningPublicKeys)
+		}
 	}
 	r.deadline = time.Now().Add(r.deadlineLen)
 	cache, cacheErr := newNodeCacheClient(env)

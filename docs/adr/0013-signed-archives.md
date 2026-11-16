@@ -27,7 +27,7 @@ size: <bytes>
 repository: <repository path, without the registry host>
 ```
 
-Binding the fingerprint stops a valid signature being moved to another tag. Binding the repository stops one application's signed archive being replayed into another's repository when a key is shared. The registry host is left out on purpose: the trainer and the pods may reach the same registry under different names.
+Binding the fingerprint stops a valid signature being moved to another tag. Binding the repository stops one application's signed archive being replayed into another's repository when a key is shared. The registry host is left out on purpose: the trainer and the pods may reach the same registry under different names. The consequence is stated plainly: a signed archive copied to another registry under the **same repository path** verifies there too, so registries that are different trust domains need separate keys.
 
 ### 2. Where the signature lives
 
@@ -47,7 +47,7 @@ An operator supplies one or more public keys (`id=base64`). The key id is the fi
 Verification runs in two places:
 
 1. **`fetch`**, before anything is published into the cache directory. It verifies against the registry's manifest and writes `mnemo-warmup.signature` (key id, signature, repository) next to the archive.
-2. **`run`**, on every start, against the files on disk: it rebuilds the statement from the stored manifest's fingerprint, the SHA-256 of the manifest file, the SHA-256 and size of the archive it already hashes, and the repository from the signature file, then verifies. A process that can write to the shared cache directory (finding S14) can swap files but cannot make a signature for them, so the directory becomes tamper-evident without relying on file modes. In the opt-in mode, `run` ignores an unsigned cache directory.
+2. **`run`**, on every start, against the files on disk: it rebuilds the statement from the stored manifest's fingerprint, the SHA-256 of the manifest file, the SHA-256 and size of the archive it already hashes, and the repository from the signature file, then verifies. A process that can write to the shared cache directory (finding S14) can swap files but cannot make a signature for them, so a change made between the fetch and the start is detected without relying on file modes. This does not close the gap between the check and the JVM opening the archive: a writer that swaps the file in that instant can still win the race. The consumers' mount should be read-only, which protects against writes through that mount only; another container or process with write access to the same underlying volume can still race the JVM open. In the opt-in mode, `run` ignores an unsigned cache directory.
 
 The cost is one Ed25519 verification (microseconds) and the hash of a small manifest file.
 
@@ -55,9 +55,10 @@ This depends on the manifest file on disk being byte-for-byte the config blob th
 
 ### 4. Keys and rotation
 
-- `mnemo-warmup keygen` writes a private key (a Kubernetes Secret manifest for the signer, mode 0400 when mounted) and prints the public key and key id. The private key is created where the operator chooses; the tool does not store it.
+- `mnemo-warmup keygen` writes a private key (a key file for a Kubernetes Secret, mounted with mode 0440 and an `fsGroup` so a non-root trainer can read it) and prints the public key and key id. The private key is created where the operator chooses; the tool does not store it.
 - Pods accept **any** listed public key. To rotate: add the new public key to pods, then switch the trainer to the new private key, then remove the old public key once nothing signed with it is wanted.
-- The trainer treats a stored entry as complete only if it also verifies under the key it signs with. An entry that is unsigned or signed by another key is incomplete and is re-published (reusing the stored blobs). Without this rule a rotation or a first rollout of signing would be blocked by `ALREADY_STORED`. Registries with immutable tags would refuse that tag overwrite; `docs/archive-retention.md` already lists the repair against immutable tags as untested, and this adds a reason to test it.
+- The trainer is given the same list. It treats an entry as complete if **any listed key** signed it, so two trainers that use different listed keys (one per cluster, say) never overwrite each other, and during a rotation the entry keeps the old signature until the old key leaves the list, after which the trainer re-publishes it. A trainer whose own key is not on the list refuses to run: it would publish archives every pod refuses.
+- Without a list, the trainer treats a stored entry as complete only if it verifies under the key it signs with; with the pods' list, under any listed key (above). An entry that no trusted key signed is incomplete and is re-published (reusing the stored blobs). Without this rule a rotation or a first rollout of signing would be blocked by `ALREADY_STORED`. Registries with immutable tags would refuse that tag overwrite; `docs/archive-retention.md` already lists the repair against immutable tags as untested, and this adds a reason to test it.
 - Private keys held in a cloud KMS are not designed here.
 
 ### 5. Keep the key away from application code (S3)

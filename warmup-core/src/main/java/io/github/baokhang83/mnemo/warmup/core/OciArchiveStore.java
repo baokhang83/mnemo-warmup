@@ -110,6 +110,17 @@ public final class OciArchiveStore implements ArchiveStore {
         return this;
     }
 
+    /** Whether a valid signature is required before an archive is used (a verifier was set, even one that trusts nothing). */
+    public boolean requiresSignatures() {
+        return verifier != null;
+    }
+
+    /** The id of the key {@link #put} signs with, or null when it does not sign. */
+    public String signingKeyId() {
+        SigningKey key = signingKey;
+        return key == null ? null : key.keyId();
+    }
+
     /** The {@code host[:port]} of an {@code oci://} reference, for looking up credentials. */
     public static String registryHost(String reference) {
         return parse(reference).host();

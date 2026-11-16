@@ -8,7 +8,9 @@ import (
 	"encoding/hex"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // Signed archives (docs/adr/0013) through the native fetch and the native planner. The attacker is whoever can write to the registry or
@@ -207,8 +209,9 @@ func TestNativePlanUsesASignedDirectoryAndIgnoresSignaturesWithoutKeys(t *testin
 	if got := f.plan(); !got.decided || len(got.argv) != len(f.cmd)+1 {
 		t.Fatalf("with no key list nothing is required: %+v", got)
 	}
-	if got := f.planWith(envSigningPublicKeys + "=   "); !got.decided || len(got.argv) != len(f.cmd)+1 {
-		t.Fatalf("a blank key list is no key list: %+v", got)
+	// a blank list is still a list (nothing is trusted), so it is not "no key list": see TestAPresentButBlankKeyListRefusesEverything
+	if got := f.planWith(envSigningPublicKeys + "=   "); got.decided {
+		t.Fatalf("a present but blank key list trusts nothing and must not use the directory: %+v", got)
 	}
 }
 
@@ -256,6 +259,76 @@ func TestNativePlanLeavesEveryUntrustedDirectoryToJava(t *testing.T) {
 			extra := setup(t, f, newTestSigner(1))
 			if got := f.planWith(extra...); got.decided {
 				t.Fatalf("the native planner must not use this directory: %+v", got)
+			}
+		})
+	}
+}
+
+// A key list that is present but blank is still a key list: nothing is trusted, so nothing is used. An empty value from a template or a
+// typo must never switch the check off (it would have, before, because blank was read as "not set").
+func TestAPresentButBlankKeyListRefusesEverything(t *testing.T) {
+	for name, blank := range map[string]string{"empty": "", "spaces": "   ", "a comma": ",", "garbage": "typo-not-a-key"} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			fr := newFakeRegistry(t, f)
+			signRegistry(t, f, fr, newTestSigner(1), "team/app")
+			l, args, stdout, stderr := fetchHarness(t, f, fr, envSigningPublicKeys+"="+blank)
+			code, done := l.nativeFetch(args, false)
+			if !done || code != 0 || !strings.Contains(stdout.String(), "No usable archive") || !strings.Contains(stderr.String(), "not trusted") {
+				t.Fatalf("done=%v code=%d stdout=%q stderr=%q", done, code, stdout, stderr)
+			}
+			if layerRequested(fr, f) {
+				t.Fatal("the archive must not be requested")
+			}
+			if !strings.Contains(stderr.String(), "lists no usable key") {
+				t.Fatalf("the operator must be told the list is unusable: %q", stderr)
+			}
+			// and the planner, given the same blank list, leaves the directory to Java instead of using it
+			fx := newFixture(t)
+			signFixtureDir(t, fx, newTestSigner(1), "team/app")
+			if got := fx.planWith(envSigningPublicKeys + "=" + blank); got.decided {
+				t.Fatalf("the native planner must not use a signed directory when nothing is trusted: %+v", got)
+			}
+		})
+	}
+}
+
+// The signature file, the flags file and the manifest sit in a volume other processes may write: a huge file, or a named pipe that would
+// block forever, must send the decision to Java, never exhaust memory or hang the application's start.
+func TestOversizedOrSpecialFilesInTheCacheDirectoryAreNotRead(t *testing.T) {
+	huge := strings.Repeat("x", maxManifestBytes+1)
+	cases := map[string]func(t *testing.T, f fixture){
+		"a huge signature file": func(t *testing.T, f fixture) {
+			signFixtureDir(t, f, newTestSigner(1), "team/app")
+			os.WriteFile(f.path("cache/"+signatureFile), []byte(strings.Repeat("x", maxSignatureBytes+1)), 0o644)
+		},
+		"a signature file that is a named pipe": func(t *testing.T, f fixture) {
+			signFixtureDir(t, f, newTestSigner(1), "team/app")
+			os.Remove(f.path("cache/" + signatureFile))
+			if err := syscall.Mkfifo(f.path("cache/"+signatureFile), 0o644); err != nil {
+				t.Skip("cannot make a named pipe here:", err)
+			}
+		},
+		"a huge flags file": func(t *testing.T, f fixture) {
+			os.WriteFile(f.path("cache/"+flagsFile), []byte(strings.Repeat("x", maxFlagsBytes+1)), 0o644)
+		},
+		"a huge manifest": func(t *testing.T, f fixture) {
+			os.WriteFile(f.path("cache/"+manifestFile), []byte(huge), 0o644)
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			setup(t, f)
+			done := make(chan planResult, 1)
+			go func() { done <- f.planWith(keysEnv(newTestSigner(1).entry())) }()
+			select {
+			case got := <-done:
+				if got.decided {
+					t.Fatalf("the native planner must not use this directory: %+v", got)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the planner hung on a special file")
 			}
 		})
 	}

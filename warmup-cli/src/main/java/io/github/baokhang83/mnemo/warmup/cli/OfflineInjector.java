@@ -141,7 +141,10 @@ final class OfflineInjector {
             List<String> appEnv = appEnvNames(w);
             requireFree(app, "env", appEnv);
             requireFree(app, "env", List.of("POD_NAMESPACE"));
-            if (w.signingKeySecret() != null) requireFree(pod, "volumes", List.of(SIGNING_VOLUME));
+            if (w.signingKeySecret() != null) {
+                requireFree(pod, "volumes", List.of(SIGNING_VOLUME));
+                requireReadableSigningKey(pod, app);
+            }
             requireFreePaths(app, List.of("/mnemo-tools", "/mnemo-cache", "/tmp/mnemo-warmup", "/var/run/mnemo-warmup/registry"));
             if (w.nodeCacheUrl() != null) requireFreePaths(app, List.of("/var/run/mnemo-warmup/nodecache/identity", "/var/run/mnemo-warmup/nodecache/ca"));
             String copies = describeCopies(pod, app, w);
@@ -213,6 +216,8 @@ final class OfflineInjector {
             if (imageVolume) notes.add("  image-volume support cannot be verified offline; check the feature gate and runtime on every eligible node, or use init-container");
             if (w.nodeCacheUrl() != null) notes.add("  node cache uses a projected service-account token in the fetch init container; cache failure falls back to the registry");
             notes.addAll(signingNotes(w));
+            if (w.signingKeySecret() != null && nonRootTrainer(pod, app) == null && !hasFsGroup(pod))
+                notes.add("  signing: the trainer's user is decided by the image; if it is not root, add fsGroup to the pod securityContext or it cannot read the signing key (mode 0440)");
             notes.add("  trainer " + trainerName(w.name()) + " (CronJob, ServiceAccount, Role: leases only) copies from the workload, names only: " + copies);
         }
         output.addAll(generated);
@@ -260,6 +265,8 @@ final class OfflineInjector {
         if (w.signingKeySecret() != null) {
             requireFree(trainer, "env", List.of(SigningKey.ENV_KEY_FILE));
             append(trainer, "env", obj("name", SigningKey.ENV_KEY_FILE, "value", SIGNING_KEY_PATH));
+            // the pods' trusted list: the trainer re-publishes only what pods would refuse, and refuses to sign with a key not on it
+            if (w.signingPublicKeys() != null) append(trainer, "env", publicKeysEnv(w));
             append(trainer, "volumeMounts", mount(SIGNING_VOLUME, SIGNING_KEY_DIR, true));
         }
         Map<String, Object> trainerPod = obj("restartPolicy", "Never", "serviceAccountName", name, "automountServiceAccountToken", true,
@@ -270,7 +277,7 @@ final class OfflineInjector {
         }
         if (w.pushSecret() != null) append(trainerPod, "volumes", secretVolume("mnemo-registry-push", w.pushSecret()));
         if (w.signingKeySecret() != null) append(trainerPod, "volumes", obj("name", SIGNING_VOLUME, "secret",
-                obj("secretName", w.signingKeySecret(), "defaultMode", 0400, "items", List.of(obj("key", "signing.key", "path", "signing.key")))));
+                obj("secretName", w.signingKeySecret(), "defaultMode", 0440, "items", List.of(obj("key", "signing.key", "path", "signing.key")))));
         copyIfPresent(pod, trainerPod, "imagePullSecrets", "nodeSelector", "tolerations", "affinity", "securityContext");
         Map<String, Object> metadata = obj("name", name, "namespace", w.namespace(), "labels", labels, "annotations", obj(MARKER, "generated"));
         Map<String, Object> cron = obj("apiVersion", "batch/v1", "kind", "CronJob", "metadata", metadata, "spec", obj("schedule", "*/10 * * * *", "concurrencyPolicy", "Forbid", "jobTemplate", obj("spec", obj("backoffLimit", 0, "activeDeadlineSeconds", 3600, "template", obj("spec", trainerPod)))));
@@ -297,6 +304,34 @@ final class OfflineInjector {
     }
     private static Map<String, Object> publicKeysEnv(WorkloadDiscovery.Workload w) {
         return obj("name", ArchiveVerifier.ENV_PUBLIC_KEYS, "value", w.signingPublicKeys());
+    }
+    /**
+     * A Secret file is owned by root and, with mode 0440, readable by its group only. A trainer that runs as a non-root user can read it
+     * only if the pod gives that user a group that owns the file, which is what fsGroup does. A known non-root user without an fsGroup
+     * would fail at the first training run, so it is refused here, at preview, with the fix. When the user is not known (the image
+     * decides) a note says what to check.
+     */
+    private static void requireReadableSigningKey(Map<String, Object> pod, Map<String, Object> app) {
+        if (nonRootTrainer(pod, app) == Boolean.TRUE && !hasFsGroup(pod)) {
+            throw new IllegalArgumentException("signing-key-secret: the trainer runs as a non-root user but the pod has no fsGroup, so it could not read "
+                    + "the signing key (mode 0440). Add fsGroup to the Deployment's pod securityContext (it is copied to the trainer pod), or run as root");
+        }
+    }
+    private static boolean hasFsGroup(Map<String, Object> pod) {
+        return pod.get("securityContext") instanceof Map<?, ?> sc && sc.get("fsGroup") != null;
+    }
+    /** TRUE when the trainer is known to run as a non-root user, FALSE when known to run as root, null when the image decides. */
+    private static Boolean nonRootTrainer(Map<String, Object> pod, Map<String, Object> app) {
+        Object user = null, nonRoot = null;
+        for (Object scope : new Object[] {pod.get("securityContext"), app.get("securityContext")}) { // the container's setting wins
+            if (scope instanceof Map<?, ?> sc) {
+                if (sc.get("runAsUser") != null) user = sc.get("runAsUser");
+                if (sc.get("runAsNonRoot") != null) nonRoot = sc.get("runAsNonRoot");
+            }
+        }
+        if (user instanceof Number n) return n.longValue() != 0;
+        if (Boolean.TRUE.equals(nonRoot)) return true;
+        return null;
     }
     private static List<String> signingNotes(WorkloadDiscovery.Workload w) {
         List<String> notes = new ArrayList<>();

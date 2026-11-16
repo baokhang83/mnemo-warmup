@@ -43,4 +43,13 @@ class SignatureFileTest {
         }
         assertThrows(IllegalArgumentException.class, () -> SignatureFile.text(new ArchiveSignature("0".repeat(16), new byte[64]), "bad\nrepo"));
     }
+
+    // Java's String.lines() accepts CRLF; Go refuses it. If Go refuses a file and falls back to Java, Java must refuse it too.
+    @Test
+    void carriageReturnsAreRefusedLikeGoRefusesThem() {
+        String good = SignatureFile.text(new ArchiveSignature("0".repeat(16), new byte[64]), "team/app");
+        assertThrows(IllegalArgumentException.class, () -> SignatureFile.parse(good.replace("\n", "\r\n")));
+        assertThrows(IllegalArgumentException.class, () -> SignatureFile.parse(good.replaceFirst("\n", "\r\n")));
+        assertThrows(IllegalArgumentException.class, () -> SignatureFile.parse(good.replace("team/app", "team/app\r")));
+    }
 }

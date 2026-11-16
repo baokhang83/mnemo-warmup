@@ -19,7 +19,8 @@
 # never sees it.
 # WITH_SIGNING=1 adds the signed-archive scenario (docs/adr/0013): with an unsigned archive already in use, turn signing on and
 # watch the pod refuse it and still start; the trainer re-publishes it signed and the pod uses it; then give the pod the WRONG
-# public key and watch it refuse the archive and still start. Needs no Java on this machine: keys are made with the example image's JDK.
+# public key and watch it refuse the archive and still start; finally run the trainer as a NON-ROOT user (it reads the key through
+# fsGroup) and rotate the key: nothing is re-published until the old key leaves the list, then the entry moves to the new key. Needs no Java on this machine: keys are made with the example image's JDK.
 # Usage: scripts/e2e-kind.sh [jdk ...]       Needs docker, kind, kubectl, helm and network access (Maven Central, image pulls).
 # KEEP=1 keeps the cluster and registry for debugging. Logs of a failed run are written to $ARTIFACTS.
 set -uo pipefail
@@ -260,10 +261,17 @@ YAML
     if [ -n "$key_a" ] && [ -n "$key_b" ] && [ "${key_a%%=*}" != "${key_b%%=*}" ]; then ok "keygen made two different keys (${key_a%%=*}, ${key_b%%=*})"; else die "$ns" "keygen failed: '$key_a' '$key_b'"; fi
     if [ "$(stat -c %a "$WORK/keys/a.key" 2>/dev/null || stat -f %Lp "$WORK/keys/a.key")" = 600 ]; then ok "the private key file is readable by its owner only"; else fail "private key file mode"; fi
     k -n "$ns" create secret generic sign-a --from-file=signing.key="$WORK/keys/a.key" >/dev/null || die "$ns" "cannot create the signing Secret"
-    sign_values() { printf 'warmup:\n  signing:\n    publicKeys: "%s"\n    keySecret: sign-a\n' "$1" >"$ARTIFACTS.signing-$n.yaml"; }
+    # sign_values <public keys> <key Secret> <root|nonroot>: nonroot runs the trainer as uid 10001 with an fsGroup, so it reads the
+    # root-owned, group-readable (0440) key file through the group
+    sign_values() {
+      printf 'warmup:\n  signing:\n    publicKeys: "%s"\n    keySecret: %s\n' "$1" "$2" >"$ARTIFACTS.signing-$n.yaml"
+      if [ "$3" = nonroot ]; then
+        printf '  trainer:\n    securityContext: {runAsUser: 10001, runAsNonRoot: true}\n    podSecurityContext: {fsGroup: 10001}\n' >>"$ARTIFACTS.signing-$n.yaml"
+      fi
+    }
 
     # S1. signing turned on while an UNSIGNED archive is the one in the registry: it is refused, the pod still starts uncached
-    sign_values "$key_a"; SIGNING_ARGS=(-f "$ARTIFACTS.signing-$n.yaml")
+    sign_values "$key_a" sign-a root; SIGNING_ARGS=(-f "$ARTIFACTS.signing-$n.yaml")
     helm --kube-context "$CTX" upgrade ex "$CHART" -n "$ns" -f "$ARTIFACTS.values-$n.yaml" -f "$ARTIFACTS.secret-$n.yaml" "${SIGNING_ARGS[@]}" --wait --timeout 6m >/dev/null 2>&1 \
       || die "$ns" "the Deployment with signing on did not become ready (an unsigned archive must never stop a pod)"
     settle
@@ -292,17 +300,47 @@ YAML
     if k -n "$ns" exec "${pod#pod/}" -c app -- sh -c 'test ! -e /var/run/mnemo-warmup/signing' >/dev/null 2>&1; then ok "the application container has no private key"; else fail "the private key is visible in the application container"; fi
 
     # S4. the pods are given the WRONG public key: the archive is refused, the pod still starts
-    sign_values "$key_b"
+    sign_values "$key_b" sign-a root
     helm --kube-context "$CTX" upgrade ex "$CHART" -n "$ns" -f "$ARTIFACTS.values-$n.yaml" -f "$ARTIFACTS.secret-$n.yaml" "${SIGNING_ARGS[@]}" --wait --timeout 6m >/dev/null 2>&1 \
       || die "$ns" "the Deployment with a different trusted key did not become ready"
     settle
     pod=$(app_pods | head -1)
     if has "$(fetch_logs "$pod")" "not trusted"; then ok "an archive signed by a key the pod does not trust is refused"; else fail "fetch log: $(fetch_logs "$pod")"; fi
     if line=$(source_line "$pod") && has "$line" "DemoApplication source: file:"; then ok "and the pod is healthy, running without the cache"; else fail "expected an uncached start, got: '${line:-<none>}'"; fi
-    sign_values "$key_a" # back to the right key: the next scenario starts from a trusted, signed archive
+    sign_values "$key_a" sign-a root # back to the right key: the next scenarios start from a trusted, signed archive
     helm --kube-context "$CTX" upgrade ex "$CHART" -n "$ns" -f "$ARTIFACTS.values-$n.yaml" -f "$ARTIFACTS.secret-$n.yaml" "${SIGNING_ARGS[@]}" --wait --timeout 6m >/dev/null 2>&1 \
       || die "$ns" "the Deployment with the right key again did not become ready"
     settle
+
+    # S5. a NON-ROOT trainer reads the key through its fsGroup, and the key is ROTATED: new key on the list next to the old one, the
+    # trainer switched to it, then the old key dropped. The trainer accepts what any listed key signed, so nothing is re-published until
+    # the old key leaves the list.
+    k -n "$ns" create secret generic sign-b --from-file=signing.key="$WORK/keys/b.key" >/dev/null || die "$ns" "cannot create the second signing Secret"
+    sign_values "$key_a,$key_b" sign-b nonroot
+    helm --kube-context "$CTX" upgrade ex "$CHART" -n "$ns" -f "$ARTIFACTS.values-$n.yaml" -f "$ARTIFACTS.secret-$n.yaml" "${SIGNING_ARGS[@]}" --wait --timeout 6m >/dev/null 2>&1 \
+      || die "$ns" "the Deployment trusting both keys did not become ready"
+    settle
+    fsgroup=$(k -n "$ns" get "cronjob/$(cronjob)" -o jsonpath='{.spec.jobTemplate.spec.template.spec.securityContext.fsGroup}')
+    runas=$(k -n "$ns" get "cronjob/$(cronjob)" -o jsonpath='{.spec.jobTemplate.spec.template.spec.containers[0].securityContext.runAsUser}')
+    if [ "$fsgroup" = 10001 ] && [ "$runas" = 10001 ]; then ok "the trainer pod runs as uid $runas with fsGroup $fsgroup"; else fail "trainer pod: uid '$runas' fsGroup '$fsgroup'"; fi
+    k -n "$ns" create job t5 --from="cronjob/$(cronjob)" >/dev/null || die "$ns" "cannot create the non-root trainer job"
+    k -n "$ns" wait --for=condition=complete job/t5 --timeout=600s >/dev/null 2>&1 || die "$ns" "the non-root trainer job did not complete (can it read its key?)"
+    rot_log=$(k -n "$ns" logs job/t5 -c trainer 2>&1)
+    if has "$rot_log" "ALREADY_STORED"; then ok "a non-root trainer read its key, and left the entry signed by the old key alone (it is still trusted)"; else fail "trainer log: $rot_log"; fi
+    sign_values "$key_b" sign-b nonroot
+    helm --kube-context "$CTX" upgrade ex "$CHART" -n "$ns" -f "$ARTIFACTS.values-$n.yaml" -f "$ARTIFACTS.secret-$n.yaml" "${SIGNING_ARGS[@]}" --wait --timeout 6m >/dev/null 2>&1 \
+      || die "$ns" "the Deployment trusting only the new key did not become ready (an archive the old key signed must never stop a pod)"
+    settle
+    pod=$(app_pods | head -1)
+    if has "$(fetch_logs "$pod")" "not trusted"; then ok "with the old key dropped, the pod refuses the archive the old key signed and still starts"; else fail "fetch log: $(fetch_logs "$pod")"; fi
+    k -n "$ns" create job t6 --from="cronjob/$(cronjob)" >/dev/null || die "$ns" "cannot create the re-publishing job"
+    k -n "$ns" wait --for=condition=complete job/t6 --timeout=600s >/dev/null 2>&1 || die "$ns" "the re-publishing job did not complete"
+    if has "$(k -n "$ns" logs job/t6 -c trainer 2>&1)" "train: TRAINED"; then ok "the trainer re-published the entry under the new key"; else fail "t6 log: $(k -n "$ns" logs job/t6 -c trainer 2>&1)"; fi
+    k -n "$ns" rollout restart deploy/ex-app >/dev/null
+    k -n "$ns" rollout status deploy/ex-app --timeout=300s >/dev/null 2>&1 || die "$ns" "the restarted Deployment did not become ready"
+    settle
+    pod=$(app_pods | head -1)
+    if line=$(source_line "$pod") && has "$line" "DemoApplication source: shared objects file"; then ok "the pod uses the archive signed by the new key"; else fail "expected the archive signed by the new key to be used, got: '${line:-<none>}'"; fi
   fi
 
   # ---- E. a changed JVM option: still starts, uncached, with a reason ----

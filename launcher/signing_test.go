@@ -23,10 +23,11 @@ type signingVector struct {
 		Size        int64  `json:"size"`
 		Repository  string `json:"repository"`
 	} `json:"statement"`
-	PublicKeyEntry string `json:"publicKeyEntry"`
-	Text           string `json:"text"`
-	Signature      string `json:"signature"`
-	SignatureFile  string `json:"signatureFile"`
+	PublicKeyEntry string   `json:"publicKeyEntry"`
+	WeakPublicKeys []string `json:"weakPublicKeys"`
+	Text           string   `json:"text"`
+	Signature      string   `json:"signature"`
+	SignatureFile  string   `json:"signatureFile"`
 }
 
 func loadSigningVector(t *testing.T) (signingVector, signedStatement) {
@@ -235,5 +236,38 @@ func TestVerifyDistinguishesValidUnknownAndBad(t *testing.T) {
 	}
 	if keys.verify(s, v.KeyID, signature).problem(v.KeyID) != "" || verifyUnknownKey.problem("abc") == "" || verifyBadSignature.problem("abc") == "" {
 		t.Fatal("problem() must be empty for valid and set otherwise")
+	}
+}
+
+// No honest key looks like these: a small-order point makes a trivial signature verify for any message, and a non-canonical spelling is
+// read differently by Go and the JDK. Java refuses exactly the same list (SigningKeyTest).
+func TestWeakPublicKeysAreNeverTrusted(t *testing.T) {
+	v, _ := loadSigningVector(t)
+	if len(v.WeakPublicKeys) < 10 {
+		t.Fatalf("the vector must list the weak encodings, got %d", len(v.WeakPublicKeys))
+	}
+	for _, weak := range v.WeakPublicKeys {
+		raw, _ := hex.DecodeString(weak)
+		if publicKeyWeakness(raw) == "" {
+			t.Errorf("%s is not recognised as weak", weak)
+		}
+		var notes []string
+		keys := parseSignatureKeys(signingKeyID(raw)+"="+base64.StdEncoding.EncodeToString(raw), func(m string) { notes = append(notes, m) })
+		if len(keys) != 0 || len(notes) != 1 {
+			t.Errorf("%s was trusted or not reported: keys=%d notes=%q", weak, len(keys), notes)
+		}
+	}
+	honest, _ := hex.DecodeString(v.PublicKey)
+	if publicKeyWeakness(honest) != "" {
+		t.Fatal("the vector's own key must not be weak")
+	}
+	// the attack Codex described: with the identity as a trusted key, a trivial signature verifies in Go. It must never get that far.
+	identity := make([]byte, 32)
+	identity[0] = 1
+	if !ed25519.Verify(ed25519.PublicKey(identity), []byte("any message"), append([]byte{1}, make([]byte, 63)...)) {
+		t.Log("this Go no longer verifies the trivial signature; the key is still refused")
+	}
+	if got := parseSignatureKeys(signingKeyID(identity)+"="+base64.StdEncoding.EncodeToString(identity), func(string) {}); len(got) != 0 {
+		t.Fatal("the identity point must not be trusted")
 	}
 }

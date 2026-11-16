@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -127,7 +129,10 @@ func decide(cmd []string, env map[string]string, t *timer) (planResult, bool) {
 	}
 	imageDigest := strings.TrimSpace(env["MNEMO_WARMUP_IMAGE_DIGEST"])
 
-	flagsBytes, err := os.ReadFile(filepath.Join(cacheDir, flagsFile))
+	flagsBytes, err := readBounded(filepath.Join(cacheDir, flagsFile), maxFlagsBytes)
+	if errors.Is(err, errTooBig) {
+		return planResult{}, false // not something fetch wrote: the Java planner decides
+	}
 	if err != nil || strings.TrimSpace(string(flagsBytes)) == "" {
 		// Nothing was fetched: the Java planner says exactly this, so it need not start a JVM to say it.
 		plain.notes = []string{"no archive was fetched into " + cacheDir + "; starting without one"}
@@ -137,7 +142,7 @@ func decide(cmd []string, env map[string]string, t *timer) (planResult, bool) {
 	if strings.ContainsAny(flag, " \n") || !strings.Contains(flag, "=") {
 		return planResult{}, false
 	}
-	manifestBytes, err := os.ReadFile(filepath.Join(cacheDir, manifestFile))
+	manifestBytes, err := readBounded(filepath.Join(cacheDir, manifestFile), maxManifestBytes)
 	if err != nil {
 		return planResult{}, false
 	}
@@ -196,7 +201,8 @@ func decide(cmd []string, env map[string]string, t *timer) (planResult, bool) {
 	}
 	// Signed archives (docs/adr/0013): with keys configured, the files on disk must still carry a valid signature. Anything that is not a
 	// clean pass goes to the Java planner, which repeats the check and says why in the log.
-	if entries := strings.TrimSpace(env[envSigningPublicKeys]); entries != "" {
+	// A variable that is present enforces, even when blank (see openRegistry): then nothing is trusted and the Java planner decides.
+	if entries, present := env[envSigningPublicKeys]; present {
 		if !signatureCoversFiles(entries, cacheDir, manifestBytes, fingerprint(m), archiveSum, info.Size()) {
 			return planResult{}, false
 		}
@@ -240,7 +246,7 @@ var archiveOptions = []string{"-XX:SharedArchiveFile=", "-XX:AOTCache=", "-XX:Ar
 // signatureCoversFiles reports whether a trusted key signed exactly these files: the statement is rebuilt from the manifest's
 // fingerprint, the SHA-256 of the manifest file's bytes, the archive's SHA-256 and size, and the repository the signature file names.
 func signatureCoversFiles(entries, cacheDir string, manifestBytes []byte, fp, archiveSum string, archiveSize int64) bool {
-	raw, err := os.ReadFile(filepath.Join(cacheDir, signatureFile))
+	raw, err := readBounded(filepath.Join(cacheDir, signatureFile), maxSignatureBytes)
 	if err != nil {
 		return false
 	}
@@ -257,6 +263,40 @@ func signatureCoversFiles(entries, cacheDir string, manifestBytes []byte, fp, ar
 		repository:  repository,
 	}
 	return parseSignatureKeys(entries, func(string) {}).verify(statement, keyID, signature) == verifyValid
+}
+
+// The files in the cache directory are written by fetch but live in a volume other processes may be able to write. They are small, so a
+// bigger one is not what fetch wrote, and reading it whole could exhaust memory on the application's start path. A file that is not
+// a regular file (a named pipe would block forever) is refused too.
+const (
+	maxFlagsBytes     = 4 << 10
+	maxSignatureBytes = 4 << 10
+	maxManifestBytes  = 8 << 20
+)
+
+var errTooBig = errors.New("larger than anything fetch writes")
+
+func readBounded(path string, max int64) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0) // never block on a named pipe
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errTooBig
+	}
+	data, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > max {
+		return nil, errTooBig
+	}
+	return data, nil
 }
 
 func runtimeFlag(cacheType, archivePath string) string {

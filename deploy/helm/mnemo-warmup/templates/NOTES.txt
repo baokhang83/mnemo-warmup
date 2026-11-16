@@ -24,3 +24,10 @@ pods that start earlier simply run without it.
 
 NOTE: store.pushSecret is empty, so the trainer pushes anonymously; most registries refuse that.
 {{- end }}
+{{- $signing := .Values.signing | default dict }}
+{{- if and $signing.keySecret (not (.Values.trainer.podSecurityContext | default dict).fsGroup) }}
+
+NOTE: signing.keySecret is set and trainer.podSecurityContext.fsGroup is not. The signing key file is readable by its owner (root) and its
+group only (mode 0440). If the application image runs as a non-root user, the trainer cannot read the key and publishes nothing (it never
+publishes unsigned); set trainer.podSecurityContext.fsGroup. A trainer known to run as non-root is refused at render without it.
+{{- end }}

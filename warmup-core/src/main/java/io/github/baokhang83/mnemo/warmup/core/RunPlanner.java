@@ -51,7 +51,7 @@ public final class RunPlanner {
     private Plan decide(List<String> command, Path cacheDir, Map<String, String> env, String imageDigest, List<String> notes, PhaseTimer timer) {
         Plan plain = new Plan(List.copyOf(command), false, notes);
         Path flagsFile = cacheDir.resolve(ArchiveFetcher.FLAGS_FILE);
-        String flags = readOrNull(flagsFile);
+        String flags = readOrNull(flagsFile, MAX_FLAGS_BYTES);
         if (flags == null || flags.isBlank()) {
             notes.add("no archive was fetched into " + cacheDir + "; starting without one");
             return plain;
@@ -64,6 +64,10 @@ public final class RunPlanner {
         Path manifestFile = cacheDir.resolve(ArchiveManifest.FILE_NAME);
         if (!Files.isRegularFile(manifestFile)) {
             notes.add("no manifest next to the flags; starting without an archive");
+            return plain;
+        }
+        if (sizeOf(manifestFile) > MAX_MANIFEST_BYTES) {
+            notes.add("the manifest next to the flags is larger than anything fetch writes; starting without an archive");
             return plain;
         }
         ArchiveManifest trained = ArchiveManifest.read(manifestFile);
@@ -87,8 +91,10 @@ public final class RunPlanner {
         }
         // Signed archives (docs/adr/0013): when the operator lists public keys, the files on disk must still carry a valid signature.
         // Anything able to write into this directory can swap the files, but cannot make a signature for the swap.
+        // A variable that is present enforces, even when blank: an empty value from a template or a typo must never switch the check off.
+        // A list with nothing usable then trusts nothing, which only costs the cache.
         String keys = env.get(ArchiveVerifier.ENV_PUBLIC_KEYS);
-        if (keys != null && !keys.isBlank()) {
+        if (keys != null) {
             String problem = signatureProblem(ArchiveVerifier.fromEntries(keys, notes::add), cacheDir, manifestFile, trained, archive, archiveSha256);
             timer.lap("signature");
             if (problem != null) {
@@ -151,9 +157,9 @@ public final class RunPlanner {
      */
     private static String signatureProblem(
             ArchiveVerifier verifier, Path cacheDir, Path manifestFile, ArchiveManifest trained, Path archive, String archiveSha256) {
-        String text = readOrNull(cacheDir.resolve(SignatureFile.FILE_NAME));
+        String text = readOrNull(cacheDir.resolve(SignatureFile.FILE_NAME), MAX_SIGNATURE_BYTES);
         if (text == null) {
-            return "there is no signature next to it";
+            return "there is no usable signature next to it";
         }
         SignatureFile.Contents contents;
         try {
@@ -184,9 +190,22 @@ public final class RunPlanner {
         }
     }
 
-    private static String readOrNull(Path file) {
+    // The files in the cache directory are written by fetch but live in a volume other processes may be able to write. They are small, so a
+    // bigger one is not what fetch wrote, and reading it whole could exhaust memory on the application's start path.
+    private static final int MAX_FLAGS_BYTES = 4 << 10;
+    private static final int MAX_SIGNATURE_BYTES = 4 << 10;
+    private static final long MAX_MANIFEST_BYTES = 8L << 20;
+
+    /** The file's text, or null when it is missing, is not a regular file, or is larger than {@code max} bytes. */
+    private static String readOrNull(Path file, int max) {
         try {
-            return Files.isRegularFile(file) ? Files.readString(file, StandardCharsets.UTF_8) : null;
+            if (!Files.isRegularFile(file)) {
+                return null;
+            }
+            try (var in = Files.newInputStream(file)) {
+                byte[] bytes = in.readNBytes(max + 1);
+                return bytes.length > max ? null : new String(bytes, StandardCharsets.UTF_8);
+            }
         } catch (IOException e) {
             return null;
         }

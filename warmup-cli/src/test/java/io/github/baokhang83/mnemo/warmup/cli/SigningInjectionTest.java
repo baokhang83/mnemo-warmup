@@ -73,15 +73,24 @@ class SigningInjectionTest {
     }
 
     @Test
-    void publicKeysGoToThePodsAndTheFetchAndNeverToTheTrainer() {
+    void publicKeysGoToThePodsAndTheFetchButTheTrainerOnlyGetsThemWithAKey() {
         var docs = ManifestStream.parse(inject(input("warmup.mnemo.io/signing-public-keys: \"" + KEYS + "\"")).yaml());
         assertEquals(KEYS, envOf(app(docs)).get(ArchiveVerifier.ENV_PUBLIC_KEYS), "run needs the keys");
         assertEquals("1", envOf(app(docs)).get("KEEP"), "the application's own env is untouched");
         var fetch = list(podOf(docs.get(0)), "initContainers").stream().filter(c -> "mnemo-warmup-fetch".equals(c.get("name"))).findFirst().orElseThrow();
         assertEquals(KEYS, envOf(fetch).get(ArchiveVerifier.ENV_PUBLIC_KEYS), "fetch needs the keys");
         var trainer = list(trainerPod(docs), "containers").get(0);
-        assertFalse(envOf(trainer).containsKey(ArchiveVerifier.ENV_PUBLIC_KEYS), "the trainer signs, it does not check");
+        assertFalse(envOf(trainer).containsKey(ArchiveVerifier.ENV_PUBLIC_KEYS), "without a signing key the trainer has nothing to check");
         assertEquals("1", envOf(trainer).get("KEEP"));
+    }
+
+    // the trainer re-publishes only what pods would refuse, and refuses to sign with a key that is not on their list
+    @Test
+    void theTrainerGetsThePodsTrustedListWhenItHasAKey() {
+        var docs = ManifestStream.parse(inject(input("warmup.mnemo.io/signing-public-keys: \"" + KEYS + "\"", "warmup.mnemo.io/signing-key-secret: demo-signing")).yaml());
+        var trainer = list(trainerPod(docs), "containers").get(0);
+        assertEquals(KEYS, envOf(trainer).get(ArchiveVerifier.ENV_PUBLIC_KEYS));
+        assertEquals("/var/run/mnemo-warmup/signing/signing.key", envOf(trainer).get(SigningKey.ENV_KEY_FILE));
     }
 
     @Test
@@ -96,7 +105,7 @@ class SigningInjectionTest {
         @SuppressWarnings("unchecked")
         var secret = (Map<String, Object>) volume.get("secret");
         assertEquals("demo-signing", secret.get("secretName"));
-        assertEquals(256, secret.get("defaultMode"), "0400: readable by its owner only");
+        assertEquals(288, secret.get("defaultMode"), "0440: readable by its owner and group, so a non-root trainer can read it through fsGroup");
 
         // not in the application pod's spec: no volume, mount or variable for the key in the app, the fetch container or the pod
         // (the annotation on the Deployment names the Secret, and that is only a name)
@@ -184,5 +193,46 @@ class SigningInjectionTest {
         assertTrue(secretOnly.contains("pods do not check signatures"), secretOnly);
         assertFalse(String.join("\n", inject(input()).notes()).contains("signing:"), "nothing about signing when it is off");
         assertNotNull(KEY);
+    }
+
+    // ---- the key file is readable by the trainer's user (0440, so the pod must give that user a group) ----
+
+    private static String withSecurityContext(String input, String podLevel, String containerLevel) {
+        String out = input;
+        if (podLevel != null) out = out.replace("    spec:\n      containers:", "    spec:\n      securityContext: " + podLevel + "\n      containers:");
+        if (containerLevel != null) out = out.replace("command: [java, -jar, /app/app.jar]", "command: [java, -jar, /app/app.jar]\n          securityContext: " + containerLevel);
+        return out;
+    }
+
+    @Test
+    void aNonRootTrainerWithoutAnFsGroupIsRefusedAtPreview() {
+        String keyed = input("warmup.mnemo.io/signing-key-secret: demo-signing");
+        for (String[] scopes : new String[][] {{null, "{runAsUser: 10001}"}, {"{runAsUser: 10001}", null}, {null, "{runAsNonRoot: true}"}, {"{runAsNonRoot: true}", null}}) {
+            var ex = assertThrows(IllegalArgumentException.class, () -> inject(withSecurityContext(keyed, scopes[0], scopes[1])), String.join(" / ", String.valueOf(scopes[0]), String.valueOf(scopes[1])));
+            assertTrue(ex.getMessage().contains("fsGroup") && ex.getMessage().contains("0440"), ex.getMessage());
+        }
+    }
+
+    @Test
+    void aNonRootTrainerWithAnFsGroupIsAcceptedAndTheGeneratedPodKeepsIt() {
+        String keyed = withSecurityContext(input("warmup.mnemo.io/signing-key-secret: demo-signing"), "{runAsUser: 10001, fsGroup: 10001}", null);
+        var docs = ManifestStream.parse(inject(keyed).yaml());
+        @SuppressWarnings("unchecked")
+        var sc = (Map<String, Object>) trainerPod(docs).get("securityContext");
+        assertEquals(10001, sc.get("fsGroup"), "the generated trainer pod must carry the group that can read the key");
+    }
+
+    @Test
+    void aRootTrainerNeedsNoFsGroupAndAnUnknownUserGetsANote() {
+        String root = withSecurityContext(input("warmup.mnemo.io/signing-key-secret: demo-signing"), null, "{runAsUser: 0}");
+        assertFalse(String.join("\n", inject(root).notes()).contains("fsGroup"), "a root trainer reads the key");
+        String unknown = String.join("\n", inject(input("warmup.mnemo.io/signing-key-secret: demo-signing")).notes());
+        assertTrue(unknown.contains("decided by the image") && unknown.contains("fsGroup"), unknown);
+        assertFalse(String.join("\n", inject(input("warmup.mnemo.io/signing-key-secret: demo-signing")).notes()).isEmpty());
+    }
+
+    @Test
+    void withoutASigningKeyNoGroupIsRequired() {
+        assertNotNull(inject(withSecurityContext(input(), null, "{runAsUser: 10001}")));
     }
 }

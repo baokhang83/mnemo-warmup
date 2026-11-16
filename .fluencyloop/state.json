@@ -3,7 +3,7 @@
   "feature": "signed-archives-stage-a",
   "branch": "feature/signed-archives-stage-a",
   "stage": "build",
-  "last_session": "005-slice-5-the-go-launcher-verifies-like-java-does",
+  "last_session": "007-review-fixes-for-the-independent-review-of-pr-148",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

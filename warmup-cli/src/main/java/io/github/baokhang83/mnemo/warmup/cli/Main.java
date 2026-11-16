@@ -257,27 +257,48 @@ public class Main implements Runnable {
 
     /**
      * Pull side. A key list in the environment makes a valid signature mandatory: archives that are unsigned, signed by another key
-     * or altered are treated as missing. A list in which nothing is usable therefore refuses everything (never "checks nothing"), so a
-     * typo cannot switch the check off. Without the variable, archives are accepted on their digests alone.
+     * or altered are treated as missing. A variable that is present enforces even when it is blank, and a list in which nothing is
+     * usable trusts nothing, so a typo or an empty value from a template can never switch the check off; it only costs the cache.
+     * Without the variable, archives are accepted on their digests alone.
      */
     static OciArchiveStore withSignatureCheck(OciArchiveStore store, java.util.Map<String, String> env, java.util.function.Consumer<String> note) {
         String entries = env.get(ENV_SIGNING_PUBLIC_KEYS);
-        return entries == null || entries.isBlank() ? store : store.withVerifier(ArchiveVerifier.fromEntries(entries, note));
+        if (entries == null) {
+            return store;
+        }
+        ArchiveVerifier verifier = ArchiveVerifier.fromEntries(entries, note);
+        if (verifier.isEmpty()) {
+            note.accept(ENV_SIGNING_PUBLIC_KEYS + " lists no usable key, so every archive will be refused");
+        }
+        return store.withVerifier(verifier);
     }
 
     /**
-     * Publish side. With a key file in the environment the store signs everything it publishes, and the trainer also treats an entry
-     * that this key did not sign as incomplete (so it is re-published after a first rollout or a rotation). If the file cannot be used
-     * this throws: asked to sign, the trainer refuses to publish unsigned.
+     * Publish side. With a key file in the environment the store signs everything it publishes. If the file is named but cannot be used
+     * (blank, missing, unreadable, malformed) this throws: asked to sign, the trainer refuses to publish unsigned.
+     *
+     * <p>The trainer also checks what it finds against the pods' trusted list, when that list is given: an entry any trusted key signed is
+     * complete, so two trainers that use different trusted keys never overwrite each other, and a rotation moves to the new key only
+     * once the old one is dropped from the list. If the trainer's own key is not on that list, every archive it published would be
+     * refused by every pod, so it refuses to run. Without a list it trusts only its own key.
      */
     static OciArchiveStore withSigning(OciArchiveStore store, java.util.Map<String, String> env, boolean republishUnsigned) {
         String file = env.get(ENV_SIGNING_KEY_FILE);
-        if (file == null || file.isBlank()) {
+        if (file == null) {
             return store;
         }
+        if (file.isBlank()) {
+            throw new IllegalArgumentException(ENV_SIGNING_KEY_FILE + " is set but empty; refusing to publish unsigned archives");
+        }
         SigningKey key = SigningKey.fromFile(Path.of(file));
+        String listed = env.get(ENV_SIGNING_PUBLIC_KEYS);
+        ArchiveVerifier trusted = ArchiveVerifier.fromEntries(listed != null ? listed : key.publicKeyEntry(), n -> { });
+        if (listed != null && !trusted.trusts(key.keyId())) {
+            throw new IllegalArgumentException("the signing key " + key.keyId() + " is not in " + ENV_SIGNING_PUBLIC_KEYS
+                    + ": every pod would refuse the archives it publishes. Add its public key to the list, or sign with a listed key");
+        }
         store.withSigningKey(key);
-        return republishUnsigned ? store.withVerifier(ArchiveVerifier.fromEntries(key.publicKeyEntry(), n -> { })) : store;
+        return republishUnsigned ? store.withVerifier(trusted) : store;
     }
 
     @Command(name = "keygen",
@@ -334,7 +355,9 @@ public class Main implements Runnable {
                 Files.createFile(file, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
                         java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")));
             } catch (UnsupportedOperationException notPosix) {
-                Files.createFile(file); // a file system without POSIX permissions: nothing finer is possible
+                // Fail closed: a file created with inherited permissions could be readable by other users, and the promise is owner-only.
+                throw new java.io.IOException("this file system cannot restrict a file to its owner; create the key on a POSIX file system "
+                        + "(Linux or macOS), or in a directory only you can read, with --out");
             }
             Files.writeString(file, content, java.nio.charset.StandardCharsets.UTF_8);
         }

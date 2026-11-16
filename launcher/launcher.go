@@ -166,7 +166,7 @@ func (l launcher) jarIsolated(args []string) int {
 		return 2
 	}
 	allowed := map[string]bool{
-		"POD_NAMESPACE": true, "POD_SERVICE_ACCOUNT": true,
+		"POD_NAMESPACE": true, "POD_SERVICE_ACCOUNT": true, "POD_NAME": true, "POD_UID": true, // downward API: owns training pods
 		"KUBERNETES_SERVICE_HOST": true, "KUBERNETES_SERVICE_PORT": true,
 		"MNEMO_WARMUP_SIGNING_KEY_FILE": true, "MNEMO_WARMUP_SIGNING_PUBLIC_KEYS": true,
 		"MNEMO_WARMUP_REGISTRY_AUTH": true, "MNEMO_WARMUP_AWS_ROLE_ARN": true,

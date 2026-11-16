@@ -308,7 +308,7 @@ func TestIsolatedJarDropsJvmAndLoaderInjectionEnvironment(t *testing.T) {
 		"JAVA_TOOL_OPTIONS=-javaagent:/untrusted.jar", "JDK_JAVA_OPTIONS=-Xmx1g", "_JAVA_OPTIONS=-Xbootclasspath/a:/evil.jar",
 		"LD_PRELOAD=/evil.so", "LD_LIBRARY_PATH=/evil", "PATH=/untrusted", "JAVA_HOME=/untrusted",
 		"MNEMO_TARGET_JAVA_TOOL_OPTIONS=-Xmx512m", "MNEMO_WARMUP_SIGNING_KEY_FILE=/secret/signing.key",
-		"MNEMO_WARMUP_SIGNING_PUBLIC_KEYS=key", "POD_NAMESPACE=test", "KUBERNETES_SERVICE_HOST=api",
+		"MNEMO_WARMUP_SIGNING_PUBLIC_KEYS=key", "POD_NAMESPACE=test", "POD_NAME=coordinator", "POD_UID=uid-1", "KUBERNETES_SERVICE_HOST=api",
 	}
 	var gotEnv, gotArgv []string
 	h.l.exec = func(path string, argv, env []string) error {
@@ -325,7 +325,7 @@ func TestIsolatedJarDropsJvmAndLoaderInjectionEnvironment(t *testing.T) {
 	if !reflect.DeepEqual(gotArgv, []string{"/trusted/bin/java", "-jar", "/tools/mnemo-warmup.jar", "coordinate-isolated", "--store", "oci://example/team/app"}) {
 		t.Fatalf("unexpected argv: %q", gotArgv)
 	}
-	want := []string{"PATH=/usr/bin:/bin", "MNEMO_TARGET_JAVA_TOOL_OPTIONS=-Xmx512m", "MNEMO_WARMUP_SIGNING_KEY_FILE=/secret/signing.key", "MNEMO_WARMUP_SIGNING_PUBLIC_KEYS=key", "POD_NAMESPACE=test", "KUBERNETES_SERVICE_HOST=api"}
+	want := []string{"PATH=/usr/bin:/bin", "MNEMO_TARGET_JAVA_TOOL_OPTIONS=-Xmx512m", "MNEMO_WARMUP_SIGNING_KEY_FILE=/secret/signing.key", "MNEMO_WARMUP_SIGNING_PUBLIC_KEYS=key", "POD_NAMESPACE=test", "POD_NAME=coordinator", "POD_UID=uid-1", "KUBERNETES_SERVICE_HOST=api"}
 	if !reflect.DeepEqual(gotEnv, want) {
 		t.Fatalf("unexpected environment: %q", gotEnv)
 	}

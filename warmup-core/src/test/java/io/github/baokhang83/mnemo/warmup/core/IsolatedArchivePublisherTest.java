@@ -80,4 +80,26 @@ class IsolatedArchivePublisherTest {
         assertEquals(TrainingOrchestrator.Status.ALREADY_STORED, result.status());
         assertEquals(null, store.published);
     }
+
+    @Test void aNamedPipeTimesOutInsteadOfBlockingThePublisher() throws Exception {
+        Path fifo = tmp.resolve("app.jsa");
+        org.junit.jupiter.api.Assumptions.assumeTrue(new ProcessBuilder("mkfifo", fifo.toString()).start().waitFor() == 0, "mkfifo unavailable");
+        var publisher = new IsolatedArchivePublisher(200, 1_000);
+        long start = System.nanoTime();
+        var ex = org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class,
+                () -> publisher.copyBounded(fifo, java.io.OutputStream.nullOutputStream(), 100, "training output"));
+        org.junit.jupiter.api.Assertions.assertTrue(ex.getMessage().contains("did not open within the time limit"), ex.getMessage());
+        org.junit.jupiter.api.Assertions.assertTrue(System.nanoTime() - start < 5_000_000_000L, "returned promptly");
+    }
+
+    @Test void boundedCopyRefusesSymlinksAndOversizedFiles() throws Exception {
+        var publisher = new IsolatedArchivePublisher(1_000, 1_000);
+        Path file = Files.writeString(tmp.resolve("data"), "0123456789");
+        var out = new java.io.ByteArrayOutputStream();
+        assertEquals(10, publisher.copyBounded(file, out, 10, "x"));
+        assertEquals("0123456789", out.toString(java.nio.charset.StandardCharsets.UTF_8));
+        org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class, () -> publisher.copyBounded(file, java.io.OutputStream.nullOutputStream(), 9, "x"));
+        Path link = Files.createSymbolicLink(tmp.resolve("link"), file);
+        org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class, () -> publisher.copyBounded(link, java.io.OutputStream.nullOutputStream(), 100, "x"));
+    }
 }

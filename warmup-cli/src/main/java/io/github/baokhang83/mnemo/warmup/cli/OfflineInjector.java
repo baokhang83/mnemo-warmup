@@ -298,12 +298,15 @@ final class OfflineInjector {
         }
         return marked;
     }
-    private record IsolatedConfig(String publisher, String java, String claim, long group) {}
+    private record IsolatedConfig(String publisher, String java, String claim, long group, List<String> allowedSecrets) {}
+    private static final String ALLOWED_SECRETS = "training-allowed-secrets";
+    /** The coordinator's private copy holds at most --max-archive-bytes (1 GiB by default), plus the JVM's own temporary files. */
+    private static final String PUBLISHER_TMP_LIMIT = "1280Mi";
 
     private static IsolatedConfig isolatedConfig(Map<String, Object> annotations, WorkloadDiscovery.Workload w, String tools) {
         Object enabled = annotations.get(WorkloadDiscovery.PREFIX + "isolated-training");
         if (enabled == null || "false".equals(enabled)) {
-            for (String key : List.of("publisher-image", "publisher-java", "handoff-claim", "handoff-fs-group"))
+            for (String key : List.of("publisher-image", "publisher-java", "handoff-claim", "handoff-fs-group", ALLOWED_SECRETS))
                 if (annotations.containsKey(WorkloadDiscovery.PREFIX + key))
                     throw new IllegalArgumentException(key + " is only valid with isolated-training: \"true\"");
             return null;
@@ -322,13 +325,16 @@ final class OfflineInjector {
         try { group = Long.parseLong(String.valueOf(annotations.getOrDefault(WorkloadDiscovery.PREFIX + "handoff-fs-group", "65532"))); }
         catch (NumberFormatException e) { throw new IllegalArgumentException("handoff-fs-group must be a positive integer", e); }
         if (group <= 0 || group > Integer.MAX_VALUE) throw new IllegalArgumentException("handoff-fs-group must be a positive integer");
-        return new IsolatedConfig(publisher, java, claim, group);
+        List<String> allowed = new ArrayList<>();
+        Object listed = annotations.get(WorkloadDiscovery.PREFIX + ALLOWED_SECRETS);
+        if (listed != null) for (String name : String.valueOf(listed).split(",")) if (!name.isBlank()) allowed.add(name.trim());
+        return new IsolatedConfig(publisher, java, claim, group, List.copyOf(allowed));
     }
 
     private static List<Map<String, Object>> isolatedTrainer(WorkloadDiscovery.Workload w, Map<String, Object> pod,
             Map<String, Object> app, List<Object> common, String tools, IsolatedConfig config) {
         if (app.containsKey("envFrom")) throw new IllegalArgumentException("isolated training requires explicit JVM option env entries; envFrom is not supported");
-        String name = trainerName(w.name()), trainingName = name + "-training", templateName = name + "-template";
+        String name = trainerName(w.name()), trainingName = name + "-training";
         Map<String, Object> labels = obj(OWNER, w.name());
         Map<String, Object> metadata = obj("name", name, "namespace", w.namespace(), "labels", labels, "annotations", obj(MARKER, "generated"));
         List<Object> buildArgs = new ArrayList<>(List.of("jar", "build", "--jar", w.jar(), "--work-dir", "/mnemo-handoff", "--group-readable-output", "--cache-type", "auto", "--exit-mode", w.exitMode()));
@@ -346,14 +352,27 @@ final class OfflineInjector {
         security.put("fsGroup", config.group()); trainingPod.put("securityContext", security);
         var protectedSecrets = new java.util.HashSet<String>(); protectedSecrets.add(w.signingKeySecret());
         if (w.pushSecret() != null) protectedSecrets.add(w.pushSecret());
-        IsolatedTrainingPodFactory.build(trainingPod, w.namespace(), "mnemo-train-check", trainingName, config.claim(), "mnemo-run-check", protectedSecrets, 1800);
+        try {
+            IsolatedTrainingPodFactory.build(trainingPod, w.namespace(), "mnemo-train-check", trainingName, config.claim(), "mnemo-run-check",
+                    protectedSecrets, new java.util.HashSet<>(config.allowedSecrets()), 1800, null);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(e.getMessage().contains("allowed training Secrets")
+                    ? e.getMessage() + "; list the Secrets the application needs in " + WorkloadDiscovery.PREFIX + ALLOWED_SECRETS : e.getMessage(), e);
+        }
+        String trainingYaml = ManifestStream.render(List.of(trainingPod));
+        String templateSha = sha256(trainingYaml);
+        // immutable, so named after its content: a changed template is a new ConfigMap, and the coordinator checks the digest anyway
+        String templateName = name + "-template-" + templateSha.substring(0, 10);
         Map<String, Object> template = obj("apiVersion", "v1", "kind", "ConfigMap", "metadata", obj("name", templateName, "namespace", w.namespace(), "labels", labels, "annotations", obj(MARKER, "generated")),
-                "data", obj("training.yaml", ManifestStream.render(List.of(trainingPod))));
+                "immutable", true, "data", obj("training.yaml", trainingYaml));
         List<Object> args = new ArrayList<>(List.of("jar-isolated", config.java(), "coordinate-isolated")); args.addAll(common);
-        args.addAll(List.of("--training-template", "/etc/mnemo-training/training.yaml", "--training-service-account", trainingName,
+        args.addAll(List.of("--training-template", "/etc/mnemo-training/training.yaml", "--training-template-sha256", templateSha, "--training-service-account", trainingName,
                 "--handoff-claim", config.claim(), "--handoff-root", "/mnemo-shared", "--signing-secret-name", w.signingKeySecret(), "--training-timeout-seconds", "1800"));
         if (w.pushSecret() != null) args.addAll(List.of("--push-secret-name", w.pushSecret()));
+        for (String secret : config.allowedSecrets()) args.add("--allowed-secret=" + secret);
         List<Object> env = new ArrayList<>(List.of(obj("name", "POD_NAMESPACE", "valueFrom", obj("fieldRef", obj("fieldPath", "metadata.namespace"))),
+                obj("name", "POD_NAME", "valueFrom", obj("fieldRef", obj("fieldPath", "metadata.name"))),
+                obj("name", "POD_UID", "valueFrom", obj("fieldRef", obj("fieldPath", "metadata.uid"))),
                 obj("name", SigningKey.ENV_KEY_FILE, "value", SIGNING_KEY_PATH), publicKeysEnv(w)));
         if (app.get("env") instanceof List<?> entries) for (Object raw : entries) {
             Map<String, Object> entry = map(raw, "env");
@@ -362,14 +381,13 @@ final class OfflineInjector {
             }
         }
         List<Object> volumes = new ArrayList<>(List.of(toolsVolume(false, tools), obj("name", "mnemo-work", "emptyDir", obj()),
-                obj("name", "mnemo-publisher-tmp", "emptyDir", obj()), obj("name", "mnemo-shared", "persistentVolumeClaim", obj("claimName", config.claim())),
+                obj("name", "mnemo-publisher-tmp", "emptyDir", obj("sizeLimit", PUBLISHER_TMP_LIMIT)), obj("name", "mnemo-shared", "persistentVolumeClaim", obj("claimName", config.claim())),
                 obj("name", "mnemo-template", "configMap", obj("name", templateName)), obj("name", SIGNING_VOLUME, "secret", obj("secretName", w.signingKeySecret(), "defaultMode", 0440, "items", List.of(obj("key", "signing.key", "path", "signing.key"))))));
         List<Object> mounts = new ArrayList<>(List.of(mount("mnemo-tools", "/mnemo-tools", true), mount("mnemo-work", "/tmp/mnemo-warmup", false),
                 mount("mnemo-publisher-tmp", "/tmp", false), mount("mnemo-shared", "/mnemo-shared", false), mount("mnemo-template", "/etc/mnemo-training", true), mount(SIGNING_VOLUME, SIGNING_KEY_DIR, true)));
         if (w.pushSecret() != null) { env.add(obj("name", "MNEMO_WARMUP_REGISTRY_AUTH", "value", "/var/run/mnemo-warmup/registry/config.json")); volumes.add(secretVolume("mnemo-registry-push", w.pushSecret())); mounts.add(mount("mnemo-registry-push", "/var/run/mnemo-warmup/registry", true)); }
         Map<String, Object> publisher = obj("name", "publisher", "image", config.publisher(), "command", List.of(LAUNCHER), "args", args, "env", env, "volumeMounts", mounts,
                 "securityContext", obj("runAsNonRoot", true, "runAsUser", 65532, "allowPrivilegeEscalation", false, "readOnlyRootFilesystem", true, "capabilities", obj("drop", List.of("ALL")), "seccompProfile", obj("type", "RuntimeDefault")));
-        copyIfPresent(app, publisher, "workingDir");
         Map<String, Object> publisherPod = obj("restartPolicy", "Never", "serviceAccountName", name, "automountServiceAccountToken", true,
                 "securityContext", obj("fsGroup", config.group()), "initContainers", List.of(install(tools)), "containers", List.of(publisher), "volumes", volumes);
         copyIfPresent(pod, publisherPod, "imagePullSecrets");
@@ -448,6 +466,8 @@ final class OfflineInjector {
                 + config.claim() + " (fsGroup " + config.group() + "), which must already exist and support POSIX group permissions",
             "  isolation: publisher " + config.publisher() + " must contain the application JAR at " + w.jar() + " and the exact target JDK at " + config.java(),
             "  isolation: the coordinator can create pods in " + w.namespace() + "; restrict the namespace with admission policy (see the chart README)",
+            "  isolation: training may reference only these Secrets: " + (config.allowedSecrets().isEmpty() ? "none" : config.allowedSecrets())
+                + "; it runs with runAsNonRoot, so the image must not run as root (or set runAsUser)",
             "  isolation: JAVA_TOOL_OPTIONS/JDK_JAVA_OPTIONS set by the image itself are not visible offline; set them as container env if the target uses them",
             "  isolation: a signature proves which publisher signed the bytes, not that the application that trained them is benign");
     }
@@ -500,13 +520,21 @@ final class OfflineInjector {
         Object annotations = m.get("annotations");
         if (!(labels instanceof Map<?, ?> l) || !(l.get(OWNER) instanceof String owner)
                 || !(annotations instanceof Map<?, ?> a) || !"generated".equals(a.get(MARKER))) return false;
-        if (!(trainerName(owner).equals(m.get("name")) || (trainerName(owner) + "-training").equals(m.get("name")) || (trainerName(owner) + "-template").equals(m.get("name"))) || !List.of("ServiceAccount", "Role", "RoleBinding", "CronJob", "ConfigMap").contains(doc.get("kind")))
+        String generatedName = String.valueOf(m.get("name"));
+        boolean known = trainerName(owner).equals(generatedName) || (trainerName(owner) + "-training").equals(generatedName)
+                || ("ConfigMap".equals(doc.get("kind")) && generatedName.matches(Pattern.quote(trainerName(owner) + "-template-") + "[0-9a-f]{10}"));
+        if (!known || !List.of("ServiceAccount", "Role", "RoleBinding", "CronJob", "ConfigMap").contains(doc.get("kind")))
             throw new IllegalArgumentException("invalid generated resource marker");
         Map<String, Object> annotationsMap = map(annotations, "annotations");
         Object expected = annotationsMap.remove(CHECKSUM);
         String actual = checksum(doc);
         if (!(expected instanceof String) || !expected.equals(actual)) throw new IllegalArgumentException("generated resource was changed: " + doc.get("kind") + "/" + m.get("name"));
         return true;
+    }
+    private static String sha256(String text) {
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
     }
     private static String checksum(Map<String, Object> resource) {
         try {

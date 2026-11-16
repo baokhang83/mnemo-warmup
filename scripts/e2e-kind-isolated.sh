@@ -200,6 +200,22 @@ if has "$log" "publisher credential Secret"; then ok "a template that mounts the
 if ! has "$log" "retained handoff" && [ -z "$(handoff_dirs)" ]; then ok "the refusal comes before any handoff directory exists"; else fail "a refused template left a handoff: $(handoff_dirs)"; fi
 if [ "$(training_pods "$WORK/pods-forbidden.jsonl")" = 0 ]; then ok "and no training pod was created"; else fail "a training pod was created for a forbidden template"; fi
 
+# ---- B2. any Secret that is not explicitly allowed is refused too (a leftover token Secret, for example) ----
+k -n "$NS" create secret generic leftover-token --from-literal=token=x >/dev/null || die "cannot create the unlisted Secret"
+sed 's/secretName: sign-a/secretName: leftover-token/' "$WORK/forbidden.yaml" >"$WORK/unlisted.yaml"
+values "$WORK/unlisted.yaml" || { cat "$WORK/helm.log"; die "helm upgrade (unlisted Secret) failed"; }
+watch_training "$WORK/pods-unlisted.jsonl"
+run_job c0b failed 300s || die "a coordinator with an unlisted training Secret did not fail"
+stop_watch
+log=$(k -n "$NS" logs job/c0b -c publisher 2>&1)
+if has "$log" "not in the allowed training Secrets"; then ok "a Secret that is not in allowedSecrets is refused"; else fail "c0b log: $log"; fi
+if [ "$(training_pods "$WORK/pods-unlisted.jsonl")" = 0 ]; then ok "and no training pod was created"; else fail "a training pod was created for an unlisted Secret"; fi
+
+# ---- B3. the training template cannot be changed in place ----
+cm=$(k -n "$NS" get configmap -o name | grep training-template | head -1)
+if out=$(k -n "$NS" patch "$cm" --type merge -p '{"data":{"training.yaml":"containers: []"}}' 2>&1); then fail "the template ConfigMap could be changed: $out"
+elif has "$out" "immutable"; then ok "the template ConfigMap is immutable ($cm)"; else fail "unexpected patch error: $out"; fi
+
 # ---- C. a training pod that cannot finish in time: deleted, run failed, handoff kept ----
 TRAIN_TIMEOUT=3 values "" || { cat "$WORK/helm.log"; die "helm upgrade (timeout) failed"; }
 watch_training "$WORK/pods-timeout.jsonl"
@@ -220,7 +236,8 @@ stop_watch
 log=$(k -n "$NS" logs job/c2 -c publisher 2>&1)
 if has "$log" "coordinate-isolated: TRAINED" || has "$log" "coordinate-isolated: PUBLISHED"; then ok "the coordinator published the archive: $(grep 'coordinate-isolated:' <<<"$log" | head -1)"; else fail "c2 log: $log"; fi
 [ "$(training_pods "$WORK/pods-train.jsonl")" = 1 ] && ok "exactly one training pod was created" || fail "training pods created: $(training_pods "$WORK/pods-train.jsonl")"
-python3 - "$WORK/pods-train.jsonl" "$(k -n "$NS" get cronjob "$(cronjob)" -o jsonpath='{.spec.jobTemplate.spec.template.spec.serviceAccountName}')" <<'PY' >"$WORK/checks.txt"
+python3 - "$WORK/pods-train.jsonl" "$(k -n "$NS" get cronjob "$(cronjob)" -o jsonpath='{.spec.jobTemplate.spec.template.spec.serviceAccountName}')" \
+  "$(k -n "$NS" get pods -l job-name=c2 -o jsonpath='{.items[0].metadata.name}/{.items[0].metadata.uid}')" <<'PY' >"$WORK/checks.txt"
 import json, sys
 pods = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
 coordinator_sa = sys.argv[2]
@@ -234,6 +251,9 @@ for p in last.values():
     c = spec["containers"][0]
     print("uid", (c.get("securityContext") or {}).get("runAsUser") == 10001, (c.get("securityContext") or {}).get("runAsUser"))
     print("fsgroup", (spec.get("securityContext") or {}).get("fsGroup") == 65532, (spec.get("securityContext") or {}).get("fsGroup"))
+    print("label", p["metadata"].get("labels", {}).get("warmup.mnemo.io/role") == "training", "-")
+    owners = p["metadata"].get("ownerReferences", [])
+    print("owner", len(owners) == 1 and owners[0]["kind"] == "Pod" and owners[0]["name"] + "/" + owners[0]["uid"] == sys.argv[3], owners[0]["name"] if owners else "none")
     print("handoff", any(m.get("subPath", "").startswith("mnemo-run-") for m in c.get("volumeMounts", [])) and "warmup.mnemo.io/handoff" in p["metadata"].get("annotations", {}), "-")
 PY
 while read -r what pass detail; do
@@ -244,10 +264,23 @@ while read -r what pass detail; do
     uid) msg="the training container runs as UID $detail (the coordinator runs as 65532)" ;;
     fsgroup) msg="the training pod shares the handoff group $detail" ;;
     handoff) msg="it mounts only its per-run handoff subPath and is annotated with it" ;;
+    label) msg="it carries the warmup.mnemo.io/role=training label" ;;
+    owner) msg="it is owned by the coordinator pod ($detail)" ;;
   esac
   if [ "$pass" = True ]; then ok "$msg"; else fail "$msg ($detail)"; fi
 done <"$WORK/checks.txt"
 [ -s "$WORK/checks.txt" ] || fail "no training pod was observed"
+# The real training pod, as created, against Pod Security "restricted": a server-side dry run in a namespace that enforces it.
+k create namespace iso-restricted >/dev/null && k label namespace iso-restricted pod-security.kubernetes.io/enforce=restricted >/dev/null
+k -n iso-restricted create serviceaccount "$(k -n "$NS" get sa -o name | grep training | sed 's|.*/||')" >/dev/null
+python3 - "$WORK/pods-train.jsonl" >"$WORK/restricted-pod.json" <<'PY2'
+import json, sys
+pod = [json.loads(l) for l in open(sys.argv[1]) if l.strip()][-1]
+meta = pod["metadata"]
+print(json.dumps({"apiVersion": "v1", "kind": "Pod", "metadata": {"name": meta["name"], "namespace": "iso-restricted", "labels": meta.get("labels", {})},
+                  "spec": {k: v for k, v in pod["spec"].items() if k not in ("nodeName", "priority", "preemptionPolicy")}}))
+PY2
+if out=$(k apply --dry-run=server -f "$WORK/restricted-pod.json" 2>&1); then ok "the training pod is admitted under Pod Security restricted"; else fail "restricted admission: $out"; fi
 if [ "$(handoff_dirs)" = "$retained" ]; then ok "the successful run removed its handoff; only the earlier retained one is left"; else fail "handoff dirs: $(handoff_dirs | tr '\n' ' ') (retained before: $retained)"; fi
 if [ -z "$(k -n "$NS" get leases -o name 2>/dev/null | grep mnemo-warmup || true)" ]; then ok "the Lease was released"; else fail "a Lease was left behind"; fi
 

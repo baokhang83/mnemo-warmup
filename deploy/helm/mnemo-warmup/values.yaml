@@ -78,6 +78,8 @@ trainer:
     trainingServiceAccount: ""    # optional existing unprivileged SA; otherwise create a dedicated one
     targetJavaToolOptions: ""     # target values as data; never applied to the publisher JVM
     targetJdkJavaOptions: ""
+    allowedSecrets: []             # the only Secrets the training pod may reference (volumes, env, envFrom); others are refused
+    publisherTmpSizeLimit: 1280Mi  # coordinator's private copy: at most 1 GiB of archive plus JVM temporary files
   enabled: true
   schedule: "*/10 * * * *"    # the first archive can wait up to one interval
   suspend: false

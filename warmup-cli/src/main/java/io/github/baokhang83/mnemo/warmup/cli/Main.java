@@ -981,6 +981,11 @@ public class Main implements Runnable {
         @Option(names = "--store", required = true) String store;
         @Option(names = "--registry-auth") Path registryAuth;
         @Option(names = "--training-template", required = true) Path trainingTemplate;
+        @Option(names = "--training-template-sha256", required = true,
+                description = "SHA-256 of the template file, set where the template is rendered: a changed ConfigMap is refused.")
+        String trainingTemplateSha256;
+        @Option(names = "--allowed-secret", description = "A Secret the training pod may reference (repeatable); any other is refused.")
+        List<String> allowedSecrets = new java.util.ArrayList<>();
         @Option(names = "--training-service-account", required = true) String trainingServiceAccount;
         @Option(names = "--handoff-claim", required = true) String claim;
         @Option(names = "--handoff-root", required = true) Path claimRoot;
@@ -994,10 +999,23 @@ public class Main implements Runnable {
         @Option(names = "--lease-seconds", defaultValue = "1800") long leaseSeconds;
         @Option(names = "--max-archive-bytes", defaultValue = "1073741824") long maxArchiveBytes;
 
-        static java.util.Map<String, Object> readTemplate(Path path) throws java.io.IOException {
+        /**
+         * Whoever can write the template's ConfigMap would decide what this pod-creating coordinator creates, and ConfigMap write access
+         * is often granted more widely than pod creation. The digest comes from the CronJob, whose edit needs about pod-create power.
+         */
+        static java.util.Map<String, Object> readTemplate(Path path, String expectedSha256) throws java.io.IOException {
+            if (expectedSha256 == null || !expectedSha256.matches("[0-9a-f]{64}"))
+                throw new IllegalArgumentException("--training-template-sha256 must be a lowercase hex SHA-256");
             try (var in = Files.newInputStream(path)) {
                 byte[] bytes = in.readNBytes((1 << 20) + 1);
                 if (bytes.length > (1 << 20)) throw new IllegalArgumentException("training template is too large");
+                String actual;
+                try {
+                    actual = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
+                } catch (java.security.NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
+                if (!java.security.MessageDigest.isEqual(actual.getBytes(java.nio.charset.StandardCharsets.US_ASCII),
+                        expectedSha256.getBytes(java.nio.charset.StandardCharsets.US_ASCII)))
+                    throw new IllegalArgumentException("training template does not match --training-template-sha256 (was its ConfigMap changed?)");
                 var documents = ManifestStream.parse(new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
                 if (documents.size() != 1) throw new IllegalArgumentException("training template must contain one pod spec");
                 return documents.get(0);
@@ -1016,6 +1034,18 @@ public class Main implements Runnable {
                 names.add(push);
             }
             return java.util.Set.copyOf(names);
+        }
+
+        static java.util.Set<String> allowedSecretNames(List<String> names) {
+            for (String name : names) if (!validSecretName(name)) throw new IllegalArgumentException("invalid allowed Secret name: " + name);
+            return java.util.Set.copyOf(names);
+        }
+
+        /** The coordinator's own pod, from the downward API, to own the training pods it creates; null outside such a pod. */
+        static IsolatedTrainingPodFactory.Owner owner(java.util.Map<String, String> env) {
+            String name = env.get("POD_NAME"), uid = env.get("POD_UID");
+            if ((name == null || name.isBlank()) && (uid == null || uid.isBlank())) return null;
+            return new IsolatedTrainingPodFactory.Owner(name, uid);
         }
 
         static void requireDistinctServiceAccounts(String coordinator, String training) {
@@ -1062,18 +1092,20 @@ public class Main implements Runnable {
                 ArchiveManifest live = ArchiveManifest.describe(app, jdk, strategy, opts.jvmArgs,
                         IsolatedPublish.targetJavaEnvironment(System.getenv()), imageDigest);
                 var target = withSigning(openStore(store, registryAuth, plainHttp, storeTimeout), System.getenv(), true);
-                var template = readTemplate(trainingTemplate);
+                var template = readTemplate(trainingTemplate, trainingTemplateSha256);
                 requireMatchingHandoffGroup(claimRoot, template);
                 var protectedSecrets = protectedSecretNames(signingSecret, pushSecret,
                         registryAuth != null || System.getenv("MNEMO_WARMUP_REGISTRY_AUTH") != null);
+                var allowed = allowedSecretNames(allowedSecrets);
+                var owner = owner(System.getenv());
                 // Refuse a bad template before a handoff exists: a refusal later would look like an uncertain run.
                 IsolatedTrainingPodFactory.build(template, namespace, "mnemo-train-check", trainingServiceAccount, claim,
-                        "mnemo-run-check", protectedSecrets, trainingTimeout);
+                        "mnemo-run-check", protectedSecrets, allowed, trainingTimeout, owner);
                 var runner = IsolatedTrainingPodRunner.inCluster();
                 var result = new IsolatedTrainingCoordinator().run(live, target, claimRoot, handoff -> {
                     String name = "mnemo-train-" + java.util.UUID.randomUUID().toString().replace("-", "");
                     var pod = IsolatedTrainingPodFactory.build(template, namespace, name, trainingServiceAccount, claim,
-                            handoff, protectedSecrets, trainingTimeout);
+                            handoff, protectedSecrets, allowed, trainingTimeout, owner);
                     return runner.run(namespace, pod, Duration.ofSeconds(trainingTimeout), Duration.ofSeconds(1));
                 }, dir -> new IsolatedArchivePublisher().publish(live, target, KubernetesLeaseLock.inCluster(Duration.ofSeconds(leaseSeconds)),
                         dir.resolve("app." + strategy.extension()), maxArchiveBytes));

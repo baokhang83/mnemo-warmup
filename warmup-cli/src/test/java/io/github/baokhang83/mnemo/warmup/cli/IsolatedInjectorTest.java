@@ -63,7 +63,7 @@ class IsolatedInjectorTest {
     }
 
     private static Map<String, Object> doc(List<Map<String, Object>> docs, String kind, String suffix) {
-        return docs.stream().filter(d -> kind.equals(d.get("kind")) && ((String) ((Map<?, ?>) d.get("metadata")).get("name")).endsWith(suffix)).findFirst().orElseThrow();
+        return docs.stream().filter(d -> kind.equals(d.get("kind")) && ((String) ((Map<?, ?>) d.get("metadata")).get("name")).contains(suffix)).findFirst().orElseThrow();
     }
     @SuppressWarnings("unchecked")
     @Test void generatedTemplateIsAcceptedByThePodFactoryAndCarriesNoCredentials() {
@@ -75,7 +75,7 @@ class IsolatedInjectorTest {
         String trainingSa = (String) ((Map<?, ?>) doc(docs, "ServiceAccount", "-training").get("metadata")).get("name");
         assertEquals(false, doc(docs, "ServiceAccount", "-training").get("automountServiceAccountToken"));
         var pod = io.github.baokhang83.mnemo.warmup.core.IsolatedTrainingPodFactory.build(template, "test", "mnemo-train-x", trainingSa, "handoff",
-                "mnemo-run-x", java.util.Set.of("signer", "push-secret"), 60);
+                "mnemo-run-x", java.util.Set.of("signer", "push-secret"), java.util.Set.of(), 60, null);
         String rendered = ManifestStream.render(List.of(pod));
         assertFalse(rendered.contains("signing")); assertFalse(rendered.contains("REGISTRY_AUTH"));
         var cron = doc(docs, "CronJob", "");
@@ -111,5 +111,40 @@ class IsolatedInjectorTest {
         assertEquals(5, docs.size());
         assertTrue(docs.stream().noneMatch(d -> "ConfigMap".equals(d.get("kind"))));
         assertFalse(ManifestStream.render(docs).contains("coordinate-isolated"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> publisher(List<Map<String, Object>> docs) {
+        var cron = doc(docs, "CronJob", "");
+        var podSpec = (Map<String, Object>) ((Map<?, ?>) ((Map<?, ?>) ((Map<?, ?>) ((Map<?, ?>) cron.get("spec")).get("jobTemplate")).get("spec")).get("template")).get("spec");
+        return podSpec;
+    }
+    @SuppressWarnings("unchecked")
+    @Test void pinsAnImmutableTemplateByDigestAndNamesTheOwnerPod() throws Exception {
+        List<Map<String, Object>> docs = ManifestStream.parse(OfflineInjector.inject(input("", "          workingDir: /app"), null, TOOLS).yaml());
+        var cm = doc(docs, "ConfigMap", "-template-");
+        assertEquals(true, cm.get("immutable"));
+        String data = (String) ((Map<?, ?>) cm.get("data")).get("training.yaml");
+        String sha = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(data.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        assertTrue(((String) ((Map<?, ?>) cm.get("metadata")).get("name")).endsWith("-template-" + sha.substring(0, 10)));
+        var spec = publisher(docs);
+        var container = (Map<String, Object>) ((List<?>) spec.get("containers")).get(0);
+        List<?> args = (List<?>) container.get("args");
+        assertEquals(sha, args.get(args.indexOf("--training-template-sha256") + 1));
+        String rendered = ManifestStream.render(List.of(container));
+        assertTrue(rendered.contains("POD_UID") && rendered.contains("metadata.uid") && rendered.contains("POD_NAME"));
+        assertFalse(container.containsKey("workingDir"), "the publisher takes nothing from the application spec");
+        assertTrue(ManifestStream.render(List.of(spec)).contains("sizeLimit: 1280Mi"));
+        // a different template is a different ConfigMap, so an immutable one never has to change in place
+        var other = ManifestStream.parse(OfflineInjector.inject(input("", "          env: [{name: X, value: y}]"), null, TOOLS).yaml());
+        assertNotEquals(((Map<?, ?>) cm.get("metadata")).get("name"), ((Map<?, ?>) doc(other, "ConfigMap", "-template-").get("metadata")).get("name"));
+    }
+    @Test void applicationSecretsMustBeListedForTraining() {
+        String uses = "          env: [{name: DB, valueFrom: {secretKeyRef: {name: db-secret, key: password}}}]";
+        var ex = assertThrows(IllegalArgumentException.class, () -> OfflineInjector.inject(input("", uses), null, TOOLS));
+        assertTrue(ex.getMessage().contains("training-allowed-secrets"), ex.getMessage());
+        String listed = OfflineInjector.inject(input("        warmup.mnemo.io/training-allowed-secrets: db-secret\n", uses), null, TOOLS).yaml();
+        assertTrue(listed.contains("--allowed-secret=db-secret"));
+        assertThrows(IllegalArgumentException.class, () -> OfflineInjector.inject(input("        warmup.mnemo.io/training-allowed-secrets: signer\n", ""), null, TOOLS));
     }
 }

@@ -16,6 +16,79 @@ import java.nio.file.StandardOpenOption;
  */
 public final class IsolatedArchivePublisher {
 
+    private final long openTimeoutMillis;
+    private final long copyTimeoutMillis;
+
+    public IsolatedArchivePublisher() { this(5_000, 600_000); }
+
+    /** Bounds the open (a named pipe blocks it) and the copy (a slow or endless producer). */
+    IsolatedArchivePublisher(long openTimeoutMillis, long copyTimeoutMillis) {
+        if (openTimeoutMillis <= 0 || copyTimeoutMillis <= 0) throw new IllegalArgumentException("timeouts must be positive");
+        this.openTimeoutMillis = openTimeoutMillis;
+        this.copyTimeoutMillis = copyTimeoutMillis;
+    }
+
+    /**
+     * Copies at most {@code max} bytes of {@code file} into {@code out}, without following a symlink. The open and the copy run on a
+     * daemon reader thread with time limits: a path swapped for a named pipe after the type check would block an open forever, and
+     * Java cannot open a file without blocking. A reader left blocked is abandoned; it can never write to {@code out} afterwards.
+     */
+    long copyBounded(Path file, java.io.OutputStream out, long max, String what) throws IOException {
+        var opened = new java.util.concurrent.CompletableFuture<Boolean>();
+        var done = new java.util.concurrent.CompletableFuture<Long>();
+        var buffer = new java.util.concurrent.SynchronousQueue<byte[]>();
+        var abandoned = new java.util.concurrent.atomic.AtomicBoolean();
+        if (!RunPlanner.startReader(() -> {
+            try (var in = Files.newInputStream(file, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+                opened.complete(true);
+                long total = 0;
+                byte[] chunk = new byte[64 * 1024];
+                for (int n; (n = in.read(chunk)) != -1; ) {
+                    if (n > max - total) throw new IOException(what + " exceeds the maximum size");
+                    total += n;
+                    // hand over a copy, so this thread never touches the caller's stream
+                    while (!buffer.offer(java.util.Arrays.copyOf(chunk, n), 100, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                        if (abandoned.get()) return;
+                    }
+                }
+                done.complete(total);
+            } catch (IOException | RuntimeException e) {
+                opened.complete(false);
+                done.completeExceptionally(e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                done.completeExceptionally(e);
+            }
+        })) {
+            throw new IOException("too many earlier reads of the handoff are still blocked");
+        }
+        try {
+            if (!opened.get(openTimeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                try { done.get(); } catch (java.util.concurrent.ExecutionException e) {
+                    throw new IOException(what + " cannot be read: " + e.getCause().getMessage(), e.getCause());
+                }
+            }
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(copyTimeoutMillis);
+            while (true) {
+                byte[] chunk = buffer.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS);
+                if (chunk != null) { out.write(chunk); continue; }
+                if (done.isDone()) {
+                    try { return done.get(); } catch (java.util.concurrent.ExecutionException e) {
+                        throw new IOException(what + " cannot be read: " + e.getCause().getMessage(), e.getCause());
+                    }
+                }
+                if (System.nanoTime() > deadline) throw new IOException(what + " was not read within the time limit");
+            }
+        } catch (java.util.concurrent.TimeoutException e) {
+            throw new IOException(what + " did not open within the time limit (not a regular file?)", e);
+        } catch (InterruptedException | java.util.concurrent.ExecutionException e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            throw new IOException(what + " cannot be read", e);
+        } finally {
+            abandoned.set(true);
+        }
+    }
+
     /** Checks and publishes the training output, or reports why it was not published. */
     public TrainingOrchestrator.Outcome publish(
             ArchiveManifest live, ArchiveStore store, TrainingLock lock, Path archive, long maxArchiveBytes) {
@@ -32,8 +105,9 @@ public final class IsolatedArchivePublisher {
                 if (!Files.isRegularFile(manifestFile, LinkOption.NOFOLLOW_LINKS)) {
                     throw new IOException("training manifest is missing or is not a regular file");
                 }
-                byte[] manifestBytes = RunPlanner.snapshot(manifestFile, 8L << 20);
-                if (manifestBytes == null) throw new IOException("training manifest cannot be read within its limits");
+                var manifestCopy = new java.io.ByteArrayOutputStream();
+                copyBounded(manifestFile, manifestCopy, 8L << 20, "training manifest");
+                byte[] manifestBytes = manifestCopy.toByteArray();
                 final ArchiveManifest trained;
                 try {
                     trained = ArchiveManifest.fromJson(new String(manifestBytes, java.nio.charset.StandardCharsets.UTF_8));
@@ -49,17 +123,9 @@ public final class IsolatedArchivePublisher {
                 // before hashing and uploading prevents the producer from changing bytes between them.
                 privateDirectory[0] = Files.createTempDirectory("mnemo-publish-");
                 Path copy = privateDirectory[0].resolve("app." + live.cacheType().extension());
-                long total = 0;
-                try (var in = Files.newInputStream(archive, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
-                     var out = Files.newOutputStream(copy, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
-                    byte[] buffer = new byte[64 * 1024];
-                    for (int n; (n = in.read(buffer)) != -1; ) {
-                        if (n > maxArchiveBytes - total) {
-                            throw new IOException("training output exceeds the maximum archive size");
-                        }
-                        out.write(buffer, 0, n);
-                        total += n;
-                    }
+                long total;
+                try (var out = Files.newOutputStream(copy, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                    total = copyBounded(archive, out, maxArchiveBytes, "training output");
                 }
                 if (total == 0) {
                     throw new IOException("training output is empty");

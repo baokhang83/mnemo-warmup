@@ -50,7 +50,9 @@
             "fsGroup": { "type": "integer", "minimum": 1 },
             "trainingServiceAccount": { "type": "string" },
             "targetJavaToolOptions": { "type": "string" },
-            "targetJdkJavaOptions": { "type": "string" }
+            "targetJdkJavaOptions": { "type": "string" },
+            "allowedSecrets": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" } },
+            "publisherTmpSizeLimit": { "type": "string", "minLength": 1 }
           }
         },
         "enabled": { "type": "boolean" },

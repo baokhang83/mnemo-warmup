@@ -49,6 +49,11 @@ Set these on the Deployment's **pod template** (`spec.template.metadata.annotati
 | `warmup.mnemo.io/tools-delivery` | no | How the tools reach the pod: `init-container` (the default) or `image-volume`. A pull Secret or node cache uses a fetch init container even with an image volume. See [Tools delivery](#tools-delivery-init-containers-or-an-image-volume). |
 | `warmup.mnemo.io/signing-public-keys` | no | The public keys pods trust, as printed by `mnemo-warmup keygen`: `id=base64`, several separated by commas. **Setting it makes every pod require a valid signature.** See [Signed archives](#signed-archives-opt-in). |
 | `warmup.mnemo.io/signing-key-secret` | no | Name of a Secret with the private key under `signing.key`. Mounted into the trainer only, which then signs everything it publishes. |
+| `warmup.mnemo.io/isolated-training` | no | `"true"` trains in a separate pod that never holds the signing key or push credential; a coordinator signs and publishes. Requires signing and the four annotations below. See [Isolated training](#isolated-training-opt-in). |
+| `warmup.mnemo.io/publisher-image` | with isolated training | Trusted coordinator image, pinned by digest (`...@sha256:...`). It must contain the same JDK build and application files, at the same paths, as the application image. The tools image must be pinned by digest too. |
+| `warmup.mnemo.io/publisher-java` | with isolated training | Absolute path of the `java` executable in the publisher image. |
+| `warmup.mnemo.io/handoff-claim` | with isolated training | An existing PersistentVolumeClaim, with POSIX permissions, through which the training pod hands the archive to the coordinator. |
+| `warmup.mnemo.io/handoff-fs-group` | no | The handoff PVC's root group, given to both pods as `fsGroup`. Default `65532`. |
 | `warmup.mnemo.io/node-cache-url` | with node cache | HTTPS origin of the node-local cache Service. |
 | `warmup.mnemo.io/node-cache-ca-configmap` | with node cache | ConfigMap containing the cache CA certificate under `ca.crt`. |
 | `warmup.mnemo.io/node-cache-audience` | with node cache | Audience for the projected service-account token. |
@@ -140,7 +145,7 @@ How the trainer behaves, so you are not surprised: it is given the same list as 
 
 **If you lose the private key,** no pod breaks: archives it signed keep verifying, because pods hold only the public key. You just cannot publish new archives until you create a new key and roll it out as above.
 
-**What it protects, and what it does not.** It stops anyone who can write to the archive repository, or sit on the network path, but does not hold the private key. It does **not** stop code running inside the trainer container during training, because that container runs your application and also holds the key. Splitting the trainer so the key never meets application code is the next stage ([ADR 0013](adr/0013-signed-archives.md), stage B); until then, give a workload that runs untrusted code its own key (one key per namespace is the default, one per workload where the trust differs).
+**What it protects, and what it does not.** It stops anyone who can write to the archive repository, or sit on the network path, but does not hold the private key. It does **not** stop code running inside the trainer container during training, because that container runs your application and also holds the key. [Isolated training](#isolated-training-opt-in) keeps the key away from application code ([ADR 0013](adr/0013-signed-archives.md), stage B); without it, give a workload that runs untrusted code its own key (one key per namespace is the default, one per workload where the trust differs).
 
 **How it works, briefly.** The signed text is fixed: the archive's fingerprint, the digest of the stored manifest, the digest and size of the archive, and the repository. A pod rebuilds that text from what it actually received and checks the signature against it, so a valid signature cannot be moved to another archive or to another repository path. `fetch` checks before it downloads the archive, and `run` checks again at every start against the files on disk.
 
@@ -148,6 +153,24 @@ How the trainer behaves, so you are not surprised: it is given the same list as 
 
 - **The registry host is not part of what is signed.** The trainer and the pods may reach one registry under different names (a mirror, for example), so only the repository path is signed. A signed archive copied to **another registry under the same repository path** therefore verifies there too. Use separate keys for registries that are different trust domains.
 - **The second check narrows the window; it does not close it against a writer.** `run` detects changes made to the cache directory between the fetch and the start. A process that can write to the same underlying volume could still swap the archive in the instant between that check and the JVM opening it. Mount the cache **read-only** in every container that only consumes it: that protects against writes through that mount only. (The chart and the injector already mount it read-only in the application container, except in image-volume mode, where the entrypoint fetches and so must write it.) Another container or process with write access to the same volume can still race the JVM open.
+
+## Isolated training (opt-in)
+
+With `warmup.mnemo.io/isolated-training: "true"` (or `trainer.isolation.enabled` in the Helm chart) the trainer is split in two ([ADR 0013](adr/0013-signed-archives.md), stage B):
+
+- a **coordinator** CronJob runs the trusted publisher image as UID 65532 with the signing key, the push credential and a Kubernetes token. It checks the store, and only when an archive is missing creates a **training pod**, waits for it to succeed, then copies the archive from the handoff into its own temporary directory, checks it against a manifest it computed itself, signs and publishes it;
+- the **training pod** runs your application image under its own ServiceAccount with no API token, no signing key and no push credential. It writes into a fresh per-run subdirectory of the handoff PVC and nothing else. The pod template is checked before it is created: host namespaces, `hostPath`, projected service-account tokens, privileged containers, added capabilities and any reference to the signing or push Secret are refused.
+
+The injector generates two ServiceAccounts, a Role (leases, and get/create/delete pods), a RoleBinding, a ConfigMap with the training pod template and the coordinator CronJob. The Deployment itself is injected exactly as without isolation. `envFrom` and `image-volume` tools delivery are not supported in isolated mode yet: the coordinator needs the target's `JAVA_TOOL_OPTIONS` and `JDK_JAVA_OPTIONS` as explicit values, and only those two variables are copied from the application container (as `MNEMO_TARGET_*` data, never as options of the coordinator's own JVM). If the image itself sets those variables, also set them on the container.
+
+Before you turn it on:
+
+1. **Build the publisher image.** Use the application image's base JDK (same vendor and build) and copy in the application files at the same paths and with the same modification times. The simplest way is `FROM` the application image, with the Java executable and the application files readable by UID 65532. Pin it, and the tools image, by digest.
+2. **Create the handoff PVC** in the workload's namespace. Its root directory's group must be the `handoff-fs-group`, and the filesystem must honour POSIX group permissions (the coordinator refuses to start otherwise). A `ReadWriteOnce` volume can require both pods on the same node; use `ReadWriteMany` storage when they may be scheduled apart. Mount it nowhere else: the coordinator assumes no other writer during publication.
+3. **Restrict the namespace.** The coordinator may create pods, and a pod in that namespace can mount any Secret there or run as any ServiceAccount there. Use a dedicated namespace and admission policy (Pod Security `restricted`, or a policy engine) so that pods it creates cannot do more than the template allows. Make sure the training ServiceAccount has no cloud IAM rights to push or sign, including through workload identity or the node metadata server; a missing token mount alone does not prevent that.
+4. **Know what is trusted.** The publisher image, the tools image, the JDK and the generated templates are trusted. A signature proves which publisher signed the bytes, not that the application that trained them is benign.
+
+A failed or timed-out run keeps its handoff directory, because a deleted pod may still be running. The training pod's `warmup.mnemo.io/handoff` annotation names the directory; remove it only after the pod is gone. Disable isolation by removing the annotations and rendering again: the classic trainer comes back.
 
 ## Limits on the fetch
 

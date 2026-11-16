@@ -1,6 +1,6 @@
 # ADR 0013: sign archives, and keep the signing key away from application code
 
-Status: accepted. Stage A (signed archives) is implemented, opt-in; stage B (splitting the trainer pod) is open. Tracking issue: #145. Security roadmap findings S1 and S3 ([security-roadmap.md](../security-roadmap.md)).
+Status: accepted. Stage A (signed archives) is implemented, opt-in; stage B (splitting the trainer pod) is implemented, opt-in (`trainer.isolation` in the chart, `warmup.mnemo.io/isolated-training` in the injector). Tracking issue: #145. Security roadmap findings S1 and S3 ([security-roadmap.md](../security-roadmap.md)).
 
 ## Context
 
@@ -67,17 +67,18 @@ Delivered in two stages, because stage A is useful on its own and stage B is a l
 
 **Stage A: signed archives.** The trainer signs in its current container. This stops a registry writer, a network attacker and anyone else who can push but does not hold the private key. It does **not** stop code running inside the trainer, which can read the key. This limit is stated in the documentation.
 
-**Stage B: separate training and publication into different pods.** A trusted coordinator checks the store and starts a training pod only when an archive is needed. After training finishes, it starts a separate publisher pod. The pods use distinct Kubernetes ServiceAccounts and exchange the archive through a bounded, per-run shared volume. The publisher rechecks the store under a Lease, then derives the archive digest and size from the handoff before signing and uploading.
+**Stage B: separate training and publication into different pods.** A trusted coordinator/publisher checks the store and starts a separate training pod only when an archive is needed. After training finishes, the coordinator/publisher reads the handoff, signs and uploads it. The two pods use distinct Kubernetes ServiceAccounts and exchange the archive through a bounded, per-run shared volume. The publisher rechecks the store under a Lease, then derives the archive digest and size from the handoff before signing and uploading.
 
 | Step | Runs application code | Identity and credentials |
 |---|---|---|
-| `check` / coordinate | no | pull access and permission to coordinate the training and publisher pods |
+| `check` / coordinate / publish | no application workload | dedicated ServiceAccount, signing key, registry access, and a token for pod management and the Lease |
 | `train` pod | **yes** | dedicated ServiceAccount without archive-publish or signing permissions; no signing key, push credential or projected Kubernetes token |
-| `publish` pod | no application workload | separate ServiceAccount, signing key, push access and a token for the Lease |
 
-Separate pod identities let the cluster apply distinct cloud permissions. A missing Kubernetes token mount alone does not prevent GKE metadata-server credentials or credentials injected by an EKS identity webhook. The training ServiceAccount and node configuration must therefore be restricted from obtaining archive-publish privileges, including through node metadata; deployments must verify their cloud identity settings. The coordinator's ability to create pods and volumes is privileged and must be restricted to the intended namespace and workflow.
+Separate pod identities let the cluster apply distinct cloud permissions. A missing Kubernetes token mount alone does not prevent GKE metadata-server credentials or credentials injected by an EKS identity webhook. The training ServiceAccount and node configuration must therefore be restricted from obtaining archive-publish privileges, including through node metadata; deployments must verify their cloud identity settings. The coordinator's ability to create pods is privileged and must be restricted to the intended namespace and workflow.
 
 The publisher must not inherit application-controlled JVM options or execute application JARs as tools. Its runtime and image remain part of the trusted computing base. The training output is untrusted input: a signature authenticates the publisher and the bytes it signed; it does not establish that application-produced archive contents are benign. The handoff must use a per-run volume, fixed paths, bounded file reads, and no concurrent writers during publication. Cleanup must handle retries and failed jobs without exposing a previous run's output.
+
+Implemented as follows. The coordinator creates a fresh, group-writable subdirectory of a pre-provisioned PVC per run and mounts only that `subPath` into the training pod. It publishes only after the pod reaches `Succeeded` (all its containers have stopped), and removes the directory only then; on failure, timeout or an uncertain create or delete it keeps the directory, because an accepted delete does not prove the process has stopped. The training pod is built from a trusted template that is checked first (no host namespaces, `hostPath`, projected tokens, privilege, added capabilities, or references to the signing or push Secret), and is annotated with its handoff directory. The coordinator runs through the native launcher's `jar-isolated` mode, which starts a fixed Java executable with an allow-listed environment, so application-controlled `JAVA_TOOL_OPTIONS` cannot reach it before `main`. Residual risk: a writer other than the training pod with access to the PVC could swap the archive for a FIFO between the type check and the open and block the publisher until the Job deadline. It cannot cause a different archive to be signed, because only the private copy is hashed, compared and signed.
 
 The Lease covers the store recheck and upload, not the training run. Duplicate training can waste CPU, but a second check under the Lease prevents redundant publication for a shared fingerprint. `concurrencyPolicy: Forbid` still serializes runs of one workload's CronJob.
 
@@ -109,4 +110,4 @@ Opt-in through the beta. At 1.0 (or earlier if the opt-in proves safe) the injec
   - The private key is a Kubernetes Secret, and a Secret lives in one namespace. A cluster-wide key would have to be copied into every namespace, and one leaked copy would let its holder sign for every workload that trusts the key.
   - One key per workload is the safest but needs a `keygen`, a Secret and an annotation for every application, and that friction would keep people from turning signing on.
   - A key per namespace keeps the private key next to the trainer that uses it and limits a leak to one team. Pods accept a list of public keys, so a workload that needs its own key (one that runs third-party plugins, or processes untrusted input) just uses a different one. The design needs no change to allow either.
-  - Until stage B ships, application code in the trainer can read the key. In a namespace where workloads have different trust levels, the riskier ones should have their own key, so a compromised one cannot sign for the others.
+  - Without isolated training (stage B), application code in the trainer can read the key. In a namespace where workloads have different trust levels, the riskier ones should have their own key, so a compromised one cannot sign for the others.

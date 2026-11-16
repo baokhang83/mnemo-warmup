@@ -8,6 +8,7 @@ import io.github.baokhang83.mnemo.warmup.core.BenchReport;
 import io.github.baokhang83.mnemo.warmup.core.StartupBench;
 import io.github.baokhang83.mnemo.warmup.core.CacheType;
 import io.github.baokhang83.mnemo.warmup.core.ExitMode;
+import io.github.baokhang83.mnemo.warmup.core.FetchLimits;
 import io.github.baokhang83.mnemo.warmup.core.HttpProbeExitMode;
 import io.github.baokhang83.mnemo.warmup.core.JarExtractor;
 import io.github.baokhang83.mnemo.warmup.core.JdkInfo;
@@ -398,7 +399,9 @@ public class Main implements Runnable {
                     deleteTree(scratch);
                 }
                 timer.lap("extract-and-hash-classpath");
-                var archiveStore = openStore(store, registryAuth, plainHttp, storeTimeoutSeconds);
+                // The total deadline starts here, after the local hashing: it bounds what the registry can make the pod wait.
+                var archiveStore = openStore(store, registryAuth, plainHttp, storeTimeoutSeconds)
+                        .withFetchLimits(FetchLimits.fromEnvironment(System.getenv(), note -> e.println("fetch: " + note)));
                 var result = new ArchiveFetcher().fetch(archiveStore, live, out);
                 timer.lap("store-lookup-download-verify");
                 result.notes().forEach(n -> e.println("fetch: " + n));
@@ -859,6 +862,24 @@ public class Main implements Runnable {
     }
 
     public static void main(String[] args) {
-        System.exit(commandLine().execute(args));
+        System.exit(exitCode(args, () -> commandLine().execute(args)));
+    }
+
+    /**
+     * Runs a command and returns its exit code. {@code fetch} runs as an init container: even running out of memory (or stack) on a
+     * hostile response must not keep the pod from starting (§3), so for {@code fetch} such an Error becomes "no cache, exit 0". Other
+     * commands keep their normal behaviour, and {@code --strict} is the operator asking for a failure.
+     */
+    static int exitCode(String[] args, java.util.function.IntSupplier run) {
+        try {
+            return run.getAsInt();
+        } catch (OutOfMemoryError | StackOverflowError error) {
+            boolean fetch = args.length > 0 && args[0].equals("fetch");
+            if (!fetch || java.util.Arrays.asList(args).contains("--strict")) {
+                throw error;
+            }
+            System.err.println("fetch: " + error.getClass().getSimpleName() + "; the application will start without a cache");
+            return 0;
+        }
     }
 }

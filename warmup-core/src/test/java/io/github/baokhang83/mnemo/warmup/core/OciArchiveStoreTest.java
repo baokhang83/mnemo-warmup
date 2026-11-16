@@ -398,4 +398,110 @@ class OciArchiveStoreTest {
             assertEquals("repair-me", Files.readString(store.get(manifest.fingerprint(), out).orElseThrow().archiveFile()));
         }
     }
+
+    // ---- limits on a hostile or broken registry (S2) ----
+
+    private OciArchiveStore publish(FakeRegistry registry, ArchiveManifest manifest, Path file) {
+        var writer = OciArchiveStore.of(registry.reference("test/archives"), true, null, Duration.ofSeconds(5));
+        writer.put(manifest, file);
+        return writer;
+    }
+
+    @Test
+    void aManifestOverTheCeilingIsRefusedNotBuffered() throws Exception {
+        try (var registry = new FakeRegistry()) {
+            Path file = archive("s".repeat(2_000));
+            ArchiveManifest manifest = manifestFor(file);
+            publish(registry, manifest, file);
+            registry.manifests.put(OciArchiveStore.tagFor(manifest.fingerprint()), new byte[(1 << 20) + 1]);
+            var ex = assertThrows(StoreException.class, () -> store(registry, null).get(manifest.fingerprint(), tmp.resolve("o1")));
+            assertTrue(ex.getMessage().contains("more than the") && ex.getMessage().contains("a manifest"), ex.getMessage());
+        }
+    }
+
+    @Test
+    void aConfigBlobOverTheCeilingIsRefusedNotBuffered() throws Exception {
+        try (var registry = new FakeRegistry()) {
+            Path file = archive("s".repeat(2_000));
+            ArchiveManifest manifest = manifestFor(file);
+            publish(registry, manifest, file);
+            String configDigest = registry.blobs.entrySet().stream()
+                    .filter(e -> e.getValue().length < 5_000 && new String(e.getValue(), java.nio.charset.StandardCharsets.UTF_8).startsWith("{"))
+                    .findFirst().orElseThrow().getKey();
+            registry.blobs.put(configDigest, new byte[(8 << 20) + 1]);
+            var ex = assertThrows(StoreException.class, () -> store(registry, null).get(manifest.fingerprint(), tmp.resolve("o2")));
+            assertTrue(ex.getMessage().contains("more than the") && ex.getMessage().contains("the manifest blob"), ex.getMessage());
+        }
+    }
+
+    @Test
+    void anArchiveLargerThanTheCapIsRefusedBeforeAnyBlobIsRequested() throws Exception {
+        try (var registry = new FakeRegistry()) {
+            Path file = archive("s".repeat(50_000));
+            ArchiveManifest manifest = manifestFor(file);
+            publish(registry, manifest, file);
+            var pod = store(registry, null).withFetchLimits(new FetchLimits(Duration.ofSeconds(120), 1_000));
+            int before = registry.blobGets.get();
+            var ex = assertThrows(StoreException.class, () -> pod.get(manifest.fingerprint(), tmp.resolve("o3")));
+            assertTrue(ex.getMessage().contains("not downloading it") && ex.getMessage().contains(FetchLimits.ENV_MAX_ARCHIVE), ex.getMessage());
+            assertEquals(before, registry.blobGets.get(), "no blob may be requested after the size is refused");
+            assertFalse(Files.exists(tmp.resolve("o3")), "nothing may be created for a refused archive");
+        }
+    }
+
+    @Test
+    void theCapAppliesToPullsNeverToPublishing() throws Exception {
+        try (var registry = new FakeRegistry()) {
+            Path file = archive("s".repeat(50_000));
+            ArchiveManifest manifest = manifestFor(file);
+            var trainer = store(registry, null).withFetchLimits(new FetchLimits(Duration.ofSeconds(120), 1_000));
+            trainer.put(manifest, file); // larger than the cap, and the trainer must still be free to publish it
+            assertTrue(trainer.exists(manifest.fingerprint()));
+        }
+    }
+
+    @Test
+    void anArchiveWithinTheCapIsStillFetched() throws Exception {
+        try (var registry = new FakeRegistry()) {
+            Path file = archive("s".repeat(50_000));
+            ArchiveManifest manifest = manifestFor(file);
+            publish(registry, manifest, file);
+            var pod = store(registry, null).withFetchLimits(FetchLimits.defaults());
+            assertTrue(pod.get(manifest.fingerprint(), tmp.resolve("o4")).isPresent());
+        }
+    }
+
+    // The idle timeout is reset by every byte, so a registry sending one byte at a time never trips it. Only the total deadline can end this.
+    @Test
+    void aSlowTrickleIsEndedByTheTotalDeadlineAndLeavesNoFile() throws Exception {
+        try (var registry = new FakeRegistry()) {
+            Path file = archive("s".repeat(50_000));
+            ArchiveManifest manifest = manifestFor(file);
+            publish(registry, manifest, file);
+            registry.trickleMillis = 200;
+            var pod = store(registry, null).withFetchLimits(new FetchLimits(Duration.ofSeconds(1), 1L << 30));
+            Path out = Files.createDirectory(tmp.resolve("o5"));
+            long started = System.nanoTime();
+            var ex = assertThrows(StoreException.class, () -> pod.get(manifest.fingerprint(), out));
+            long seconds = Duration.ofNanos(System.nanoTime() - started).toSeconds();
+            assertTrue(ex.getMessage().contains("total deadline of 1 s"), ex.getMessage());
+            assertTrue(seconds < 6, "took " + seconds + " s for a 1 s deadline");
+            try (var files = Files.list(out)) {
+                assertEquals(0, files.count());
+            }
+        }
+    }
+
+    @Test
+    void onceTheDeadlineHasPassedTheNextRequestIsNotSent() throws Exception {
+        try (var registry = new FakeRegistry()) {
+            Path file = archive("s".repeat(2_000));
+            ArchiveManifest manifest = manifestFor(file);
+            publish(registry, manifest, file);
+            var pod = store(registry, null).withFetchLimits(new FetchLimits(Duration.ofSeconds(1), 1L << 30));
+            Thread.sleep(1_200);
+            var ex = assertThrows(StoreException.class, () -> pod.exists(manifest.fingerprint()));
+            assertTrue(ex.getMessage().contains("total deadline"), ex.getMessage());
+        }
+    }
 }

@@ -28,6 +28,10 @@ final class FakeRegistry implements AutoCloseable {
     volatile String basicPassword;
     volatile boolean redirectBlobs;
     volatile boolean stallBlobs;
+    /** When positive, a blob GET sends one byte at a time with this pause: steady progress, so only a total deadline can end it. */
+    volatile long trickleMillis;
+    /** Counts every blob GET (not HEAD), so a test can prove an archive was never requested. */
+    final AtomicInteger blobGets = new AtomicInteger();
     /** absolute-path (default), relative ("u1") or query ("?_state=x"). */
     volatile String locationStyle = "absolute-path";
     private final HttpServer server;
@@ -126,11 +130,25 @@ final class FakeRegistry implements AutoCloseable {
 
     private void serveBlob(HttpExchange ex, String method, String digest, boolean redirect) throws IOException {
         byte[] blob = blobs.get(digest);
+        if (method.equals("GET")) {
+            blobGets.incrementAndGet();
+        }
         if (blob == null) {
             reply(ex, 404, new byte[0]);
         } else if (redirect && method.equals("GET")) {
             ex.getResponseHeaders().add("Location", "/redirected/" + digest);
             reply(ex, 307, new byte[0]);
+        } else if (trickleMillis > 0 && method.equals("GET") && blob.length > 1000) {
+            ex.sendResponseHeaders(200, blob.length);
+            try (OutputStream out = ex.getResponseBody()) {
+                for (byte b : blob) {
+                    out.write(b);
+                    out.flush();
+                    Thread.sleep(trickleMillis);
+                }
+            } catch (IOException | InterruptedException e) {
+                // the client gave up (that is the point of the test)
+            }
         } else if (stallBlobs && method.equals("GET") && blob.length > 1000) {
             ex.sendResponseHeaders(200, blob.length);
             ex.getResponseBody().flush();

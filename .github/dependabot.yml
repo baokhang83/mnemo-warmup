@@ -25,6 +25,12 @@ updates:
     # Only minor and patch bumps are grouped. A major version of an action is its own pull request, reviewed on its own:
     # the release and publish workflows only run on tags, so a major bump there cannot be proven by this repository's PR checks.
     groups:
+      # Every step of github/codeql-action must run the same version, or analyze refuses the config init wrote. Dependabot
+      # sees init and analyze as separate dependencies, so they are grouped at every update type, majors included. CodeQL
+      # runs on every pull request, so its PR checks do prove a major bump. This group must stay first: a dependency joins
+      # the first group it matches.
+      codeql-action:
+        patterns: ["github/codeql-action*"]
       actions-minor-and-patch:
         update-types: [minor, patch]
 

@@ -192,6 +192,11 @@ public class Main implements Runnable {
                 if (view == null) throw new IllegalStateException("handoff output needs POSIX file permissions");
                 var attrs = view.readAttributes();
                 if (!attrs.isRegularFile()) throw new IllegalStateException("handoff output must be a regular file");
+                // A new file takes the trainer's primary group, not the handoff directory's (its setgid bit is not kept).
+                // The owner may move it to any group it belongs to, and the pod's fsGroup is one of them.
+                Object group = Files.getAttribute(file.toAbsolutePath().getParent(), "unix:gid", java.nio.file.LinkOption.NOFOLLOW_LINKS);
+                if (!group.equals(Files.getAttribute(file, "unix:gid", java.nio.file.LinkOption.NOFOLLOW_LINKS)))
+                    Files.setAttribute(file, "unix:gid", group, java.nio.file.LinkOption.NOFOLLOW_LINKS);
                 var permissions = java.util.EnumSet.noneOf(java.nio.file.attribute.PosixFilePermission.class);
                 permissions.addAll(attrs.permissions());
                 permissions.add(java.nio.file.attribute.PosixFilePermission.GROUP_READ);
@@ -1061,6 +1066,9 @@ public class Main implements Runnable {
                 requireMatchingHandoffGroup(claimRoot, template);
                 var protectedSecrets = protectedSecretNames(signingSecret, pushSecret,
                         registryAuth != null || System.getenv("MNEMO_WARMUP_REGISTRY_AUTH") != null);
+                // Refuse a bad template before a handoff exists: a refusal later would look like an uncertain run.
+                IsolatedTrainingPodFactory.build(template, namespace, "mnemo-train-check", trainingServiceAccount, claim,
+                        "mnemo-run-check", protectedSecrets, trainingTimeout);
                 var runner = IsolatedTrainingPodRunner.inCluster();
                 var result = new IsolatedTrainingCoordinator().run(live, target, claimRoot, handoff -> {
                     String name = "mnemo-train-" + java.util.UUID.randomUUID().toString().replace("-", "");

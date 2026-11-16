@@ -3,7 +3,7 @@
   "feature": "145-isolate-archive-signing-and-publishing-from-application",
   "branch": "feature/145-isolate-archive-signing-and-publishing-from-application",
   "stage": "build",
-  "last_session": "003-copy-training-output-into-publisher-owned-storage",
+  "last_session": "004-add-isolated-publication-command",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

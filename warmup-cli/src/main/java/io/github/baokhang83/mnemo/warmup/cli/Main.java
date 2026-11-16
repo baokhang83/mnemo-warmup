@@ -12,6 +12,7 @@ import io.github.baokhang83.mnemo.warmup.core.ExitMode;
 import io.github.baokhang83.mnemo.warmup.core.FetchLimits;
 import io.github.baokhang83.mnemo.warmup.core.HttpProbeExitMode;
 import io.github.baokhang83.mnemo.warmup.core.JarExtractor;
+import io.github.baokhang83.mnemo.warmup.core.IsolatedArchivePublisher;
 import io.github.baokhang83.mnemo.warmup.core.JdkInfo;
 import io.github.baokhang83.mnemo.warmup.core.AwsRegistryAuth;
 import io.github.baokhang83.mnemo.warmup.core.OciArchiveStore;
@@ -44,7 +45,7 @@ import picocli.CommandLine.Spec;
         mixinStandardHelpOptions = true,
         versionProvider = Main.VersionProvider.class,
         description = "Build, validate and benchmark AppCDS / Leyden AOT caches.",
-        subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class, Main.Fetch.class, Main.Run.class, Main.Train.class, Main.Inject.class, Main.Keygen.class})
+        subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class, Main.Fetch.class, Main.Run.class, Main.Train.class, Main.IsolatedPublish.class, Main.Inject.class, Main.Keygen.class})
 public class Main implements Runnable {
 
     @Command(name = "inject", mixinStandardHelpOptions = true,
@@ -866,6 +867,64 @@ public class Main implements Runnable {
             } catch (IllegalArgumentException | IllegalStateException e) {
                 err.println("error: " + e.getMessage());
                 return 2;
+            }
+        }
+    }
+
+    @Command(name = "publish-isolated", mixinStandardHelpOptions = true,
+            description = "Validate and publish an archive produced by an isolated training pod.")
+    static class IsolatedPublish implements Callable<Integer> {
+        @Spec CommandSpec spec;
+        @Mixin AppOptions opts;
+        @Option(names = "--archive", required = true, description = "Archive in the training handoff volume.") Path archive;
+        @Option(names = "--store", required = true, description = "OCI archive repository.") String store;
+        @Option(names = "--registry-auth", description = "Registry push credentials.") Path registryAuth;
+        @Option(names = "--cache-type", defaultValue = "auto") String cacheType;
+        @Option(names = "--image-digest") String imageDigest;
+        @Option(names = "--plain-http") boolean plainHttp;
+        @Option(names = "--store-timeout-seconds", defaultValue = "1800") long storeTimeoutSeconds;
+        @Option(names = "--lock", defaultValue = "lease") String lock;
+        @Option(names = "--lease-seconds", defaultValue = "1800") long leaseSeconds;
+        @Option(names = "--max-archive-bytes", defaultValue = "1073741824") long maxArchiveBytes;
+
+        static java.util.Map<String, String> targetJavaEnvironment(java.util.Map<String, String> env) {
+            var target = new java.util.HashMap<String, String>();
+            for (String name : List.of("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS")) {
+                String value = env.get("MNEMO_TARGET_" + name);
+                if (value != null) target.put(name, value);
+            }
+            return target;
+        }
+
+        @Override public Integer call() {
+            var out = spec.commandLine().getOut();
+            var err = spec.commandLine().getErr();
+            try {
+                if (opts.jar == null) throw new IllegalArgumentException("publish-isolated needs --jar");
+                if (leaseSeconds < 3 || storeTimeoutSeconds <= 0 || maxArchiveBytes <= 0)
+                    throw new IllegalArgumentException("lease duration, store timeout and archive limit must be positive");
+                if (!lock.equals("lease") && !lock.equals("none"))
+                    throw new IllegalArgumentException("--lock must be lease or none");
+                String key = System.getenv(ENV_SIGNING_KEY_FILE);
+                if (key == null || key.isBlank())
+                    throw new IllegalArgumentException("publish-isolated requires a signing key");
+                if (JarExtractor.needsExtraction(opts.jar))
+                    throw new IllegalArgumentException("publish-isolated requires a pre-extracted application layout");
+                JdkInfo jdk = JdkInfo.detect(opts.javaHome, System.getenv());
+                CacheStrategy strategy = CacheType.parse(cacheType).resolve(jdk);
+                var app = new JarExtractor().prepare(opts.jar, jdk, opts.workDir.resolve("unused"));
+                // The target options are data, not JVM startup options for this trusted process.
+                var targetEnv = targetJavaEnvironment(System.getenv());
+                ArchiveManifest live = ArchiveManifest.describe(app, jdk, strategy, opts.jvmArgs, targetEnv, imageDigest);
+                TrainingLock trainingLock = lock.equals("none") ? TrainingLock.none() : KubernetesLeaseLock.inCluster(Duration.ofSeconds(leaseSeconds));
+                var target = withSigning(openStore(store, registryAuth, plainHttp, storeTimeoutSeconds), System.getenv(), true);
+                var outcome = new IsolatedArchivePublisher().publish(live, target, trainingLock, archive, maxArchiveBytes);
+                (outcome.status() == TrainingOrchestrator.Status.FAILED ? err : out)
+                        .printf("publish-isolated: %s: %s (%s)%n", outcome.status(), outcome.detail(), outcome.fingerprint());
+                return outcome.status() == TrainingOrchestrator.Status.FAILED ? 1 : 0;
+            } catch (IllegalArgumentException | IllegalStateException | StoreException e) {
+                err.println("publish-isolated: " + e.getMessage());
+                return 1;
             }
         }
     }

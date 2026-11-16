@@ -25,6 +25,7 @@ import java.util.regex.Pattern;
 final class OciRegistryHttp {
     private static final Pattern PARAM = Pattern.compile("(\\w+)=\"([^\"]*)\"");
     private static final int MAX_REDIRECTS = 5;
+    private static final long MAX_TOKEN_RESPONSE_BYTES = 1L << 20;
 
     private final URI base;
     private final String repository;
@@ -32,6 +33,36 @@ final class OciRegistryHttp {
     private final Duration timeout;
     private final HttpClient http;
     private volatile String authorization;
+    /** When set, every request must finish before this {@link System#nanoTime()} reading (0: no total deadline). */
+    private volatile long deadlineAtNanos;
+    private volatile FetchLimits limits;
+
+    /** Starts the total deadline of a fetch now. The idle timeout still applies to each request. */
+    void startDeadline(FetchLimits limits) {
+        this.limits = limits;
+        this.deadlineAtNanos = System.nanoTime() + limits.deadline().toNanos();
+    }
+
+    long deadlineAtNanos() {
+        return deadlineAtNanos;
+    }
+
+    StoreException deadlineExceeded() {
+        return new StoreException(limits.deadlineMessage());
+    }
+
+    /** The per-request timeout, shortened to what is left of the total deadline. */
+    private Duration effectiveTimeout() {
+        long at = deadlineAtNanos;
+        if (at == 0) {
+            return timeout;
+        }
+        long left = at - System.nanoTime();
+        if (left <= 0) {
+            throw deadlineExceeded();
+        }
+        return left < timeout.toNanos() ? Duration.ofNanos(left) : timeout;
+    }
 
     OciRegistryHttp(URI base, String repository, RegistryAuth auth, Duration timeout) {
         this.base = base;
@@ -108,22 +139,29 @@ final class OciRegistryHttp {
 
     private <T> HttpResponse<T> send(
             String method, URI uri, Map<String, String> headers, Supplier<BodyPublisher> body, BodyHandler<T> handler, boolean sendAuth) {
-        HttpRequest.Builder request = HttpRequest.newBuilder(uri).timeout(timeout);
+        Duration effective = effectiveTimeout();
+        HttpRequest.Builder request = HttpRequest.newBuilder(uri).timeout(effective);
         headers.forEach(request::header);
         String value = authorization;
         if (sendAuth && value != null) request.header("Authorization", value);
         request.method(method, body == null ? BodyPublishers.noBody() : body.get());
-        return await(http.sendAsync(request.build(), handler), uri);
+        return await(http.sendAsync(request.build(), handler), uri, effective);
     }
 
-    private <T> HttpResponse<T> await(CompletableFuture<HttpResponse<T>> future, URI uri) {
+    private <T> HttpResponse<T> await(CompletableFuture<HttpResponse<T>> future, URI uri, Duration effective) {
         try {
-            return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            return future.get(effective.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
             future.cancel(true);
+            if (deadlineAtNanos != 0 && System.nanoTime() >= deadlineAtNanos - TimeUnit.MILLISECONDS.toNanos(50)) {
+                throw deadlineExceeded();
+            }
             throw new StoreException("Registry " + uri.getAuthority() + " did not answer within " + timeout.toSeconds() + " s", e);
         } catch (ExecutionException e) {
             Throwable cause = e.getCause() == null ? e : e.getCause();
+            if (cause instanceof StoreException refused) {
+                throw refused; // e.g. a body over its limit: say that, not "cannot reach"
+            }
             throw new StoreException("Cannot reach registry " + uri.getAuthority() + ": " + cause.getMessage(), cause);
         } catch (InterruptedException e) {
             future.cancel(true);
@@ -148,9 +186,11 @@ final class OciRegistryHttp {
             }
             target.append("scope=").append(URLEncoder.encode(scope, StandardCharsets.UTF_8));
             URI tokenUri = URI.create(target.toString());
-            HttpRequest.Builder request = HttpRequest.newBuilder(tokenUri).timeout(timeout);
+            Duration effective = effectiveTimeout();
+            HttpRequest.Builder request = HttpRequest.newBuilder(tokenUri).timeout(effective);
             if (credentials != null) request.header("Authorization", credentials.basicHeader());
-            HttpResponse<byte[]> response = await(http.sendAsync(request.GET().build(), BodyHandlers.ofByteArray()), tokenUri);
+            HttpResponse<byte[]> response = await(
+                    http.sendAsync(request.GET().build(), BoundedBody.bytes(MAX_TOKEN_RESPONSE_BYTES, "the token response")), tokenUri, effective);
             if (response.statusCode() != 200) {
                 auth.invalidate();
                 throw new StoreException("Registry token service refused the request (HTTP " + response.statusCode() + ")"

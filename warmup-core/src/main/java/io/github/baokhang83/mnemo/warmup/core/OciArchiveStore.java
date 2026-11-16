@@ -44,11 +44,15 @@ public final class OciArchiveStore implements ArchiveStore {
     private static final String TITLE_ANNOTATION = "org.opencontainers.image.title";
     private static final String FINGERPRINT_PREFIX = "sha256:";
     private static final String TAG_PREFIX = "fp-";
+    /** Ceilings for what is read into memory: a hostile registry must not be able to exhaust the heap (same values as the Go launcher). */
+    private static final long MAX_MANIFEST_BYTES = 1L << 20;
+    private static final long MAX_CONFIG_BYTES = 8L << 20;
     private static final Pattern HEX64 = Pattern.compile("[0-9a-f]{64}");
     private final URI base;
     private final String repository;
     private final Duration timeout;
     private final OciRegistryHttp registry;
+    private volatile FetchLimits limits;
 
     private OciArchiveStore(URI base, String repository, RegistryAuth auth, Duration timeout) {
         this.base = base;
@@ -74,6 +78,16 @@ public final class OciArchiveStore implements ArchiveStore {
         ParsedReference ref = parse(reference);
         URI base = URI.create((plainHttp ? "http://" : "https://") + ref.host());
         return new OciArchiveStore(base, ref.repository(), auth, timeout);
+    }
+
+    /**
+     * Applies the pull-side limits (total deadline, largest archive) and starts the deadline now. Call it once, right before a fetch.
+     * They never apply to {@link #put}: the trainer must stay free to publish what it trained.
+     */
+    public OciArchiveStore withFetchLimits(FetchLimits fetchLimits) {
+        this.limits = fetchLimits;
+        registry.startDeadline(fetchLimits);
+        return this;
     }
 
     /** The {@code host[:port]} of an {@code oci://} reference, for looking up credentials. */
@@ -141,7 +155,7 @@ public final class OciArchiveStore implements ArchiveStore {
     @SuppressWarnings("unchecked")
     public Inspection inspect(String fingerprint) {
         String tag = tagFor(fingerprint);
-        HttpResponse<byte[]> r = call("GET", manifestUri(tag), Map.of("Accept", MANIFEST_TYPE), null, BodyHandlers.ofByteArray(), "pull");
+        HttpResponse<byte[]> r = call("GET", manifestUri(tag), Map.of("Accept", MANIFEST_TYPE), null, BoundedBody.bytes(MAX_MANIFEST_BYTES, "a manifest"), "pull");
         if (r.statusCode() == 404) {
             return Inspection.absent();
         }
@@ -149,6 +163,7 @@ public final class OciArchiveStore implements ArchiveStore {
             throw failure("read the manifest", r);
         }
         String configDigest;
+        long configSize;
         String layerDigest;
         long layerSize;
         try {
@@ -161,12 +176,16 @@ public final class OciArchiveStore implements ArchiveStore {
             }
             Map<String, Object> layer = (Map<String, Object>) layers.get(0);
             configDigest = String.valueOf(config.get("digest"));
+            configSize = ((Number) config.get("size")).longValue();
             layerDigest = String.valueOf(layer.get("digest"));
             layerSize = ((Number) layer.get("size")).longValue();
         } catch (RuntimeException e) {
             return Inspection.broken("the manifest is unreadable");
         }
-        HttpResponse<byte[]> configResponse = call("GET", blobUri(configDigest), Map.of(), null, BodyHandlers.ofByteArray(), "pull");
+        if (configSize <= 0 || configSize > MAX_CONFIG_BYTES) {
+            return Inspection.broken("the manifest blob declares " + configSize + " bytes, outside the allowed 1 to " + MAX_CONFIG_BYTES);
+        }
+        HttpResponse<byte[]> configResponse = call("GET", blobUri(configDigest), Map.of(), null, BoundedBody.bytes(MAX_CONFIG_BYTES, "the manifest blob"), "pull");
         if (configResponse.statusCode() == 404) {
             return Inspection.broken("the manifest blob " + configDigest + " is missing");
         }
@@ -251,7 +270,7 @@ public final class OciArchiveStore implements ArchiveStore {
     @SuppressWarnings("unchecked")
     public Optional<StoredArchive> get(String fingerprint, Path targetDir) {
         String tag = tagFor(fingerprint);
-        HttpResponse<byte[]> r = call("GET", manifestUri(tag), Map.of("Accept", MANIFEST_TYPE), null, BodyHandlers.ofByteArray(), "pull");
+        HttpResponse<byte[]> r = call("GET", manifestUri(tag), Map.of("Accept", MANIFEST_TYPE), null, BoundedBody.bytes(MAX_MANIFEST_BYTES, "a manifest"), "pull");
         if (r.statusCode() == 404) {
             return Optional.empty();
         }
@@ -276,8 +295,25 @@ public final class OciArchiveStore implements ArchiveStore {
             throw new StoreException("Registry returned a malformed manifest for " + tag, e);
         }
 
+        FetchLimits fetchLimits = limits;
+        long declaredLayerSize;
+        long declaredConfigSize;
+        try {
+            declaredLayerSize = ((Number) layer.get("size")).longValue();
+            declaredConfigSize = ((Number) config.get("size")).longValue();
+        } catch (ClassCastException | NullPointerException e) {
+            throw new StoreException("Registry returned a manifest without usable sizes for " + tag, e);
+        }
+        if (fetchLimits != null && (declaredLayerSize <= 0 || declaredLayerSize > fetchLimits.maxArchiveBytes())) {
+            throw new StoreException("The archive declares " + declaredLayerSize + " bytes, outside the allowed 1 to "
+                    + fetchLimits.maxArchiveBytes() + " (" + FetchLimits.ENV_MAX_ARCHIVE + "); not downloading it");
+        }
+        if (declaredConfigSize <= 0 || declaredConfigSize > MAX_CONFIG_BYTES) {
+            throw new StoreException("The manifest blob of " + tag + " declares " + declaredConfigSize + " bytes, outside the allowed 1 to " + MAX_CONFIG_BYTES);
+        }
+
         String configDigest = String.valueOf(config.get("digest"));
-        HttpResponse<byte[]> configResponse = call("GET", blobUri(configDigest), Map.of(), null, BodyHandlers.ofByteArray(), "pull");
+        HttpResponse<byte[]> configResponse = call("GET", blobUri(configDigest), Map.of(), null, BoundedBody.bytes(MAX_CONFIG_BYTES, "the manifest blob"), "pull");
         if (configResponse.statusCode() != 200) {
             throw failure("fetch config", configResponse);
         }
@@ -329,6 +365,10 @@ public final class OciArchiveStore implements ArchiveStore {
         Path tmp = null;
         try {
             Files.createDirectories(target.toAbsolutePath().getParent());
+            long free = freeBytes(target.toAbsolutePath().getParent());
+            if (free >= 0 && free < size) {
+                throw new StoreException("Only " + free + " bytes are free in " + target.toAbsolutePath().getParent() + ", the archive needs " + size);
+            }
             tmp = Files.createTempFile(target.toAbsolutePath().getParent(), target.getFileName().toString(), ".part");
             HttpResponse<InputStream> r = call("GET", source, Map.of(), null, BodyHandlers.ofInputStream(), "pull");
             if (r.statusCode() != 200) {
@@ -363,6 +403,8 @@ public final class OciArchiveStore implements ArchiveStore {
     private long copyWithIdleLimit(InputStream in, Path target, long expectedSize) throws IOException {
         long[] lastProgress = {System.nanoTime()};
         boolean[] stalled = {false};
+        boolean[] deadlineHit = {false};
+        long deadlineAt = registry.deadlineAtNanos();
         var watchdog = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "oci-download-watchdog");
             t.setDaemon(true);
@@ -370,7 +412,15 @@ public final class OciArchiveStore implements ArchiveStore {
         });
         long period = Math.max(50, Math.min(1000, timeout.toMillis() / 4));
         watchdog.scheduleAtFixedRate(() -> {
-            if (System.nanoTime() - lastProgress[0] > timeout.toNanos()) {
+            // The total deadline ends the download however steadily bytes arrive; the idle timeout only catches silence.
+            if (deadlineAt != 0 && System.nanoTime() - deadlineAt > 0) {
+                deadlineHit[0] = true;
+                try {
+                    in.close();
+                } catch (IOException ignored) {
+                    // the read below fails and reports the deadline
+                }
+            } else if (System.nanoTime() - lastProgress[0] > timeout.toNanos()) {
                 stalled[0] = true;
                 try {
                     in.close();
@@ -391,6 +441,9 @@ public final class OciArchiveStore implements ArchiveStore {
                 out.write(buffer, 0, n);
             }
         } catch (IOException e) {
+            if (deadlineHit[0]) {
+                throw registry.deadlineExceeded();
+            }
             if (stalled[0]) {
                 throw new StoreException("Download stalled: no data for " + timeout.toSeconds() + " s", e);
             }
@@ -399,6 +452,15 @@ public final class OciArchiveStore implements ArchiveStore {
             watchdog.shutdownNow();
         }
         return total;
+    }
+
+    /** Space available to this process in {@code dir}, or -1 when it cannot be read (the check is then skipped). */
+    private static long freeBytes(Path dir) {
+        try {
+            return Files.getFileStore(dir).getUsableSpace();
+        } catch (IOException e) {
+            return -1;
+        }
     }
 
     private static Map<String, Object> descriptor(String mediaType, String digest, long size) {

@@ -333,3 +333,41 @@ func TestOversizedOrSpecialFilesInTheCacheDirectoryAreNotRead(t *testing.T) {
 		})
 	}
 }
+
+// The archive is hashed from one open file: a path that has become a named pipe, or a file whose size is not the declared one, is refused
+// and never waited for.
+func TestTheArchiveIsHashedFromOneOpenFile(t *testing.T) {
+	dir := t.TempDir()
+	good := dir + "/good"
+	os.WriteFile(good, []byte("0123456789"), 0o644)
+	want := digestOf([]byte("0123456789"))[len("sha256:"):]
+	if got, err := sha256Regular(good, 10); err != nil || got != want {
+		t.Fatalf("the declared size must hash: %q %v", got, err)
+	}
+	if _, err := sha256Regular(good, 9); err == nil {
+		t.Fatal("a file longer than declared must be refused")
+	}
+	if _, err := sha256Regular(good, 11); err == nil {
+		t.Fatal("a file shorter than declared must be refused")
+	}
+	if _, err := sha256Regular(dir, 0); err == nil {
+		t.Fatal("a directory must be refused")
+	}
+	if _, err := sha256Regular(dir+"/missing", 1); err == nil {
+		t.Fatal("a missing file must be refused")
+	}
+	pipe := dir + "/pipe"
+	if err := syscall.Mkfifo(pipe, 0o644); err != nil {
+		t.Skip("cannot make a named pipe here:", err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := sha256Regular(pipe, 10); done <- err }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a named pipe must be refused")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("hashing waited on a named pipe")
+	}
+}

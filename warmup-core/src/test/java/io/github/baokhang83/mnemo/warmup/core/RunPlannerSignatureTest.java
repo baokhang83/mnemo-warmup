@@ -319,4 +319,90 @@ class RunPlannerSignatureTest {
             writer.join(5_000);
         }
     }
+
+    // ---- the archive is hashed from one open file, never checked and then opened ----
+
+    @Test
+    void theArchiveIsHashedOnlyIfItIsExactlyTheDeclaredSize(@TempDir Path dir) throws Exception {
+        byte[] content = "0123456789".getBytes(StandardCharsets.UTF_8);
+        Path file = Files.write(dir.resolve("a"), content);
+        assertEquals(sha256(content).substring("sha256:".length()), RunPlanner.sha256Snapshot(file, 10));
+        assertEquals(null, RunPlanner.sha256Snapshot(file, 9), "longer than declared");
+        assertEquals(null, RunPlanner.sha256Snapshot(file, 11), "shorter than declared");
+        assertEquals(null, RunPlanner.sha256Snapshot(dir, 10), "a directory");
+        assertEquals(null, RunPlanner.sha256Snapshot(dir.resolve("missing"), 10));
+    }
+
+    @Test
+    void anArchiveThatIsANamedPipeIsGivenUpOnAndTheApplicationStartsPlain(@TempDir Path dir) throws Exception {
+        Cache c = cache(dir);
+        SigningKey key = SigningKey.generate();
+        sign(c, key, REPOSITORY);
+        // the path is a pipe from the start: fetch could not have written this, and opening it must never wait
+        Files.delete(c.archive());
+        org.junit.jupiter.api.Assumptions.assumeTrue(makeFifo(c.archive()), "mkfifo is not available here");
+        long saved = RunPlanner.readTimeoutMillis;
+        RunPlanner.readTimeoutMillis = 400;
+        try {
+            long started = System.nanoTime();
+            assertEquals(null, RunPlanner.sha256Snapshot(c.archive(), Files.size(c.manifestFile()))); // any declared size: it cannot be opened
+            assertTrue(Duration.ofNanos(System.nanoTime() - started).toSeconds() < 4, "it must give up quickly");
+            var plan = plan(c, trusting(key));
+            assertFalse(plan.archiveUsed(), plan.notes().toString());
+            assertEquals(launch(c), plan.command());
+        } finally {
+            RunPlanner.readTimeoutMillis = saved;
+            unblock(c.archive());
+        }
+    }
+
+    /** Opens a named pipe for writing and closes it: a reader blocked opening it then gets through and ends. */
+    private static void unblock(Path pipe) {
+        Thread t = new Thread(() -> {
+            try (var out = java.nio.channels.FileChannel.open(pipe, java.nio.file.StandardOpenOption.WRITE)) {
+                // opened and closed: the reader sees end of file
+            } catch (IOException e) {
+                // nobody was waiting
+            }
+        });
+        t.setDaemon(true);
+        t.start();
+    }
+
+    // a timed-out read cannot be cancelled, so a process that calls the planner again and again must not accumulate blocked threads
+    @Test
+    void blockedReadersAreCappedAndCanBeReleased(@TempDir Path dir) throws Exception {
+        Path pipe = dir.resolve("pipe");
+        org.junit.jupiter.api.Assumptions.assumeTrue(makeFifo(pipe), "mkfifo is not available here");
+        Path normal = Files.write(dir.resolve("normal"), new byte[10]);
+        long savedTimeout = RunPlanner.readTimeoutMillis;
+        int savedCap = RunPlanner.maxBlockedReaders;
+        int before = RunPlanner.liveReaders();
+        RunPlanner.readTimeoutMillis = 150;
+        RunPlanner.maxBlockedReaders = before + 2;
+        try {
+            assertEquals(null, RunPlanner.snapshot(pipe, 10));
+            assertEquals(null, RunPlanner.snapshot(pipe, 10));
+            assertEquals(before + 2, RunPlanner.liveReaders(), "two readers are stuck on the pipe");
+            // at the cap, no further reader is started: a plain start, quickly, and no new thread
+            long started = System.nanoTime();
+            assertEquals(null, RunPlanner.snapshot(normal, 10), "refused at the cap even for a good file");
+            assertTrue(Duration.ofNanos(System.nanoTime() - started).toMillis() < 100);
+            assertEquals(before + 2, RunPlanner.liveReaders());
+        } finally {
+            RunPlanner.readTimeoutMillis = savedTimeout;
+            for (int i = 0; i < 4; i++) {
+                unblock(pipe); // a writer lets each stuck reader through
+                Thread.sleep(150);
+            }
+            RunPlanner.maxBlockedReaders = savedCap;
+        }
+        // released: the readers ended and the count came back down
+        long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        while (RunPlanner.liveReaders() > before && System.nanoTime() < deadline) {
+            Thread.sleep(50);
+        }
+        assertEquals(before, RunPlanner.liveReaders(), "stuck readers are released once someone opens the pipe");
+        assertEquals(10, RunPlanner.snapshot(normal, 10).length, "and reads work again");
+    }
 }

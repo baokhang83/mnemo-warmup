@@ -86,8 +86,12 @@ public final class RunPlanner {
         }
         // Verify before use (§2): the size alone would accept same-length corruption, so hash the bytes
         // that are about to be handed to the JVM.
-        String archiveSha256 = sha256Hex(archive);
+        String archiveSha256 = sha256Snapshot(archive, trained.archive().sizeBytes());
         timer.lap("archive-sha256");
+        if (archiveSha256 == null) {
+            notes.add("archive " + archive + " could not be read as the " + trained.archive().sizeBytes() + " bytes the manifest declares; starting without it");
+            return plain;
+        }
         if (!trained.archive().sha256().equals(archiveSha256)) {
             notes.add("archive " + archive + " does not match the SHA-256 in its manifest; starting without it");
             return plain;
@@ -171,7 +175,7 @@ public final class RunPlanner {
             return "the signature file is unreadable";
         }
         var statement = new SignedStatement(
-                trained.fingerprint(), "sha256:" + sha256Hex(manifestBytes), "sha256:" + archiveSha256, sizeOf(archive), contents.repository());
+                trained.fingerprint(), "sha256:" + sha256Hex(manifestBytes), "sha256:" + archiveSha256, trained.archive().sizeBytes(), contents.repository());
         return switch (verifier.verify(statement, contents.signature())) {
             case VALID -> null;
             case UNKNOWN_KEY -> "it is signed by a key that is not trusted (" + contents.signature().keyId() + ")";
@@ -193,8 +197,22 @@ public final class RunPlanner {
     private static final int MAX_SIGNATURE_BYTES = 4 << 10;
     private static final long MAX_MANIFEST_BYTES = 8L << 20;
 
-    /** How long a read of one of these small files may take before it is given up on (a named pipe never finishes). */
+    /** How long opening one of these files may take before it is given up on (opening a named pipe waits for a writer, forever). */
     static volatile long readTimeoutMillis = 5_000;
+    /** How long hashing the archive may take once it is open. A 1 GiB archive takes a few seconds; a writer trickling bytes takes forever. */
+    static volatile long hashTimeoutMillis = 120_000;
+    /**
+     * A timed-out read cannot be cancelled: a thread blocked opening a named pipe stays blocked until some writer opens it or the process
+     * exits. The planner is a short process that exits right after it prints the command, so this costs one thread for a few seconds. For
+     * a long-lived process that calls the planner repeatedly the number of blocked readers is capped: once that many are stuck, reads are
+     * refused (a plain start) instead of accumulating more.
+     */
+    static volatile int maxBlockedReaders = 8;
+    private static final java.util.concurrent.atomic.AtomicInteger LIVE_READERS = new java.util.concurrent.atomic.AtomicInteger();
+
+    static int liveReaders() {
+        return LIVE_READERS.get();
+    }
 
     /** The file's text, or null when it is missing, unreadable, larger than {@code max} bytes, or does not answer in time. */
     private static String readOrNull(Path file, int max) {
@@ -206,20 +224,20 @@ public final class RunPlanner {
      * The file's bytes read once, or null when it is missing, is a directory, is larger than {@code max} bytes, or does not finish within
      * {@link #readTimeoutMillis}. The cache directory is a volume other processes may be able to write, so a file here is never read
      * without a bound. The read runs on a daemon thread: opening a named pipe blocks until someone writes to it, and Java cannot open a
-     * file without blocking, so the time limit is what keeps the application's start from hanging (the thread dies with the process).
+     * file without blocking, so the time limit is what keeps the application's start from hanging.
      */
     static byte[] snapshot(Path file, long max) {
         var result = new java.util.concurrent.CompletableFuture<byte[]>();
-        Thread reader = new Thread(() -> {
+        if (!startReader(() -> {
             try (var in = Files.newInputStream(file)) {
                 byte[] bytes = in.readNBytes((int) (max + 1));
                 result.complete(bytes.length > max ? null : bytes);
             } catch (IOException | RuntimeException e) {
                 result.complete(null);
             }
-        }, "mnemo-warmup-read");
-        reader.setDaemon(true);
-        reader.start();
+        })) {
+            return null;
+        }
         try {
             return result.get(readTimeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS);
         } catch (java.util.concurrent.TimeoutException | java.util.concurrent.ExecutionException e) {
@@ -230,17 +248,65 @@ public final class RunPlanner {
         }
     }
 
-    private static String sha256Hex(Path file) {
-        try (var in = Files.newInputStream(file)) {
-            var md = java.security.MessageDigest.getInstance("SHA-256");
-            byte[] buffer = new byte[64 * 1024];
-            for (int n; (n = in.read(buffer)) > 0; ) {
-                md.update(buffer, 0, n);
+    /**
+     * The SHA-256 of an archive that is exactly {@code expectedSize} bytes, or null when it cannot be opened in time, is a different size
+     * (longer, or shorter), or cannot be read. The archive is opened here, not checked with {@code isRegularFile} first: a check followed by
+     * an open leaves a moment in which the path can be swapped for a named pipe, and opening one would block the planner.
+     */
+    static String sha256Snapshot(Path file, long expectedSize) {
+        var opened = new java.util.concurrent.CompletableFuture<Boolean>();
+        var result = new java.util.concurrent.CompletableFuture<String>();
+        if (!startReader(() -> {
+            try (var in = Files.newInputStream(file)) {
+                opened.complete(true);
+                var md = java.security.MessageDigest.getInstance("SHA-256");
+                byte[] buffer = new byte[64 * 1024];
+                long total = 0;
+                for (int n; (n = in.read(buffer)) >= 0; ) {
+                    total += n;
+                    if (total > expectedSize) {
+                        result.complete(null);
+                        return;
+                    }
+                    md.update(buffer, 0, n);
+                }
+                result.complete(total == expectedSize ? java.util.HexFormat.of().formatHex(md.digest()) : null);
+            } catch (IOException | java.security.NoSuchAlgorithmException | RuntimeException e) {
+                opened.complete(false);
+                result.complete(null);
             }
-            return java.util.HexFormat.of().formatHex(md.digest());
-        } catch (IOException | java.security.NoSuchAlgorithmException e) {
-            throw new IllegalStateException("Cannot hash " + file + ": " + e.getMessage(), e);
+        })) {
+            return null;
         }
+        try {
+            if (!opened.get(readTimeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                return null;
+            }
+            return result.get(hashTimeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (java.util.concurrent.TimeoutException | java.util.concurrent.ExecutionException e) {
+            return null;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        }
+    }
+
+    /** Runs {@code task} on a daemon thread, unless too many earlier readers are still stuck (see {@link #maxBlockedReaders}). */
+    private static boolean startReader(Runnable task) {
+        if (LIVE_READERS.get() >= maxBlockedReaders) {
+            return false;
+        }
+        LIVE_READERS.incrementAndGet();
+        Thread reader = new Thread(() -> {
+            try {
+                task.run();
+            } finally {
+                LIVE_READERS.decrementAndGet();
+            }
+        }, "mnemo-warmup-read");
+        reader.setDaemon(true);
+        reader.start();
+        return true;
     }
 
     private static long sizeOf(Path file) {

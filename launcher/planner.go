@@ -187,7 +187,7 @@ func decide(cmd []string, env map[string]string, t *timer) (planResult, bool) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		archiveSum, archiveErr = sha256File(archivePath)
+		archiveSum, archiveErr = sha256Regular(archivePath, m.Archive.SizeBytes)
 	}()
 	files, ok := classpathFiles(jar)
 	var live []cpEntry
@@ -722,6 +722,33 @@ func sameSecond(a, b *string) bool {
 		return false
 	}
 	return ta.Unix() == tb.Unix()
+}
+
+// sha256Regular hashes an archive that is exactly size bytes, opening it once and checking what was opened. A check on the path followed by
+// an open leaves a moment in which the path can be swapped for a named pipe, and a blocking open would wait for a writer forever; here the
+// open never blocks, and the opened file must be a regular file of the declared size, read no further than that size.
+func sha256Regular(path string, size int64) (string, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() || info.Size() != size {
+		return "", errors.New("not the archive fetch wrote")
+	}
+	h := sha256.New()
+	n, err := io.CopyBuffer(h, io.LimitReader(f, size+1), make([]byte, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	if n != size {
+		return "", errors.New("the archive changed size while it was read")
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func sha256File(path string) (string, error) {

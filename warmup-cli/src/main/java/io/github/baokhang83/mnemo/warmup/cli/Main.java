@@ -4,6 +4,7 @@ import io.github.baokhang83.mnemo.warmup.core.CacheStrategy;
 import io.github.baokhang83.mnemo.warmup.core.AppTrainer;
 import io.github.baokhang83.mnemo.warmup.core.ArchiveFetcher;
 import io.github.baokhang83.mnemo.warmup.core.ArchiveManifest;
+import io.github.baokhang83.mnemo.warmup.core.ArchiveVerifier;
 import io.github.baokhang83.mnemo.warmup.core.BenchReport;
 import io.github.baokhang83.mnemo.warmup.core.StartupBench;
 import io.github.baokhang83.mnemo.warmup.core.CacheType;
@@ -18,6 +19,7 @@ import io.github.baokhang83.mnemo.warmup.core.RegistryAuth;
 import io.github.baokhang83.mnemo.warmup.core.RegistryCredentials;
 import io.github.baokhang83.mnemo.warmup.core.KubernetesLeaseLock;
 import io.github.baokhang83.mnemo.warmup.core.RunPlanner;
+import io.github.baokhang83.mnemo.warmup.core.SigningKey;
 import io.github.baokhang83.mnemo.warmup.core.TrainingLock;
 import io.github.baokhang83.mnemo.warmup.core.TrainingOrchestrator;
 import io.github.baokhang83.mnemo.warmup.core.StoreException;
@@ -42,7 +44,7 @@ import picocli.CommandLine.Spec;
         mixinStandardHelpOptions = true,
         versionProvider = Main.VersionProvider.class,
         description = "Build, validate and benchmark AppCDS / Leyden AOT caches.",
-        subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class, Main.Fetch.class, Main.Run.class, Main.Train.class, Main.Inject.class})
+        subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class, Main.Fetch.class, Main.Run.class, Main.Train.class, Main.Inject.class, Main.Keygen.class})
 public class Main implements Runnable {
 
     @Command(name = "inject", mixinStandardHelpOptions = true,
@@ -248,6 +250,119 @@ public class Main implements Runnable {
         return OciArchiveStore.withAuth(store, plainHttp, login, Duration.ofSeconds(timeoutSeconds));
     }
 
+    /** The public keys a pod trusts, as {@code id=base64,id=base64} (docs/adr/0013-signed-archives.md). */
+    static final String ENV_SIGNING_PUBLIC_KEYS = ArchiveVerifier.ENV_PUBLIC_KEYS;
+    /** The file {@code keygen} wrote, mounted for the trainer. */
+    static final String ENV_SIGNING_KEY_FILE = SigningKey.ENV_KEY_FILE;
+
+    /**
+     * Pull side. A key list in the environment makes a valid signature mandatory: archives that are unsigned, signed by another key
+     * or altered are treated as missing. A variable that is present enforces even when it is blank, and a list in which nothing is
+     * usable trusts nothing, so a typo or an empty value from a template can never switch the check off; it only costs the cache.
+     * Without the variable, archives are accepted on their digests alone.
+     */
+    static OciArchiveStore withSignatureCheck(OciArchiveStore store, java.util.Map<String, String> env, java.util.function.Consumer<String> note) {
+        String entries = env.get(ENV_SIGNING_PUBLIC_KEYS);
+        if (entries == null) {
+            return store;
+        }
+        ArchiveVerifier verifier = ArchiveVerifier.fromEntries(entries, note);
+        if (verifier.isEmpty()) {
+            note.accept(ENV_SIGNING_PUBLIC_KEYS + " lists no usable key, so every archive will be refused");
+        }
+        return store.withVerifier(verifier);
+    }
+
+    /**
+     * Publish side. With a key file in the environment the store signs everything it publishes. If the file is named but cannot be used
+     * (blank, missing, unreadable, malformed) this throws: asked to sign, the trainer refuses to publish unsigned.
+     *
+     * <p>The trainer also checks what it finds against the pods' trusted list, when that list is given: an entry any trusted key signed is
+     * complete, so two trainers that use different trusted keys never overwrite each other, and a rotation moves to the new key only
+     * once the old one is dropped from the list. If the trainer's own key is not on that list, every archive it published would be
+     * refused by every pod, so it refuses to run. Without a list it trusts only its own key.
+     */
+    static OciArchiveStore withSigning(OciArchiveStore store, java.util.Map<String, String> env, boolean republishUnsigned) {
+        String file = env.get(ENV_SIGNING_KEY_FILE);
+        if (file == null) {
+            return store;
+        }
+        if (file.isBlank()) {
+            throw new IllegalArgumentException(ENV_SIGNING_KEY_FILE + " is set but empty; refusing to publish unsigned archives");
+        }
+        SigningKey key = SigningKey.fromFile(Path.of(file));
+        String listed = env.get(ENV_SIGNING_PUBLIC_KEYS);
+        ArchiveVerifier trusted = ArchiveVerifier.fromEntries(listed != null ? listed : key.publicKeyEntry(), n -> { });
+        if (listed != null && !trusted.trusts(key.keyId())) {
+            throw new IllegalArgumentException("the signing key " + key.keyId() + " is not in " + ENV_SIGNING_PUBLIC_KEYS
+                    + ": every pod would refuse the archives it publishes. Add its public key to the list, or sign with a listed key");
+        }
+        store.withSigningKey(key);
+        return republishUnsigned ? store.withVerifier(trusted) : store;
+    }
+
+    @Command(name = "keygen",
+            mixinStandardHelpOptions = true,
+            description = "Create an Ed25519 key pair for signing archives (docs/adr/0013-signed-archives.md). The private key goes to a "
+                    + "file that is created readable by you only and never overwritten; only the public key is printed.")
+    static class Keygen implements Callable<Integer> {
+
+        @Spec
+        CommandSpec spec;
+
+        @Option(names = "--out", defaultValue = "mnemo-warmup-signing.key",
+                description = "Where to write the private key file. It must not exist yet. Default: ${DEFAULT-VALUE}.")
+        Path out;
+
+        @Option(names = "--secret-name", defaultValue = "mnemo-warmup-signing",
+                description = "Name used in the printed kubectl command. Default: ${DEFAULT-VALUE}.")
+        String secretName;
+
+        @Override
+        public Integer call() {
+            var o = spec.commandLine().getOut();
+            var err = spec.commandLine().getErr();
+            if (!secretName.matches("[a-z0-9]([-a-z0-9.]*[a-z0-9])?")) {
+                err.println("error: --secret-name must be a valid Kubernetes name");
+                return 2;
+            }
+            SigningKey key = SigningKey.generate();
+            try {
+                createPrivateFile(out, key.fileText());
+            } catch (java.nio.file.FileAlreadyExistsException e) {
+                err.println("error: " + out + " already exists; it is never overwritten. Choose another --out, or remove it yourself.");
+                return 2;
+            } catch (java.io.IOException e) {
+                err.println("error: cannot write " + out + ": " + e.getMessage());
+                return 2;
+            }
+            o.println("Key id:      " + key.keyId());
+            o.println("Public key:  " + key.publicKeyEntry());
+            o.println();
+            o.println("The private key is in " + out + " (readable by you only). It is never printed; keep it secret and back it up.");
+            o.println("Losing it does not stop any pod: archives signed with it keep working until you roll out a new key.");
+            o.println();
+            o.println("Give the trainer the private key as a Secret:");
+            o.println("  kubectl -n <namespace> create secret generic " + secretName + " --from-file=signing.key=" + out);
+            o.println("Give the pods the public key (it may be shared freely):");
+            o.println("  MNEMO_WARMUP_SIGNING_PUBLIC_KEYS=" + key.publicKeyEntry());
+            return 0;
+        }
+
+        /** Creates the file with owner-only permissions from the start (never readable by others, not even briefly), and refuses to overwrite. */
+        static void createPrivateFile(Path file, String content) throws java.io.IOException {
+            try {
+                Files.createFile(file, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                        java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")));
+            } catch (UnsupportedOperationException notPosix) {
+                // Fail closed: a file created with inherited permissions could be readable by other users, and the promise is owner-only.
+                throw new java.io.IOException("this file system cannot restrict a file to its owner; create the key on a POSIX file system "
+                        + "(Linux or macOS), or in a directory only you can read, with --out");
+            }
+            Files.writeString(file, content, java.nio.charset.StandardCharsets.UTF_8);
+        }
+    }
+
     @Command(name = "push",
             mixinStandardHelpOptions = true,
             description = "Upload the archive and manifest produced by build to an OCI registry, tagged by fingerprint.")
@@ -299,7 +414,7 @@ public class Main implements Runnable {
                 if (timeoutSeconds <= 0) {
                     throw new IllegalArgumentException("--timeout-seconds must be positive");
                 }
-                var target = openStore(store, registryAuth, plainHttp, timeoutSeconds);
+                var target = withSigning(openStore(store, registryAuth, plainHttp, timeoutSeconds), System.getenv(), false);
                 out.printf("Uploading %s (%.1f MB) to %s%n", archive, manifest.archive().sizeBytes() / 1_048_576.0, store);
                 target.put(manifest, archive);
                 out.printf("Stored fingerprint %s as tag %s%n", manifest.fingerprint(), OciArchiveStore.tagFor(manifest.fingerprint()));
@@ -400,8 +515,10 @@ public class Main implements Runnable {
                 }
                 timer.lap("extract-and-hash-classpath");
                 // The total deadline starts here, after the local hashing: it bounds what the registry can make the pod wait.
-                var archiveStore = openStore(store, registryAuth, plainHttp, storeTimeoutSeconds)
-                        .withFetchLimits(FetchLimits.fromEnvironment(System.getenv(), note -> e.println("fetch: " + note)));
+                var archiveStore = withSignatureCheck(
+                        openStore(store, registryAuth, plainHttp, storeTimeoutSeconds)
+                                .withFetchLimits(FetchLimits.fromEnvironment(System.getenv(), note -> e.println("fetch: " + note))),
+                        System.getenv(), note -> e.println("fetch: " + note));
                 var result = new ArchiveFetcher().fetch(archiveStore, live, out);
                 timer.lap("store-lookup-download-verify");
                 result.notes().forEach(n -> e.println("fetch: " + n));
@@ -739,7 +856,7 @@ public class Main implements Runnable {
                 try {
                     TrainingLock trainingLock = lock.equals("none") ? TrainingLock.none() : KubernetesLeaseLock.inCluster(Duration.ofSeconds(leaseSeconds));
                     outcome = new TrainingOrchestrator().ensure(
-                            live, openStore(store, registryAuth, plainHttp, storeTimeoutSeconds), trainingLock, training);
+                            live, withSigning(openStore(store, registryAuth, plainHttp, storeTimeoutSeconds), System.getenv(), true), trainingLock, training);
                 } catch (StoreException e) {
                     outcome = new TrainingOrchestrator.Outcome(TrainingOrchestrator.Status.FAILED, live.fingerprint(), e.getMessage());
                 }

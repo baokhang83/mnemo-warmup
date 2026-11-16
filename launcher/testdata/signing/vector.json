@@ -1,0 +1,37 @@
+{
+  "about": "Frozen test vector for the signed archive statement (ADR 0013). Java and Go must both reproduce 'text' and 'signature' exactly. The key is RFC 8032 section 7.1 TEST 1, a published test key: it protects nothing. keyId is the first 8 bytes (16 hex) of SHA-256 of the raw public key; publicKeyEntry is the 'id=base64' form pods are given. weakPublicKeys are encodings no honest key has (small-order points, their sign-bit variants and non-canonical spellings): both languages must refuse to trust them.",
+  "keyId": "21fe31dfa154a261",
+  "publicKey": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+  "publicKeyBase64": "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=",
+  "publicKeyEntry": "21fe31dfa154a261=11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=",
+  "seed": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+  "seedBase64": "nWGxne/9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A=",
+  "signature": "0eeb75c1c4c5d0a8c54e61ee0f3020547584e73e7e0f5a654bafc1625388a1faea90dc49ed4faf035758171b933e77f1793be42a9cc24b022bff7e50ff26340c",
+  "signatureFile": "mnemo-warmup-signature-v1\nkeyid: 21fe31dfa154a261\nsignature: Dut1wcTF0KjFTmHuDzAgVHWE5z5+D1plS6/BYlOIofrqkNxJ7U+vA1dYFxuTPnfxeTvkKpzCSwIr/35Q/yY0DA==\nrepository: team/app\n",
+  "statement": {
+    "archive": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "manifest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "repository": "team/app",
+    "size": 52428800
+  },
+  "text": "mnemo-warmup-archive-v1\nfingerprint: sha256:1111111111111111111111111111111111111111111111111111111111111111\nmanifest: sha256:2222222222222222222222222222222222222222222222222222222222222222\narchive: sha256:3333333333333333333333333333333333333333333333333333333333333333\nsize: 52428800\nrepository: team/app\n",
+  "weakPublicKeys": [
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000080",
+    "0100000000000000000000000000000000000000000000000000000000000000",
+    "0100000000000000000000000000000000000000000000000000000000000080",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "efffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "efffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  ]
+}

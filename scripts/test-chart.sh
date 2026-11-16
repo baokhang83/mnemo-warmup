@@ -151,6 +151,46 @@ check "$app_part" "- exec" "pull Secret + image volume: the app still starts thr
 absent "$app_part" "- --store" "pull Secret + image volume: no fetch options in the application's args"
 if helm template rel "$CHART" "${BASE[@]}" --set tools.delivery=sidecar >/dev/null 2>&1; then fail "an unknown tools.delivery must be refused"; else ok "an unknown tools.delivery is refused"; fi
 
+echo "== signed archives (docs/adr/0013)"
+SIGKEYS="0123456789abcdef=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+out=$(helm template rel "$CHART" -n default "${BASE[@]}")
+absent "$out" "SIGNING" "signing is off by default: no trace of it in the chart"
+out=$(helm template rel "$PARENT" -n default)
+absent "$out" "SIGNING" "signing is off by default: no trace of it in the parent chart"
+absent "$out" "mnemo-signing-key" "signing is off by default: no key volume"
+out=$(helm template rel "$PARENT" -n default --set warmup.signing.publicKeys="$SIGKEYS" --set warmup.signing.keySecret=demo-signing)
+validate "signed archives (parent chart)" "$out"
+app_part=$(awk '/- name: app$/{f=1} f; /^---/{f=0}' <<<"$out")
+fetch_part=$(awk '/name: mnemo-warmup-fetch/,/name: app/' <<<"$out")
+trainer_part=$(awk '/kind: CronJob/,0' <<<"$out")
+check "$app_part" "MNEMO_WARMUP_SIGNING_PUBLIC_KEYS" "the application container gets the public keys (run checks again at every start)"
+check "$fetch_part" "MNEMO_WARMUP_SIGNING_PUBLIC_KEYS" "the fetch container gets the public keys"
+check "$app_part$fetch_part" "$SIGKEYS" "the key list is passed through as given"
+absent "$app_part$fetch_part" "demo-signing" "the private key's Secret is not mounted into the application or the fetch container"
+absent "$app_part$fetch_part" "MNEMO_WARMUP_SIGNING_KEY_FILE" "the application and fetch containers have no path to a private key"
+check "$trainer_part" "MNEMO_WARMUP_SIGNING_KEY_FILE" "the trainer is told where its signing key is"
+check "$trainer_part" "secretName: \"demo-signing\"" "the trainer mounts the key Secret"
+check "$trainer_part" "defaultMode: 0440" "the key file is readable by its owner and group (so a non-root trainer can read it through fsGroup)"
+check "$trainer_part" "MNEMO_WARMUP_SIGNING_PUBLIC_KEYS" "the trainer gets the pods' trusted list (it refuses to sign with a key that is not on it)"
+if helm template rel "$CHART" -n default "${BASE[@]}" --set signing.keySecret=Bad_Name >/dev/null 2>&1; then fail "a Secret name that is not a Kubernetes name must be refused"; else ok "the values schema refuses a bad signing.keySecret"; fi
+if helm template rel "$CHART" -n default "${BASE[@]}" --set-json 'signing.publicKeys=123' >/dev/null 2>&1; then fail "a number is not a key list"; else ok "the values schema refuses a signing.publicKeys that is not a string"; fi
+# the trainer's key file is a root-owned Secret readable by its group: a trainer known to run as non-root needs an fsGroup
+SECRET_ARGS=(-n default "${BASE[@]}" --set signing.keySecret=demo-signing)
+if helm template rel "$CHART" "${SECRET_ARGS[@]}" --set trainer.securityContext.runAsUser=10001 >/dev/null 2>&1; then fail "a non-root trainer without fsGroup must be refused"; else ok "a non-root trainer without fsGroup is refused at render"; fi
+if helm template rel "$CHART" "${SECRET_ARGS[@]}" --set trainer.securityContext.runAsNonRoot=true >/dev/null 2>&1; then fail "runAsNonRoot without fsGroup must be refused"; else ok "runAsNonRoot without fsGroup is refused at render"; fi
+if helm template rel "$CHART" "${SECRET_ARGS[@]}" --set trainer.podSecurityContext.runAsUser=10001 >/dev/null 2>&1; then fail "a non-root pod user without fsGroup must be refused"; else ok "a non-root pod user without fsGroup is refused at render"; fi
+msg=$(helm template rel "$CHART" "${SECRET_ARGS[@]}" --set trainer.securityContext.runAsUser=10001 2>&1 || true)
+check "$msg" "trainer.podSecurityContext.fsGroup" "the refusal names the fix"
+out=$(helm template rel "$CHART" "${SECRET_ARGS[@]}" --set trainer.securityContext.runAsUser=10001 --set trainer.securityContext.runAsNonRoot=true --set trainer.podSecurityContext.fsGroup=10001)
+check "$out" "fsGroup: 10001" "a non-root trainer with an fsGroup renders, and the pod carries the group"
+check "$out" "defaultMode: 0440" "and the key file is group-readable"
+helm template rel "$CHART" "${SECRET_ARGS[@]}" --set trainer.securityContext.runAsUser=0 >/dev/null 2>&1 && ok "a root trainer needs no fsGroup" || fail "a root trainer must render without fsGroup"
+helm template rel "$CHART" "${SECRET_ARGS[@]}" >/dev/null 2>&1 && ok "a trainer whose user the image decides renders (NOTES says to check)" || fail "an unknown trainer user must render"
+helm template rel "$CHART" -n default "${BASE[@]}" --set trainer.securityContext.runAsUser=10001 >/dev/null 2>&1 && ok "without a signing key no fsGroup is required" || fail "no key, no fsGroup requirement"
+# with an image volume there is no init container and the application's own entrypoint fetches, so it carries the keys
+out=$(helm template rel "$PARENT" -n default --set tools.delivery=image-volume --set warmup.tools.delivery=image-volume --set warmup.signing.publicKeys="$SIGKEYS")
+check "$(awk '/- name: app$/{f=1} f; /^---/{f=0}' <<<"$out")" "MNEMO_WARMUP_SIGNING_PUBLIC_KEYS" "image volume: the application container carries the public keys"
+
 echo "== example workload chart (examples/helm/example-app)"
 EXAMPLE="$WORK/examples/helm/example-app"
 helm dependency build "$EXAMPLE" >/dev/null 2>&1 || helm dependency update "$EXAMPLE" >/dev/null

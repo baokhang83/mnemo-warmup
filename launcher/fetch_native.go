@@ -275,12 +275,18 @@ func (l launcher) nativeLookup(o fetchOptions, env map[string]string, t *timer) 
 	if o.hasImageDigest {
 		digest = &o.imageDigest
 	}
+	var refusals []string
 	for _, cacheType := range candidates {
 		live := manifestJSON{SchemaVersion: schemaV1, CacheType: cacheType, ImageDigest: digest, JvmFlags: flags, Classpath: entries}
 		live.JDK.Vendor, live.JDK.RuntimeVersion, live.JDK.Version, live.JDK.FeatureVersion = rel.vendor, rel.runtime, rel.version, int64(feature)
 		fp := fingerprint(live)
 		hit, err := reg.fetchArchive(fp, live, o.out)
 		if errors.Is(err, errNotFound) {
+			continue
+		}
+		var refused untrusted
+		if errors.As(err, &refused) {
+			refusals = append(refusals, cacheType+": "+refused.why)
 			continue
 		}
 		if err != nil {
@@ -292,6 +298,10 @@ func (l launcher) nativeLookup(o fetchOptions, env map[string]string, t *timer) 
 		return hit, nil
 	}
 	t.lap("store-lookup-download-verify")
+	if len(refusals) > 0 {
+		_ = clearOutput(o.out)
+		return nil, registryError{strings.Join(refusals, "; ")}
+	}
 	return nil, nil
 }
 
@@ -306,7 +316,28 @@ func clearOutput(dir string) error {
 	if err := os.Remove(filepath.Join(dir, manifestFile)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("cannot remove the stale manifest in %s: %w", dir, err)
 	}
+	if err := os.Remove(filepath.Join(dir, signatureFile)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("cannot remove the stale signature in %s: %w", dir, err)
+	}
 	return nil
+}
+
+// untrusted is a candidate archive that exists but may not be used (unsigned, signed by a key that is not trusted, or altered). It is not
+// a registry failure: the next candidate is tried, as in the Java fetch.
+type untrusted struct{ why string }
+
+func (u untrusted) Error() string { return u.why }
+
+// signatureProblem is why the stored entry may not be used, or "" when it may. Only called when keys were configured.
+func (r *registry) signatureProblem(fp, manifestDigest string, layer ociDescriptor, keyID string, signature []byte, signed bool) string {
+	if !signed {
+		return "not signed"
+	}
+	statement := signedStatement{fingerprint: fp, manifest: manifestDigest, archive: layer.Digest, size: layer.Size, repository: r.repo}
+	if _, err := statement.text(); err != nil {
+		return "not something that can be signed (" + err.Error() + ")"
+	}
+	return r.keys.verify(statement, keyID, signature).problem(keyID)
 }
 
 // ---- the registry ----
@@ -343,6 +374,8 @@ func fetchLimits(env map[string]string, note func(format string, args ...any)) (
 }
 
 type registry struct {
+	enforce        bool          // MNEMO_WARMUP_SIGNING_PUBLIC_KEYS is set: a valid signature from a listed key is required
+	keys           signatureKeys // the usable ones; none usable with enforce set refuses every archive
 	base           *url.URL
 	repo           string
 	client         *http.Client
@@ -374,6 +407,15 @@ func (l launcher) openRegistry(o fetchOptions, env map[string]string) (*registry
 	}
 	r := &registry{base: &url.URL{Scheme: scheme, Host: host}, repo: repo, timeout: o.timeout}
 	r.deadlineLen, r.maxArchive = fetchLimits(env, l.note)
+	// A variable that is present enforces, even when it is blank: an empty value from a template or a typo must never switch the check
+	// off. A list with no usable key then refuses every archive, which only costs a cache.
+	if entries, present := env[envSigningPublicKeys]; present {
+		r.enforce = true
+		r.keys = parseSignatureKeys(entries, func(m string) { l.note("%s", m) })
+		if len(r.keys) == 0 {
+			l.note("%s lists no usable key, so every archive will be refused", envSigningPublicKeys)
+		}
+	}
 	r.deadline = time.Now().Add(r.deadlineLen)
 	cache, cacheErr := newNodeCacheClient(env)
 	if cacheErr != nil {
@@ -697,8 +739,9 @@ func (r *registry) fetchArchive(fp string, live manifestJSON, out string) (*fetc
 		return nil, err
 	}
 	var image struct {
-		Config ociDescriptor   `json:"config"`
-		Layers []ociDescriptor `json:"layers"`
+		Config      ociDescriptor     `json:"config"`
+		Layers      []ociDescriptor   `json:"layers"`
+		Annotations map[string]string `json:"annotations"`
 	}
 	if err := json.Unmarshal(body, &image); err != nil || image.Config.MediaType != ociConfigType || len(image.Layers) != 1 ||
 		image.Layers[0].MediaType != ociLayerType || !digestRe.MatchString(image.Config.Digest) || !digestRe.MatchString(image.Layers[0].Digest) {
@@ -730,6 +773,14 @@ func (r *registry) fetchArchive(fp string, live manifestJSON, out string) (*fetc
 	if stored.Archive == nil || !hex64Re.MatchString(stored.Archive.SHA256) || layer.Digest != "sha256:"+stored.Archive.SHA256 || layer.Size != stored.Archive.SizeBytes {
 		return nil, registryError{"the archive the registry declares differs from the one the stored manifest records"}
 	}
+	// Signed archives (docs/adr/0013): checked here, before the archive is requested, from what was observed (the fingerprint asked
+	// for, the digest of the manifest blob that was just verified, the declared archive digest and size, this repository).
+	keyID, signature, signed := storedSignature(image.Annotations)
+	if r.enforce {
+		if problem := r.signatureProblem(fp, image.Config.Digest, layer, keyID, signature, signed); problem != "" {
+			return nil, untrusted{fmt.Sprintf("the archive stored for %s is %s; not using it", tag, problem)}
+		}
+	}
 	name := filepath.Base(stored.Archive.File)
 	if name == "." || name == ".." || name == string(filepath.Separator) || name != stored.Archive.File {
 		return nil, registryError{"the stored manifest names an archive file outside the output directory"}
@@ -758,6 +809,15 @@ func (r *registry) fetchArchive(fp string, live manifestJSON, out string) (*fetc
 	}
 	if err := writeAtomic(out, manifestFile, cfg); err != nil {
 		return nil, registryError{err.Error()}
+	}
+	// The signature file goes in before the flags, which stay the commit point. It is kept even when nothing is being enforced, so a
+	// later run that is given keys can still check the files on disk.
+	if signed {
+		if text, ok := signatureFileText(keyID, signature, r.repo); ok {
+			if err := writeAtomic(out, signatureFile, []byte(text)); err != nil {
+				return nil, registryError{err.Error()}
+			}
+		}
 	}
 	flag := runtimeFlag(stored.CacheType, abs)
 	flagsPath := filepath.Join(out, flagsFile)

@@ -1,11 +1,11 @@
 {
   "schema_version": "1",
-  "feature": "023-60-publish-the-v0-2-5-adoption-guide-and-configuration-r",
-  "branch": "feature/023-60-publish-the-v0-2-5-adoption-guide-and-configuration-r",
+  "feature": "signed-archives-stage-a",
+  "branch": "feature/signed-archives-stage-a",
   "stage": "build",
-  "last_session": "001-adoption-guide-pages-and-release-ready-readme",
+  "last_session": "007-review-fixes-for-the-independent-review-of-pr-148",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",
-  "updated": "2026-11-11"
+  "updated": "2026-11-16"
 }

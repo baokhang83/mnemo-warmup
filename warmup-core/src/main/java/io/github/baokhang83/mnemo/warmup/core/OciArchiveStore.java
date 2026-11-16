@@ -53,6 +53,10 @@ public final class OciArchiveStore implements ArchiveStore {
     private final Duration timeout;
     private final OciRegistryHttp registry;
     private volatile FetchLimits limits;
+    private volatile SigningKey signingKey;
+    private volatile ArchiveVerifier verifier;
+    static final String ANNOTATION_SIGNATURE = "io.github.baokhang83.mnemo.warmup.signature";
+    static final String ANNOTATION_KEY_ID = "io.github.baokhang83.mnemo.warmup.keyid";
 
     private OciArchiveStore(URI base, String repository, RegistryAuth auth, Duration timeout) {
         this.base = base;
@@ -88,6 +92,33 @@ public final class OciArchiveStore implements ArchiveStore {
         this.limits = fetchLimits;
         registry.startDeadline(fetchLimits);
         return this;
+    }
+
+    /** Makes {@link #put} sign what it publishes (docs/adr/0013). Without a key, nothing is signed. */
+    public OciArchiveStore withSigningKey(SigningKey key) {
+        this.signingKey = key;
+        return this;
+    }
+
+    /**
+     * Requires a valid signature from one of the verifier's keys before an archive is used. With a verifier, an unsigned archive, an
+     * unknown key and a bad signature all count as "no usable archive"; without one, archives are accepted on their digests alone.
+     * A verifier with no usable key therefore refuses everything: a typo in the key list must never switch the check off.
+     */
+    public OciArchiveStore withVerifier(ArchiveVerifier verifier) {
+        this.verifier = verifier;
+        return this;
+    }
+
+    /** Whether a valid signature is required before an archive is used (a verifier was set, even one that trusts nothing). */
+    public boolean requiresSignatures() {
+        return verifier != null;
+    }
+
+    /** The id of the key {@link #put} signs with, or null when it does not sign. */
+    public String signingKeyId() {
+        SigningKey key = signingKey;
+        return key == null ? null : key.keyId();
     }
 
     /** The {@code host[:port]} of an {@code oci://} reference, for looking up credentials. */
@@ -135,6 +166,53 @@ public final class OciArchiveStore implements ArchiveStore {
 
     // ---- ArchiveStore ----
 
+    /**
+     * Why the stored entry may not be used, or null when it may. The statement is rebuilt here from what was actually observed (the
+     * fingerprint asked for, the digest of the manifest blob that was just verified, the declared archive digest and size, this
+     * repository), never read from the registry. Without a verifier nothing is required.
+     */
+    @SuppressWarnings("unchecked")
+    private String signatureProblem(String fingerprint, Map<String, Object> image, String configDigest, String layerDigest, long layerSize) {
+        ArchiveVerifier check = verifier;
+        if (check == null) {
+            return null;
+        }
+        ArchiveSignature signature = storedSignature(image);
+        if (signature == null) {
+            return "not signed";
+        }
+        SignedStatement statement;
+        try {
+            statement = new SignedStatement(fingerprint, configDigest, layerDigest, layerSize, repository);
+        } catch (IllegalArgumentException e) {
+            return "not something that can be signed (" + e.getMessage() + ")";
+        }
+        return switch (check.verify(statement, signature)) {
+            case VALID -> null;
+            case UNKNOWN_KEY -> "signed by a key that is not trusted (" + signature.keyId() + ")";
+            case BAD_SIGNATURE -> "carrying a signature that does not match it";
+        };
+    }
+
+    /** The signature in the manifest's annotations, or null when it is absent or unreadable (which is the same as unsigned). */
+    @SuppressWarnings("unchecked")
+    private static ArchiveSignature storedSignature(Map<String, Object> image) {
+        try {
+            Object annotations = image.get("annotations");
+            if (!(annotations instanceof Map<?, ?> map)) {
+                return null;
+            }
+            Object keyId = map.get(ANNOTATION_KEY_ID);
+            Object signature = map.get(ANNOTATION_SIGNATURE);
+            if (!(keyId instanceof String id) || !(signature instanceof String encoded)) {
+                return null;
+            }
+            return new ArchiveSignature(id, java.util.Base64.getDecoder().decode(encoded));
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     @Override
     public boolean exists(String fingerprint) {
         String tag = tagFor(fingerprint);
@@ -166,8 +244,9 @@ public final class OciArchiveStore implements ArchiveStore {
         long configSize;
         String layerDigest;
         long layerSize;
+        Map<String, Object> image;
         try {
-            Map<String, Object> image = (Map<String, Object>) Json.parse(new String(r.body(), StandardCharsets.UTF_8));
+            image = (Map<String, Object>) Json.parse(new String(r.body(), StandardCharsets.UTF_8));
             Map<String, Object> config = (Map<String, Object>) image.get("config");
             List<Object> layers = (List<Object>) image.get("layers");
             if (!CONFIG_TYPE.equals(config.get("mediaType")) || layers.size() != 1
@@ -201,6 +280,10 @@ public final class OciArchiveStore implements ArchiveStore {
             }
         } catch (RuntimeException e) {
             return Inspection.broken("the stored manifest is unreadable");
+        }
+        String problem = signatureProblem(fingerprint, image, configDigest, layerDigest, layerSize);
+        if (problem != null) {
+            return Inspection.broken("the entry is " + problem);
         }
         HttpResponse<byte[]> layerResponse = call("HEAD", blobUri(layerDigest), Map.of(), null, BodyHandlers.ofByteArray(), "pull");
         if (layerResponse.statusCode() == 404) {
@@ -249,6 +332,14 @@ public final class OciArchiveStore implements ArchiveStore {
             image.put("artifactType", ARTIFACT_TYPE);
             image.put("config", configDescriptor);
             image.put("layers", new ArrayList<Object>(List.of(layer)));
+            SigningKey key = signingKey;
+            if (key != null) {
+                ArchiveSignature signature = key.sign(new SignedStatement(manifest.fingerprint(), configDigest, archiveDigest, archiveSize, repository));
+                Map<String, Object> annotations = new LinkedHashMap<>();
+                annotations.put(ANNOTATION_SIGNATURE, signature.signatureBase64());
+                annotations.put(ANNOTATION_KEY_ID, signature.keyId());
+                image.put("annotations", annotations);
+            }
             byte[] body = Json.writeCompact(image).getBytes(StandardCharsets.UTF_8);
 
             HttpResponse<byte[]> r = call(
@@ -332,10 +423,14 @@ public final class OciArchiveStore implements ArchiveStore {
 
         String layerDigest = String.valueOf(layer.get("digest"));
         long layerSize = ((Number) layer.get("size")).longValue();
+        String problem = signatureProblem(fingerprint, image, configDigest, layerDigest, layerSize);
+        if (problem != null) {
+            throw new StoreException("The archive stored for " + tag + " is " + problem + "; not using it");
+        }
         String fileName = Path.of(manifest.archive() == null ? "archive" : manifest.archive().file()).getFileName().toString();
         Path target = targetDir.resolve(fileName);
         download(blobUri(layerDigest), layerDigest, layerSize, target);
-        return Optional.of(new StoredArchive(manifest, target));
+        return Optional.of(new StoredArchive(manifest, target, configResponse.body(), storedSignature(image), repository));
     }
 
     // ---- blobs ----

@@ -163,7 +163,7 @@ Details and what is not supported: [configuration](docs/configuration.md#require
 - **Training starts a real instance of your application.** Connections, migrations and scheduled jobs may run. Review the preview.
 - **The first pods start uncached.** Training is asynchronous; later pods use the archive.
 - **Caches use registry storage, and nothing deletes them.** Set a [retention policy](docs/archive-retention.md) on the archive repository.
-- **Whoever can push to the archive repository can run code in your pods.** Archives are checked for integrity, not for who published them. Use a repository per application, pull-only pod credentials and TLS: [trust model](docs/security.md#trust-model-who-can-publish-an-archive).
+- **Whoever can push to the archive repository can run code in your pods, unless you sign.** Archives are checked for integrity; [signing them](docs/configuration.md#signed-archives-opt-in) (opt-in) also checks who published them. Either way, use a repository per application, pull-only pod credentials and TLS: [trust model](docs/security.md#trust-model-who-can-publish-an-archive).
 - **Cache problems fall back; deployment problems do not.** A missing, damaged or unreachable archive means an ordinary start. A missing Secret, an unpullable image or a wrong command can still keep a pod from starting: [what can still stop a pod](docs/operations.md#what-can-still-stop-a-pod).
 
 ## Measurements

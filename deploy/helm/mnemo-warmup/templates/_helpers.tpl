@@ -168,6 +168,7 @@ that mounts the Secret, so application code never can (the same rule as the inje
     - name: MNEMO_WARMUP_REGISTRY_AUTH
       value: /var/run/mnemo-warmup/registry/config.json
     {{- end }}
+    {{- include "mnemo-warmup.signingEnv" . | nindent 4 }}
   volumeMounts:
     - name: mnemo-tools
       mountPath: /mnemo-tools
@@ -209,6 +210,35 @@ so it writes the cache and has the scratch volume. */}}
 {{- if .app.image.digest }}
 - name: MNEMO_WARMUP_IMAGE_DIGEST
   value: {{ .app.image.digest | quote }}
+{{- end }}
+{{- include "mnemo-warmup.signingEnv" . }}
+{{- end -}}
+
+{{/*
+The signing key is a Secret file owned by root and readable by its group (mode 0440). A trainer that runs as a non-root user can read it only
+if the pod gives that user a group that owns the file, which is what fsGroup does. A trainer known to be non-root without an fsGroup would
+fail at its first run, so the render fails here with the fix. When the user is not known (the image decides) NOTES.txt says what to check.
+Renders nothing.
+*/}}
+{{- define "mnemo-warmup.checkSigningKeyReadable" -}}
+{{- $signing := .signing | default dict }}
+{{- if $signing.keySecret }}
+{{- $sc := .trainer.securityContext | default dict }}
+{{- $psc := .trainer.podSecurityContext | default dict }}
+{{- $user := coalesce $sc.runAsUser $psc.runAsUser }}
+{{- $nonRoot := or (and $user (ne (int64 $user) 0)) $sc.runAsNonRoot $psc.runAsNonRoot }}
+{{- if and $nonRoot (not $psc.fsGroup) }}
+{{- fail "signing.keySecret: the trainer runs as a non-root user but trainer.podSecurityContext has no fsGroup, so it could not read the signing key (mode 0440). Set trainer.podSecurityContext.fsGroup, or run the trainer as root" }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{/* The public keys pods trust, for every container that fetches or runs (docs/adr/0013). Nothing when signing is off. */}}
+{{- define "mnemo-warmup.signingEnv" -}}
+{{- $signing := .signing | default dict }}
+{{- if $signing.publicKeys }}
+- name: MNEMO_WARMUP_SIGNING_PUBLIC_KEYS
+  value: {{ $signing.publicKeys | quote }}
 {{- end }}
 {{- end -}}
 

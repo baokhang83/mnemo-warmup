@@ -3,6 +3,7 @@
 {{- if and (eq $v.trainer.exitMode "http-probe") (not $v.trainer.probe.url) }}
 {{- fail "trainer.probe.url is required when trainer.exitMode is http-probe" }}
 {{- end }}
+{{- include "mnemo-warmup.checkSigningKeyReadable" $v }}
 # Not a Helm hook: Helm never waits for a CronJob, so a failing or slow trainer cannot fail or roll back a release.
 apiVersion: batch/v1
 kind: CronJob
@@ -81,6 +82,12 @@ spec:
                 - name: MNEMO_WARMUP_REGISTRY_AUTH
                   value: /var/run/mnemo-warmup/registry/config.json
                 {{- end }}
+                {{- if (default dict $v.signing).keySecret }}
+                - name: MNEMO_WARMUP_SIGNING_KEY_FILE
+                  value: /var/run/mnemo-warmup/signing/signing.key
+                {{- /* the pods' trusted list: the trainer re-publishes only what pods would refuse, and refuses to sign with a key not on it */}}
+                {{- include "mnemo-warmup.signingEnv" $v | nindent 16 }}
+                {{- end }}
                 {{- with $v.app.env }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}
@@ -110,6 +117,11 @@ spec:
                   mountPath: /var/run/mnemo-warmup/registry
                   readOnly: true
                 {{- end }}
+                {{- if (default dict $v.signing).keySecret }}
+                - name: mnemo-signing-key
+                  mountPath: /var/run/mnemo-warmup/signing
+                  readOnly: true
+                {{- end }}
                 {{- with $v.trainer.volumeMounts }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}
@@ -131,6 +143,15 @@ spec:
                 items:
                   - key: .dockerconfigjson
                     path: config.json
+            {{- end }}
+            {{- if (default dict $v.signing).keySecret }}
+            - name: mnemo-signing-key
+              secret:
+                secretName: {{ $v.signing.keySecret | quote }}
+                defaultMode: 0440
+                items:
+                  - key: signing.key
+                    path: signing.key
             {{- end }}
             {{- with $v.trainer.volumes }}
             {{- toYaml . | nindent 12 }}

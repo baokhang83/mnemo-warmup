@@ -33,6 +33,8 @@ type fakeRegistry struct {
 	needBasic bool
 	needToken bool
 	redirect  *httptest.Server // when set, the layer is served from here via 307
+	trickle   time.Duration    // when set, the layer is sent one byte at a time with this pause between bytes
+	declared  int64            // when set, the manifest declares this layer size (the bytes sent are still the real ones)
 }
 
 func newFakeRegistry(t *testing.T, f fixture) *fakeRegistry {
@@ -57,6 +59,21 @@ func newFakeRegistry(t *testing.T, f fixture) *fakeRegistry {
 	})
 	tag := "fp-" + strings.TrimPrefix(m.Fingerprint, "sha256:")
 	fr := &fakeRegistry{layer: archive}
+	var declare func() []byte
+	declare = func() []byte {
+		fr.mu.Lock()
+		d := fr.declared
+		fr.mu.Unlock()
+		if d == 0 {
+			return image
+		}
+		oversized, _ := json.Marshal(map[string]any{
+			"schemaVersion": 2, "mediaType": ociManifestType, "artifactType": "application/vnd.mnemo.warmup.v1",
+			"config": map[string]any{"mediaType": ociConfigType, "digest": sum(cfg), "size": len(cfg)},
+			"layers": []any{map[string]any{"mediaType": ociLayerType, "digest": sum(archive), "size": d}},
+		})
+		return oversized
+	}
 	fr.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fr.mu.Lock()
 		fr.requests = append(fr.requests, r.Method+" "+r.URL.Path)
@@ -87,12 +104,25 @@ func newFakeRegistry(t *testing.T, f fixture) *fakeRegistry {
 		}
 		switch r.URL.Path {
 		case "/v2/team/app/manifests/" + tag:
-			w.Write(image)
+			w.Write(declare())
 		case "/v2/team/app/blobs/" + sum(cfg):
 			w.Write(cfg)
 		case "/v2/team/app/blobs/" + sum(archive):
 			if redirect != nil {
 				http.Redirect(w, r, redirect.URL+"/blob", http.StatusTemporaryRedirect)
+				return
+			}
+			fr.mu.Lock()
+			trickle := fr.trickle
+			fr.mu.Unlock()
+			if trickle > 0 {
+				for i := range layer {
+					if _, err := w.Write(layer[i : i+1]); err != nil {
+						return
+					}
+					w.(http.Flusher).Flush()
+					time.Sleep(trickle)
+				}
 				return
 			}
 			w.Write(layer)
@@ -427,5 +457,94 @@ func writeJar(t *testing.T, path, manifest string) {
 	zw.Close()
 	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestFetchLimitsFromTheEnvironment(t *testing.T) {
+	var notes []string
+	note := func(format string, args ...any) { notes = append(notes, fmt.Sprintf(format, args...)) }
+	d, m := fetchLimits(map[string]string{}, note)
+	if d != 120*time.Second || m != 1<<30 || len(notes) != 0 {
+		t.Fatalf("defaults: %v %d %v", d, m, notes)
+	}
+	d, m = fetchLimits(map[string]string{"MNEMO_WARMUP_FETCH_DEADLINE_SECONDS": "30", "MNEMO_WARMUP_MAX_ARCHIVE_BYTES": "2048"}, note)
+	if d != 30*time.Second || m != 2048 || len(notes) != 0 {
+		t.Fatalf("explicit: %v %d %v", d, m, notes)
+	}
+	// anything else is ignored with a note: a bad setting must never stop the application
+	for _, bad := range []string{"", "0", "-5", "abc", "1.5", "1e3", "007"} {
+		notes = nil
+		d, m = fetchLimits(map[string]string{"MNEMO_WARMUP_FETCH_DEADLINE_SECONDS": bad, "MNEMO_WARMUP_MAX_ARCHIVE_BYTES": bad}, note)
+		if d != 120*time.Second || m != 1<<30 || len(notes) != 2 {
+			t.Fatalf("%q: %v %d notes=%v", bad, d, m, notes)
+		}
+	}
+	// a deadline above a day is ignored, while the same number is a fine byte count
+	notes = nil
+	d, m = fetchLimits(map[string]string{"MNEMO_WARMUP_FETCH_DEADLINE_SECONDS": "99999999", "MNEMO_WARMUP_MAX_ARCHIVE_BYTES": "99999999"}, note)
+	if d != 120*time.Second || m != 99999999 || len(notes) != 1 {
+		t.Fatalf("large values: %v %d notes=%v", d, m, notes)
+	}
+}
+
+// A registry that declares a huge archive must be refused before one byte of the layer is requested, and the pod must start.
+func TestNativeFetchRefusesAnArchiveLargerThanTheCap(t *testing.T) {
+	f := newFixture(t)
+	fr := newFakeRegistry(t, f)
+	fr.declared = 5 << 30
+	os.MkdirAll(f.path("out"), 0o755)
+	os.WriteFile(f.path("out/"+flagsFile), []byte("-XX:SharedArchiveFile=/old.jsa\n"), 0o644)
+	l, args, stdout, stderr := fetchHarness(t, f, fr)
+	code, done := l.nativeFetch(args, false)
+	if !done || code != 0 || !strings.Contains(stderr.String(), "not downloading it") || !strings.Contains(stdout.String(), "No usable archive") {
+		t.Fatalf("done=%v code=%d stdout=%q stderr=%q", done, code, stdout, stderr)
+	}
+	for _, r := range fr.requests {
+		if strings.Contains(r, "/blobs/") {
+			t.Fatalf("a blob was requested after the size was refused: %v", fr.requests)
+		}
+	}
+	if _, err := os.Stat(f.path("out/" + flagsFile)); err == nil {
+		t.Fatal("a stale flags file must not survive a refused archive")
+	}
+	if code, done := l.nativeFetch(args, true); !done || code != 1 {
+		t.Fatalf("--strict: done=%v code=%d, want 1", done, code)
+	}
+}
+
+func TestNativeFetchCapIsConfigurable(t *testing.T) {
+	f := newFixture(t)
+	fr := newFakeRegistry(t, f)
+	l, args, _, stderr := fetchHarness(t, f, fr, "MNEMO_WARMUP_MAX_ARCHIVE_BYTES=4")
+	code, done := l.nativeFetch(args, false)
+	if !done || code != 0 || !strings.Contains(stderr.String(), "outside the allowed 1 to 4") {
+		t.Fatalf("done=%v code=%d stderr=%q", done, code, stderr)
+	}
+}
+
+// The idle timer is reset by every byte, so a registry that trickles one byte at a time never trips it. Only the total deadline
+// ends this download.
+func TestNativeFetchTotalDeadlineEndsASlowTrickle(t *testing.T) {
+	f := newFixture(t)
+	fr := newFakeRegistry(t, f)
+	fr.trickle = 400 * time.Millisecond
+	l, args, stdout, stderr := fetchHarness(t, f, fr, "MNEMO_WARMUP_FETCH_DEADLINE_SECONDS=1")
+	started := time.Now()
+	code, done := l.nativeFetch(args, false)
+	elapsed := time.Since(started)
+	if !done || code != 0 || !strings.Contains(stderr.String(), "total deadline of 1 s") || !strings.Contains(stdout.String(), "No usable archive") {
+		t.Fatalf("done=%v code=%d after %v stdout=%q stderr=%q", done, code, elapsed, stdout, stderr)
+	}
+	if elapsed > 4*time.Second {
+		t.Fatalf("took %v for a 1 s deadline", elapsed)
+	}
+	if _, err := os.Stat(f.path("out/" + flagsFile)); err == nil {
+		t.Fatal("flags file must not exist after a deadline")
+	}
+	entries, _ := os.ReadDir(f.path("out"))
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".part") {
+			t.Fatalf("temporary file left behind: %s", e.Name())
+		}
 	}
 }

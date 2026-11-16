@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -310,6 +311,37 @@ func clearOutput(dir string) error {
 
 // ---- the registry ----
 
+// Limits that keep a hostile or broken registry from stalling or filling a pod (§1, §3). The idle timer (o.timeout) only notices
+// silence; the deadline bounds the whole fetch however slowly bytes arrive, and the size cap refuses a huge declared layer before
+// any of it is downloaded. Both are set through the environment (the pod's env) so the Java tool can share them.
+const (
+	defaultFetchDeadline   = 120 * time.Second
+	defaultMaxArchiveBytes = int64(1) << 30
+	envFetchDeadline       = "MNEMO_WARMUP_FETCH_DEADLINE_SECONDS"
+	envMaxArchiveBytes     = "MNEMO_WARMUP_MAX_ARCHIVE_BYTES"
+)
+
+// fetchLimits reads the two limits. A value that is not a positive whole number is ignored with a note: a bad setting must never
+// stop the application, it only means the default applies.
+func fetchLimits(env map[string]string, note func(format string, args ...any)) (time.Duration, int64) {
+	deadline, maxBytes := defaultFetchDeadline, defaultMaxArchiveBytes
+	if v, set := env[envFetchDeadline]; set {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 && n <= 86400 && strconv.FormatInt(n, 10) == v {
+			deadline = time.Duration(n) * time.Second
+		} else {
+			note("ignoring %s=%q (want a whole number of seconds, 1 to 86400); using %d s", envFetchDeadline, v, int(defaultFetchDeadline.Seconds()))
+		}
+	}
+	if v, set := env[envMaxArchiveBytes]; set {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 && strconv.FormatInt(n, 10) == v {
+			maxBytes = n
+		} else {
+			note("ignoring %s=%q (want a positive whole number of bytes); using %d", envMaxArchiveBytes, v, defaultMaxArchiveBytes)
+		}
+	}
+	return deadline, maxBytes
+}
+
 type registry struct {
 	base           *url.URL
 	repo           string
@@ -319,6 +351,9 @@ type registry struct {
 	hasAuth        bool
 	authz          string
 	timeout        time.Duration
+	deadline       time.Time     // when the whole fetch must be over (zero: no limit, only for tests building a registry by hand)
+	deadlineLen    time.Duration // for the message
+	maxArchive     int64         // the largest layer this fetch will download
 	transferTiming func(int64, time.Duration)
 	nodeCache      *nodeCacheClient
 	cacheNote      func(string)
@@ -338,6 +373,8 @@ func (l launcher) openRegistry(o fetchOptions, env map[string]string) (*registry
 		scheme = "http"
 	}
 	r := &registry{base: &url.URL{Scheme: scheme, Host: host}, repo: repo, timeout: o.timeout}
+	r.deadlineLen, r.maxArchive = fetchLimits(env, l.note)
+	r.deadline = time.Now().Add(r.deadlineLen)
 	cache, cacheErr := newNodeCacheClient(env)
 	if cacheErr != nil {
 		l.note("node cache configuration unavailable; using registry")
@@ -450,15 +487,24 @@ func classify(what string, err error) error {
 // timeout (a server that sends headers and then stalls must not hold the init container); the session's touch() postpones
 // that, and its stop() must be called when the body is done.
 func (r *registry) exchange(method string, u *url.URL, accept string) (*http.Response, *session, error) {
-	ctx, cancel := context.WithCancel(context.Background())
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if r.deadline.IsZero() {
+		ctx, cancel = context.WithCancel(context.Background())
+	} else {
+		ctx, cancel = context.WithDeadline(context.Background(), r.deadline)
+	}
 	var stalled atomic.Bool
 	idle := time.AfterFunc(r.timeout, func() { stalled.Store(true); cancel() })
-	s := &session{timer: idle, d: r.timeout, cancel: cancel, stalled: &stalled}
+	s := &session{timer: idle, d: r.timeout, cancel: cancel, stalled: &stalled, ctx: ctx}
 	stop := s.stop
 	fail := func(what string, err error) (*http.Response, *session, error) {
 		stop()
 		if stalled.Load() {
 			return nil, nil, registryError{fmt.Sprintf("registry %s did not answer within %d s", r.base.Host, int(r.timeout.Seconds()))}
+		}
+		if s.deadlineHit() {
+			return nil, nil, r.deadlineError()
 		}
 		return nil, nil, classify(what, err)
 	}
@@ -522,6 +568,17 @@ type session struct {
 	d       time.Duration
 	cancel  context.CancelFunc
 	stalled *atomic.Bool
+	ctx     context.Context
+}
+
+// deadlineHit reports that the total deadline, not the idle timer or a network error, ended the request. The first cause a
+// context records is kept, so a later cancel() does not hide it.
+func (s *session) deadlineHit() bool {
+	return s.ctx != nil && errors.Is(s.ctx.Err(), context.DeadlineExceeded)
+}
+
+func (r *registry) deadlineError() error {
+	return registryError{fmt.Sprintf("fetch exceeded the total deadline of %d s (%s); the application will start without a cache", int(r.deadlineLen.Seconds()), envFetchDeadline)}
 }
 
 func (s *session) touch() { s.timer.Reset(s.d) }
@@ -611,6 +668,9 @@ func (r *registry) get(path, accept string, limit int64) ([]byte, error) {
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
+		if sess.deadlineHit() {
+			return nil, r.deadlineError()
+		}
 		return nil, classify("cannot read from registry "+r.base.Host, err)
 	}
 	if int64(len(b)) > limit {
@@ -645,6 +705,9 @@ func (r *registry) fetchArchive(fp string, live manifestJSON, out string) (*fetc
 		return nil, registryError{"tag " + tag + " in " + r.repo + " is not a mnemo-warmup archive"}
 	}
 	layer := image.Layers[0]
+	if layer.Size <= 0 || layer.Size > r.maxArchive {
+		return nil, registryError{fmt.Sprintf("the archive declares %d bytes, outside the allowed 1 to %d (%s); not downloading it", layer.Size, r.maxArchive, envMaxArchiveBytes)}
+	}
 
 	cfg, err := r.get("/v2/"+r.repo+"/blobs/"+image.Config.Digest, "", 8<<20)
 	if err != nil {
@@ -672,6 +735,9 @@ func (r *registry) fetchArchive(fp string, live manifestJSON, out string) (*fetc
 		return nil, registryError{"the stored manifest names an archive file outside the output directory"}
 	}
 	target := filepath.Join(out, name)
+	if free, ok := freeBytes(out); ok && free < uint64(layer.Size) {
+		return nil, registryError{fmt.Sprintf("only %d bytes are free in %s, the archive needs %d", free, out, layer.Size)}
+	}
 	cached := false
 	if r.nodeCache != nil {
 		if err := r.nodeCache.download(r.base.Host, r.repo, r.authz, layer, target, r.transferTiming,
@@ -728,6 +794,9 @@ func (r *registry) download(path string, want ociDescriptor, target string) erro
 		if sess.stalled.Load() {
 			return registryError{fmt.Sprintf("download stalled: no data for %d s", int(r.timeout.Seconds()))}
 		}
+		if sess.deadlineHit() {
+			return r.deadlineError()
+		}
 		return classify("cannot download the archive", err)
 	}
 	if n != want.Size || "sha256:"+hex.EncodeToString(h.Sum(nil)) != want.Digest {
@@ -740,6 +809,15 @@ func (r *registry) download(path string, want ociDescriptor, target string) erro
 		return registryError{"cannot publish the archive: " + err.Error()}
 	}
 	return nil
+}
+
+// freeBytes is the space available to an unprivileged writer in dir. ok is false when it cannot be read (the check is then skipped).
+func freeBytes(dir string) (uint64, bool) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(dir, &st); err != nil {
+		return 0, false
+	}
+	return uint64(st.Bavail) * uint64(st.Bsize), true
 }
 
 // limitedIdle reads at most left bytes (one more than the declared size, so an overlong body is detected, not truncated).

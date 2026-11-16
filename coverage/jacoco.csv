@@ -85,7 +85,7 @@ coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,SignedStatement,0,87
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,OciImageConfigReader.ImageConfig,0,29,0,0,0,7,0,2,0,2
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,TrainingOrchestrator.Status,0,27,0,0,0,5,0,1,0,1
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,ArchiveManifest.Jdk,0,27,0,0,0,2,0,2,0,2
-coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,SigningKey,40,435,3,37,10,79,3,37,0,20
+coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,SigningKey,40,435,4,36,10,79,4,36,0,20
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,StartupBench,48,182,2,14,11,43,2,13,0,7
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,IsolatedTrainingPodFactory.Owner,0,24,3,5,0,3,3,2,0,1
 coverage/warmup-core,io.github.baokhang83.mnemo.warmup.core,TrainingSpec,0,100,3,7,0,16,3,5,0,3

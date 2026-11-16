@@ -27,6 +27,7 @@ tools:
   delivery: init-container
   image:
     repository: ghcr.io/baokhang83/mnemo-warmup-tools
+    digest: ""               # optional sha256 digest; required for isolated training unless explicitly disabled
     tag: "0.2.0"              # matches appVersion; published by the image workflow on release tags
     pullPolicy: IfNotPresent
   securityContext:
@@ -64,6 +65,21 @@ signing:
 # The trainer (ADR 0002): a CronJob, not a Helm hook, so a failing trainer can never fail a release. Each run
 # computes the fingerprint, exits if the store has it, otherwise takes a Lease, trains, uploads, and exits 0.
 trainer:
+  # Stage B: an independently trusted publisher starts a training pod with a separate identity.
+  # The claim must support concurrent mounts by both pods (RWX, or scheduling on the same node).
+  isolation:
+    enabled: false
+    publisherImage: ""             # trusted image containing the exact target JDK and extracted app files
+    allowMutableImages: false       # testing only: permits mutable publisher and tools image tags
+    publisherJava: ""              # absolute java path in the trusted publisher image
+    handoffClaim: ""               # pre-provisioned shared PVC; directories are created per run
+    trainingPodTimeoutSeconds: 1800 # includes scheduling, image pulls and training startup
+    fsGroup: 65532                  # common writable group for coordinator and training pod
+    trainingServiceAccount: ""    # optional existing unprivileged SA; otherwise create a dedicated one
+    targetJavaToolOptions: ""     # target values as data; never applied to the publisher JVM
+    targetJdkJavaOptions: ""
+    allowedSecrets: []             # the only Secrets the training pod may reference (volumes, env, envFrom); others are refused
+    publisherTmpSizeLimit: 1280Mi  # coordinator's private copy: at most 1 GiB of archive plus JVM temporary files
   enabled: true
   schedule: "*/10 * * * *"    # the first archive can wait up to one interval
   suspend: false

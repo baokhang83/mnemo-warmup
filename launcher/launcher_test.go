@@ -301,3 +301,49 @@ func TestJarToolReplacesTheProcessWithTheJar(t *testing.T) {
 		t.Fatalf("exit %d, want 127 without java", got)
 	}
 }
+
+func TestIsolatedJarDropsJvmAndLoaderInjectionEnvironment(t *testing.T) {
+	h := newHarness(t, true)
+	h.l.environ = []string{
+		"JAVA_TOOL_OPTIONS=-javaagent:/untrusted.jar", "JDK_JAVA_OPTIONS=-Xmx1g", "_JAVA_OPTIONS=-Xbootclasspath/a:/evil.jar",
+		"LD_PRELOAD=/evil.so", "LD_LIBRARY_PATH=/evil", "PATH=/untrusted", "JAVA_HOME=/untrusted",
+		"MNEMO_TARGET_JAVA_TOOL_OPTIONS=-Xmx512m", "MNEMO_WARMUP_SIGNING_KEY_FILE=/secret/signing.key",
+		"MNEMO_WARMUP_SIGNING_PUBLIC_KEYS=key", "POD_NAMESPACE=test", "POD_NAME=coordinator", "POD_UID=uid-1", "KUBERNETES_SERVICE_HOST=api",
+	}
+	var gotEnv, gotArgv []string
+	h.l.exec = func(path string, argv, env []string) error {
+		if path != "/trusted/bin/java" {
+			t.Fatalf("unexpected java path %q", path)
+		}
+		gotArgv = append([]string(nil), argv...)
+		gotEnv = append([]string(nil), env...)
+		return nil
+	}
+	if got := h.l.run([]string{"jar-isolated", "/trusted/bin/java", "coordinate-isolated", "--store", "oci://example/team/app"}); got != 0 {
+		t.Fatalf("exit %d", got)
+	}
+	if !reflect.DeepEqual(gotArgv, []string{"/trusted/bin/java", "-jar", "/tools/mnemo-warmup.jar", "coordinate-isolated", "--store", "oci://example/team/app"}) {
+		t.Fatalf("unexpected argv: %q", gotArgv)
+	}
+	want := []string{"PATH=/usr/bin:/bin", "MNEMO_TARGET_JAVA_TOOL_OPTIONS=-Xmx512m", "MNEMO_WARMUP_SIGNING_KEY_FILE=/secret/signing.key", "MNEMO_WARMUP_SIGNING_PUBLIC_KEYS=key", "POD_NAMESPACE=test", "POD_NAME=coordinator", "POD_UID=uid-1", "KUBERNETES_SERVICE_HOST=api"}
+	if !reflect.DeepEqual(gotEnv, want) {
+		t.Fatalf("unexpected environment: %q", gotEnv)
+	}
+}
+
+func TestIsolatedJarRequiresTrustedAbsoluteJavaAndCommand(t *testing.T) {
+	h := newHarness(t, true)
+	for _, args := range [][]string{
+		{"jar-isolated", "java", "publish-isolated"},
+		{"jar-isolated", "/trusted/../untrusted/java", "publish-isolated"},
+		{"jar-isolated", "/trusted/java", "run"},
+		{"jar-isolated", "/trusted/java"},
+	} {
+		if got := h.l.run(args); got != 2 {
+			t.Fatalf("args %q: exit %d, want 2", args, got)
+		}
+	}
+	if len(*h.execed) != 0 {
+		t.Fatal("rejected command must not execute")
+	}
+}

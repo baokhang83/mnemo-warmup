@@ -1,9 +1,9 @@
 {
   "schema_version": "1",
-  "feature": "signed-archives-stage-a",
-  "branch": "feature/signed-archives-stage-a",
+  "feature": "145-isolate-archive-signing-and-publishing-from-application",
+  "branch": "feature/145-isolate-archive-signing-and-publishing-from-application",
   "stage": "build",
-  "last_session": "007-review-fixes-for-the-independent-review-of-pr-148",
+  "last_session": "011-connect-the-isolated-coordinator-command",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

@@ -12,6 +12,12 @@ rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "create", "update", "delete"]
+  {{- if .Values.trainer.isolation.enabled }}
+  # Pod creation is powerful: restrict who can modify this workload's coordinator configuration.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "create", "delete"]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

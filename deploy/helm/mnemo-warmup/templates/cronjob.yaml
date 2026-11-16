@@ -1,3 +1,4 @@
+{{- if not .Values.trainer.isolation.enabled }}
 {{- if .Values.trainer.enabled }}
 {{- $v := .Values }}
 {{- if and (eq $v.trainer.exitMode "http-probe") (not $v.trainer.probe.url) }}
@@ -168,4 +169,6 @@ spec:
           tolerations:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+{{- end }}
+
 {{- end }}

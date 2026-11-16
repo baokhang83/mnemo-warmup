@@ -26,5 +26,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+      # the Pod Security "restricted" check of the isolated training template parses YAML
+      - run: python3 -c 'import yaml' 2>/dev/null || (sudo apt-get update -q && sudo apt-get install -y -q python3-yaml)
       - run: scripts/test-chart.sh
       - run: scripts/test-nodecache-chart.sh

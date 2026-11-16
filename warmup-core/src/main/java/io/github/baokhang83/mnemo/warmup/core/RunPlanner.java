@@ -292,7 +292,7 @@ public final class RunPlanner {
     }
 
     /** Runs {@code task} on a daemon thread, unless too many earlier readers are still stuck (see {@link #maxBlockedReaders}). */
-    private static boolean startReader(Runnable task) {
+    static boolean startReader(Runnable task) {
         int readers;
         do {
             readers = LIVE_READERS.get();

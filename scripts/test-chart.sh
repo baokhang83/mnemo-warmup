@@ -191,6 +191,63 @@ helm template rel "$CHART" -n default "${BASE[@]}" --set trainer.securityContext
 out=$(helm template rel "$PARENT" -n default --set tools.delivery=image-volume --set warmup.tools.delivery=image-volume --set warmup.signing.publicKeys="$SIGKEYS")
 check "$(awk '/- name: app$/{f=1} f; /^---/{f=0}' <<<"$out")" "MNEMO_WARMUP_SIGNING_PUBLIC_KEYS" "image volume: the application container carries the public keys"
 
+echo "== isolated trainer pods (ADR 0013 stage B)"
+ISOLATED=(--set trainer.isolation.enabled=true --set trainer.isolation.allowMutableImages=true --set trainer.isolation.publisherImage=trusted-publisher:1
+  --set trainer.isolation.publisherJava=/opt/java/bin/java --set trainer.isolation.handoffClaim=handoff
+  --set signing.keySecret=signer --set signing.publicKeys="$SIGKEYS" --set store.pushSecret=push-secret)
+out=$(helm template rel "$CHART" -n default "${BASE[@]}" "${ISOLATED[@]}")
+validate "isolated trainer" "$out"
+check "$out" 'coordinate-isolated' "publisher uses the isolated coordinator"
+check "$out" 'jar-isolated' "publisher JVM starts through the sanitized launcher"
+check "$out" 'automountServiceAccountToken: false' "dedicated training service account disables automatic token mounts"
+check "$out" 'resources: ["pods"]' "coordinator can create, read and delete training pods"
+check "$out" 'claimName: "handoff"' "publisher mounts the configured handoff claim"
+# the template is stored as one JSON string, exactly the bytes the coordinator hashes
+training_template=$(python3 -c 'import json,sys
+for line in sys.stdin:
+    if line.strip().startswith("training.yaml:"): print(json.loads(line.split("training.yaml:",1)[1]), end="")' <<<"$out")
+template_sha=$(printf '%s' "$training_template" | shasum -a 256 | cut -d' ' -f1)
+check "$out" "- \"$template_sha\"" "the coordinator is given the SHA-256 of the exact template bytes"
+check "$out" "training-template-${template_sha:0:10}" "the template ConfigMap is named after its content"
+check "$out" 'immutable: true' "the template ConfigMap is immutable"
+# Pod Security "restricted", as rendered (before the coordinator's factory adds its own defaults)
+restricted=$(python3 -c 'import sys
+try:
+    import yaml
+except ImportError:
+    print("skip"); sys.exit()
+pod = yaml.safe_load(sys.stdin.read())
+problems = []
+sc = pod.get("securityContext") or {}
+if sc.get("runAsNonRoot") is not True: problems.append("pod runAsNonRoot")
+if (sc.get("seccompProfile") or {}).get("type") not in ("RuntimeDefault", "Localhost"): problems.append("pod seccompProfile")
+for c in pod.get("initContainers", []) + pod.get("containers", []):
+    csc = c.get("securityContext") or {}
+    if csc.get("allowPrivilegeEscalation") is not False: problems.append(c["name"] + " allowPrivilegeEscalation")
+    if (csc.get("capabilities") or {}).get("drop") != ["ALL"]: problems.append(c["name"] + " capabilities.drop")
+    if csc.get("privileged"): problems.append(c["name"] + " privileged")
+print(" ".join(problems) or "ok")' <<<"$training_template")
+case "$restricted" in ok) ok "the default training template meets Pod Security restricted" ;; skip) if [ -n "${CI:-}" ]; then fail "PyYAML is required on CI for the restricted check"; else echo "  skip: PyYAML missing, restricted check not run"; fi ;; *) fail "training template is not restricted: $restricted" ;; esac
+check "$training_template" '--group-readable-output' "training makes output readable by the handoff group"
+absent "$training_template" 'signer' "training template does not reference the signing secret"
+absent "$training_template" 'push-secret' "training template does not reference the push secret"
+absent "$training_template" 'MNEMO_WARMUP_SIGNING_KEY_FILE' "training template has no publisher key path"
+if helm template rel "$CHART" "${BASE[@]}" --set trainer.isolation.enabled=true >/dev/null 2>&1; then fail "isolation needs publisher and claim configuration"; else ok "isolation rejects incomplete configuration"; fi
+if helm template rel "$CHART" "${BASE[@]}" "${ISOLATED[@]}" --set trainer.isolation.allowMutableImages=false >/dev/null 2>&1; then fail "isolation must reject mutable publisher and tools images"; else ok "isolation rejects mutable publisher and tools images by default"; fi
+out=$(helm template rel "$CHART" "${BASE[@]}" "${ISOLATED[@]}" --set trainer.isolation.allowMutableImages=false --set "trainer.isolation.publisherImage=trusted-publisher@$DIGEST" --set "tools.image.digest=$DIGEST")
+check "$out" "trusted-publisher@$DIGEST" "isolated publisher image is pinned by digest"
+check "$out" "ghcr.io/baokhang83/mnemo-warmup-tools@$DIGEST" "isolated tools image is pinned by digest"
+out=$(helm template rel "$CHART" -n default "${BASE[@]}" "${ISOLATED[@]}" --set "trainer.isolation.allowedSecrets={db,api}")
+check "$out" '"--allowed-secret=db"' "allowed training Secrets are passed to the coordinator"
+check "$out" 'fieldPath: metadata.uid' "the coordinator knows its pod UID, to own the training pods"
+check "$out" 'sizeLimit: "1280Mi"' "the coordinator's private copy has a size limit"
+if helm template rel "$CHART" "${BASE[@]}" "${ISOLATED[@]}" --set "trainer.isolation.allowedSecrets={signer}" >/dev/null 2>&1; then fail "the signing Secret must not be allowed for training"; else ok "the signing Secret cannot be allowed for training"; fi
+if helm template rel "$CHART" "${BASE[@]}" "${ISOLATED[@]}" --set "trainer.isolation.allowedSecrets={push-secret}" >/dev/null 2>&1; then fail "the push Secret must not be allowed for training"; else ok "the push Secret cannot be allowed for training"; fi
+a=$(helm template rel "$CHART" -n default "${BASE[@]}" "${ISOLATED[@]}" | grep -o 'training-template-[0-9a-f]\{10\}' | head -1)
+b=$(helm template rel "$CHART" -n default "${BASE[@]}" "${ISOLATED[@]}" --set trainer.timeoutSeconds=301 | grep -o 'training-template-[0-9a-f]\{10\}' | head -1)
+if [ -n "$a" ] && [ "$a" != "$b" ]; then ok "a changed training template gets a new ConfigMap name"; else fail "template name did not change: '$a' '$b'"; fi
+if helm template rel "$CHART" "${BASE[@]}" "${ISOLATED[@]}" --set trainer.serviceAccount.create=false >/dev/null 2>&1; then fail "isolation must reject the default publisher service account"; else ok "isolation rejects the default publisher service account"; fi
+
 echo "== example workload chart (examples/helm/example-app)"
 EXAMPLE="$WORK/examples/helm/example-app"
 helm dependency build "$EXAMPLE" >/dev/null 2>&1 || helm dependency update "$EXAMPLE" >/dev/null

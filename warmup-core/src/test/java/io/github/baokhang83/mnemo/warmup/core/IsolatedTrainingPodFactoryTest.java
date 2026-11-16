@@ -25,6 +25,8 @@ class IsolatedTrainingPodFactoryTest {
     @Test void createsAnIsolatedPodAndMountsOnlyTheUniqueHandoffSubpath() {
         var input = template(container(), List.of(Map.of("name", "config", "configMap", Map.of("name", "app-config"))));
         var pod = build(input);
+        var metadata = (Map<String, Object>) pod.get("metadata");
+        assertEquals("mnemo-run-123", ((Map<?, ?>) metadata.get("annotations")).get("warmup.mnemo.io/handoff"));
         var spec = (Map<String, Object>) pod.get("spec");
         assertEquals("training-only", spec.get("serviceAccountName"));
         assertEquals(false, spec.get("automountServiceAccountToken"));

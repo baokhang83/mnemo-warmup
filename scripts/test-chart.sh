@@ -191,6 +191,29 @@ helm template rel "$CHART" -n default "${BASE[@]}" --set trainer.securityContext
 out=$(helm template rel "$PARENT" -n default --set tools.delivery=image-volume --set warmup.tools.delivery=image-volume --set warmup.signing.publicKeys="$SIGKEYS")
 check "$(awk '/- name: app$/{f=1} f; /^---/{f=0}' <<<"$out")" "MNEMO_WARMUP_SIGNING_PUBLIC_KEYS" "image volume: the application container carries the public keys"
 
+echo "== isolated trainer pods (ADR 0013 stage B)"
+ISOLATED=(--set trainer.isolation.enabled=true --set trainer.isolation.allowMutableImages=true --set trainer.isolation.publisherImage=trusted-publisher:1
+  --set trainer.isolation.publisherJava=/opt/java/bin/java --set trainer.isolation.handoffClaim=handoff
+  --set signing.keySecret=signer --set signing.publicKeys="$SIGKEYS" --set store.pushSecret=push-secret)
+out=$(helm template rel "$CHART" -n default "${BASE[@]}" "${ISOLATED[@]}")
+validate "isolated trainer" "$out"
+check "$out" 'coordinate-isolated' "publisher uses the isolated coordinator"
+check "$out" 'jar-isolated' "publisher JVM starts through the sanitized launcher"
+check "$out" 'automountServiceAccountToken: false' "dedicated training service account disables automatic token mounts"
+check "$out" 'resources: ["pods"]' "coordinator can create, read and delete training pods"
+check "$out" 'claimName: "handoff"' "publisher mounts the configured handoff claim"
+training_template=$(awk '/training.yaml: \|/{f=1; next} /^---/{f=0} f' <<<"$out")
+check "$training_template" '--group-readable-output' "training makes output readable by the handoff group"
+absent "$training_template" 'signer' "training template does not reference the signing secret"
+absent "$training_template" 'push-secret' "training template does not reference the push secret"
+absent "$training_template" 'MNEMO_WARMUP_SIGNING_KEY_FILE' "training template has no publisher key path"
+if helm template rel "$CHART" "${BASE[@]}" --set trainer.isolation.enabled=true >/dev/null 2>&1; then fail "isolation needs publisher and claim configuration"; else ok "isolation rejects incomplete configuration"; fi
+if helm template rel "$CHART" "${BASE[@]}" "${ISOLATED[@]}" --set trainer.isolation.allowMutableImages=false >/dev/null 2>&1; then fail "isolation must reject mutable publisher and tools images"; else ok "isolation rejects mutable publisher and tools images by default"; fi
+out=$(helm template rel "$CHART" "${BASE[@]}" "${ISOLATED[@]}" --set trainer.isolation.allowMutableImages=false --set "trainer.isolation.publisherImage=trusted-publisher@$DIGEST" --set "tools.image.digest=$DIGEST")
+check "$out" "trusted-publisher@$DIGEST" "isolated publisher image is pinned by digest"
+check "$out" "ghcr.io/baokhang83/mnemo-warmup-tools@$DIGEST" "isolated tools image is pinned by digest"
+if helm template rel "$CHART" "${BASE[@]}" "${ISOLATED[@]}" --set trainer.serviceAccount.create=false >/dev/null 2>&1; then fail "isolation must reject the default publisher service account"; else ok "isolation rejects the default publisher service account"; fi
+
 echo "== example workload chart (examples/helm/example-app)"
 EXAMPLE="$WORK/examples/helm/example-app"
 helm dependency build "$EXAMPLE" >/dev/null 2>&1 || helm dependency update "$EXAMPLE" >/dev/null

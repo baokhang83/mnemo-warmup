@@ -1,0 +1,259 @@
+{{- if and .Values.trainer.enabled .Values.trainer.isolation.enabled }}
+{{- $v := .Values }}
+{{- $iso := $v.trainer.isolation }}
+{{- $publisher := required "trainer.isolation.publisherImage is required" $iso.publisherImage }}
+{{- $java := required "trainer.isolation.publisherJava is required" $iso.publisherJava }}
+{{- $claim := required "trainer.isolation.handoffClaim is required" $iso.handoffClaim }}
+{{- $signing := required "signing.keySecret is required for isolated training" $v.signing.keySecret }}
+{{- if not $v.signing.publicKeys }}{{ fail "signing.publicKeys is required for isolated training" }}{{ end }}
+{{- if not (hasPrefix "/" $java) }}{{ fail "trainer.isolation.publisherJava must be an absolute path" }}{{ end }}
+{{- if not $iso.allowMutableImages }}
+{{- if not (regexMatch "@sha256:[0-9a-f]{64}$" $publisher) }}{{ fail "isolated training requires a digest-pinned publisherImage; allowMutableImages is for testing only" }}{{ end }}
+{{- if not (regexMatch "^sha256:[0-9a-f]{64}$" (default "" $v.tools.image.digest)) }}{{ fail "isolated training requires tools.image.digest; allowMutableImages is for testing only" }}{{ end }}
+{{- end }}
+{{- if le (int64 $iso.fsGroup) 0 }}{{ fail "trainer.isolation.fsGroup must be positive" }}{{ end }}
+{{- if or (lt (int64 $iso.trainingPodTimeoutSeconds) 1) (ge (int64 $iso.trainingPodTimeoutSeconds) (int64 $v.trainer.activeDeadlineSeconds)) }}{{ fail "trainer.isolation.trainingPodTimeoutSeconds must be positive and shorter than trainer.activeDeadlineSeconds" }}{{ end }}
+{{- if eq (include "mnemo-warmup.serviceAccountName" .) "default" }}{{ fail "isolated training requires a dedicated publisher service account" }}{{ end }}
+{{- $trainingSA := default (printf "%s-training" (include "mnemo-warmup.fullname" .) | trunc 63 | trimSuffix "-") $iso.trainingServiceAccount }}
+{{- if eq $trainingSA (include "mnemo-warmup.serviceAccountName" .) }}{{ fail "training and publisher service accounts must be different" }}{{ end }}
+{{- if not $iso.trainingServiceAccount }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $trainingSA }}
+  namespace: {{ .Release.Namespace }}
+automountServiceAccountToken: false
+---
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mnemo-warmup.fullname" . }}-training-template
+  namespace: {{ .Release.Namespace }}
+data:
+  training.yaml: |
+    securityContext:
+      {{- $trainSecurity := mergeOverwrite (deepCopy ($v.trainer.podSecurityContext | default dict)) (dict "fsGroup" $iso.fsGroup) }}
+      {{- toYaml $trainSecurity | nindent 6 }}
+    {{- if not (include "mnemo-warmup.imageVolume" $v) }}
+    initContainers:
+      {{- include "mnemo-warmup.installInitContainer" $v | nindent 6 }}
+    {{- end }}
+    containers:
+      - name: trainer
+        image: {{ include "mnemo-warmup.appImage" $v | quote }}
+        imagePullPolicy: {{ $v.app.image.pullPolicy }}
+        command: ["{{ include "mnemo-warmup.toolsRoot" $v }}/bin/mnemo-launcher"]
+        args:
+          - jar
+          - build
+          - --jar
+          - {{ $v.app.jar | quote }}
+          - --work-dir
+          - /mnemo-handoff
+          - --group-readable-output
+          - --cache-type
+          - {{ $v.cacheType | quote }}
+          - --exit-mode
+          - {{ $v.trainer.exitMode | quote }}
+          - --timeout-seconds
+          - {{ $v.trainer.timeoutSeconds | quote }}
+          {{- if $v.app.image.digest }}
+          - {{ printf "--image-digest=%s" $v.app.image.digest | quote }}
+          {{- end }}
+          {{- range $v.app.jvmArgs }}
+          - {{ printf "--jvm-arg=%s" . | quote }}
+          {{- end }}
+          {{- if $v.trainer.probe.url }}
+          - --url
+          - {{ $v.trainer.probe.url | quote }}
+          {{- end }}
+          {{- range $v.trainer.probe.warmupUrls }}
+          - {{ printf "--warmup-url=%s" . | quote }}
+          {{- end }}
+        {{- if or $v.app.env $v.trainer.env }}
+        env:
+          {{- with $v.app.env }}{{ toYaml . | nindent 10 }}{{ end }}
+          {{- with $v.trainer.env }}{{ toYaml . | nindent 10 }}{{ end }}
+        {{- end }}
+        {{- with $v.trainer.envFrom }}
+        envFrom:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with $v.trainer.securityContext }}
+        securityContext:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with $v.trainer.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        volumeMounts:
+          - name: mnemo-tools
+            mountPath: /mnemo-tools
+            readOnly: true
+          {{- with $v.trainer.volumeMounts }}{{ toYaml . | nindent 10 }}{{ end }}
+    volumes:
+      - name: mnemo-tools
+        {{- if include "mnemo-warmup.imageVolume" $v }}
+        image:
+          reference: {{ include "mnemo-warmup.toolsImage" $v | quote }}
+          pullPolicy: {{ $v.tools.image.pullPolicy }}
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+      {{- with $v.trainer.volumes }}{{ toYaml . | nindent 6 }}{{ end }}
+    {{- with $v.app.imagePullSecrets }}
+    imagePullSecrets:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $v.trainer.nodeSelector }}
+    nodeSelector:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $v.trainer.tolerations }}
+    tolerations:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $v.trainer.affinity }}
+    affinity:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "mnemo-warmup.fullname" . }}-trainer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mnemo-warmup.labels" . | nindent 4 }}
+spec:
+  schedule: {{ $v.trainer.schedule | quote }}
+  suspend: {{ $v.trainer.suspend }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: {{ $v.trainer.activeDeadlineSeconds }}
+      ttlSecondsAfterFinished: 86400
+      template:
+        spec:
+          serviceAccountName: {{ include "mnemo-warmup.serviceAccountName" . }}
+          automountServiceAccountToken: true
+          restartPolicy: Never
+          securityContext:
+            fsGroup: {{ $iso.fsGroup }}
+          {{- with $v.app.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if not (include "mnemo-warmup.imageVolume" $v) }}
+          initContainers:
+            {{- include "mnemo-warmup.installInitContainer" $v | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: publisher
+              image: {{ $publisher | quote }}
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 65532
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+                seccompProfile: { type: RuntimeDefault }
+              command: ["{{ include "mnemo-warmup.toolsRoot" $v }}/bin/mnemo-launcher"]
+              args:
+                - jar-isolated
+                - {{ $java | quote }}
+                - coordinate-isolated
+                {{- include "mnemo-warmup.launchArgs" $v | nindent 16 }}
+                - --training-template
+                - /etc/mnemo-training/training.yaml
+                - --training-service-account
+                - {{ $trainingSA | quote }}
+                - --handoff-claim
+                - {{ $claim | quote }}
+                - --handoff-root
+                - /mnemo-shared
+                - --signing-secret-name
+                - {{ $signing | quote }}
+                - --training-timeout-seconds
+                - {{ $iso.trainingPodTimeoutSeconds | quote }}
+                - --lease-seconds
+                - {{ $v.trainer.leaseSeconds | quote }}
+                {{- if $v.store.pushSecret }}
+                - --push-secret-name
+                - {{ $v.store.pushSecret | quote }}
+                {{- end }}
+              env:
+                - name: POD_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+                - name: MNEMO_WARMUP_SIGNING_KEY_FILE
+                  value: /var/run/mnemo-warmup/signing/signing.key
+                {{- include "mnemo-warmup.signingEnv" $v | nindent 16 }}
+                {{- if $v.store.pushSecret }}
+                - name: MNEMO_WARMUP_REGISTRY_AUTH
+                  value: /var/run/mnemo-warmup/registry/config.json
+                {{- end }}
+                - name: MNEMO_TARGET_JAVA_TOOL_OPTIONS
+                  value: {{ $iso.targetJavaToolOptions | quote }}
+                - name: MNEMO_TARGET_JDK_JAVA_OPTIONS
+                  value: {{ $iso.targetJdkJavaOptions | quote }}
+              volumeMounts:
+                - name: mnemo-tools
+                  mountPath: /mnemo-tools
+                  readOnly: true
+                - name: mnemo-shared
+                  mountPath: /mnemo-shared
+                - name: mnemo-publisher-tmp
+                  mountPath: /tmp
+                - name: mnemo-template
+                  mountPath: /etc/mnemo-training
+                  readOnly: true
+                - name: mnemo-signing-key
+                  mountPath: /var/run/mnemo-warmup/signing
+                  readOnly: true
+                {{- if $v.store.pushSecret }}
+                - name: mnemo-registry-push
+                  mountPath: /var/run/mnemo-warmup/registry
+                  readOnly: true
+                {{- end }}
+          volumes:
+            - name: mnemo-tools
+              {{- if include "mnemo-warmup.imageVolume" $v }}
+              image:
+                reference: {{ include "mnemo-warmup.toolsImage" $v | quote }}
+                pullPolicy: {{ $v.tools.image.pullPolicy }}
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+            - name: mnemo-publisher-tmp
+              emptyDir: {}
+            - name: mnemo-shared
+              persistentVolumeClaim:
+                claimName: {{ $claim | quote }}
+            - name: mnemo-template
+              configMap:
+                name: {{ include "mnemo-warmup.fullname" . }}-training-template
+            - name: mnemo-signing-key
+              secret:
+                secretName: {{ $signing | quote }}
+                defaultMode: 0440
+                items:
+                  - key: signing.key
+                    path: signing.key
+            {{- if $v.store.pushSecret }}
+            - name: mnemo-registry-push
+              secret:
+                secretName: {{ $v.store.pushSecret | quote }}
+                items:
+                  - key: .dockerconfigjson
+                    path: config.json
+            {{- end }}
+{{- end }}

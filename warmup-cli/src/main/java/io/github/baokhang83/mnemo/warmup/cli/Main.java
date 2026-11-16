@@ -182,6 +182,25 @@ public class Main implements Runnable {
         @Option(names = "--image-digest", description = "Container image digest to record in the fingerprint, e.g. sha256:abc...")
         String imageDigest;
 
+        @Option(names = "--group-readable-output", description = "Make the archive and manifest readable by the handoff group.")
+        boolean groupReadableOutput;
+
+        static void makeGroupReadable(Path file) {
+            try {
+                var view = Files.getFileAttributeView(file, java.nio.file.attribute.PosixFileAttributeView.class,
+                        java.nio.file.LinkOption.NOFOLLOW_LINKS);
+                if (view == null) throw new IllegalStateException("handoff output needs POSIX file permissions");
+                var attrs = view.readAttributes();
+                if (!attrs.isRegularFile()) throw new IllegalStateException("handoff output must be a regular file");
+                var permissions = java.util.EnumSet.noneOf(java.nio.file.attribute.PosixFilePermission.class);
+                permissions.addAll(attrs.permissions());
+                permissions.add(java.nio.file.attribute.PosixFilePermission.GROUP_READ);
+                view.setPermissions(permissions);
+            } catch (java.io.IOException | UnsupportedOperationException e) {
+                throw new IllegalStateException("cannot make handoff output readable by its group", e);
+            }
+        }
+
         @Override
         public Integer call() {
             var out = spec.commandLine().getOut();
@@ -218,6 +237,10 @@ public class Main implements Runnable {
                         .withArchive(result.archive());
                 Path manifestFile = result.archive().resolveSibling(ArchiveManifest.FILE_NAME);
                 manifest.write(manifestFile);
+                if (groupReadableOutput) {
+                    makeGroupReadable(result.archive());
+                    makeGroupReadable(manifestFile);
+                }
                 out.printf("Manifest: %s%n", manifestFile);
                 out.printf("Fingerprint: %s%n", manifest.fingerprint());
                 return 0;

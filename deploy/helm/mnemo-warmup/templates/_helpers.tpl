@@ -53,7 +53,11 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
 {{- end -}}
 
 {{- define "mnemo-warmup.toolsImage" -}}
+{{- if .tools.image.digest -}}
+{{- printf "%s@%s" .tools.image.repository .tools.image.digest -}}
+{{- else -}}
 {{- printf "%s:%s" .tools.image.repository .tools.image.tag -}}
+{{- end -}}
 {{- end -}}
 
 {{/* Arguments every command needs to compute the same fingerprint as the others. */}}

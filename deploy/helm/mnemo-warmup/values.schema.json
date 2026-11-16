@@ -38,6 +38,21 @@
     "trainer": {
       "type": "object",
       "properties": {
+        "isolation": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "publisherImage": { "type": "string" },
+            "allowMutableImages": { "type": "boolean" },
+            "publisherJava": { "type": "string" },
+            "handoffClaim": { "type": "string" },
+            "trainingPodTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+            "fsGroup": { "type": "integer", "minimum": 1 },
+            "trainingServiceAccount": { "type": "string" },
+            "targetJavaToolOptions": { "type": "string" },
+            "targetJdkJavaOptions": { "type": "string" }
+          }
+        },
         "enabled": { "type": "boolean" },
         "schedule": { "type": "string", "minLength": 9 },
         "exitMode": { "type": "string", "enum": ["spring-refresh", "http-probe"] },

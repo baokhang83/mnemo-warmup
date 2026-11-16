@@ -63,7 +63,8 @@ public final class IsolatedTrainingPodFactory {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("apiVersion", "v1");
         result.put("kind", "Pod");
-        result.put("metadata", new LinkedHashMap<>(Map.of("name", podName, "namespace", namespace)));
+        result.put("metadata", new LinkedHashMap<>(Map.of("name", podName, "namespace", namespace,
+                "annotations", Map.of("warmup.mnemo.io/handoff", handoffName))));
         result.put("spec", spec);
         return result;
     }

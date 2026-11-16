@@ -28,6 +28,23 @@ public final class IsolatedArchivePublisher {
                 if (!Files.isRegularFile(archive, LinkOption.NOFOLLOW_LINKS)) {
                     throw new IOException("training output is missing or is not a regular file");
                 }
+                Path manifestFile = archive.resolveSibling(ArchiveManifest.FILE_NAME);
+                if (!Files.isRegularFile(manifestFile, LinkOption.NOFOLLOW_LINKS)) {
+                    throw new IOException("training manifest is missing or is not a regular file");
+                }
+                byte[] manifestBytes = RunPlanner.snapshot(manifestFile, 8L << 20);
+                if (manifestBytes == null) throw new IOException("training manifest cannot be read within its limits");
+                final ArchiveManifest trained;
+                try {
+                    trained = ArchiveManifest.fromJson(new String(manifestBytes, java.nio.charset.StandardCharsets.UTF_8));
+                } catch (RuntimeException e) {
+                    throw new IOException("training manifest is invalid", e);
+                }
+                if (!trained.mismatches(live).isEmpty() || !trained.modificationTimeMismatches(live).isEmpty()
+                        || !trained.locationMismatches(live).isEmpty() || trained.archive() == null
+                        || !archive.getFileName().toString().equals(trained.archive().file())) {
+                    throw new IOException("training manifest does not match the intended workload");
+                }
                 // The publisher's temporary directory is not shared with the training pod. Copying
                 // before hashing and uploading prevents the producer from changing bytes between them.
                 privateDirectory[0] = Files.createTempDirectory("mnemo-publish-");
@@ -46,6 +63,10 @@ public final class IsolatedArchivePublisher {
                 }
                 if (total == 0) {
                     throw new IOException("training output is empty");
+                }
+                ArchiveManifest.ArchiveInfo copied = live.withArchive(copy).archive();
+                if (copied.sizeBytes() != trained.archive().sizeBytes() || !copied.sha256().equals(trained.archive().sha256())) {
+                    throw new IOException("training archive does not match its manifest");
                 }
                 return copy;
             });

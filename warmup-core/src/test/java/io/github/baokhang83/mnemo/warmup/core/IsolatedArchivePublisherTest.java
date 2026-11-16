@@ -16,7 +16,7 @@ class IsolatedArchivePublisherTest {
     private static final ArchiveManifest LIVE = new ArchiveManifest(
             ArchiveManifest.SCHEMA_VERSION, CacheStrategy.APP_CDS,
             new ArchiveManifest.Jdk("V", "21.0.5", "21.0.5+11", 21), null, List.of(),
-            List.of(new ArchiveManifest.ClasspathEntry("app.jar", 1, "ab".repeat(32), Instant.EPOCH)), null);
+            List.of(new ArchiveManifest.ClasspathEntry("app.jar", 1, "ab".repeat(32), Instant.EPOCH)), null, "/app");
 
     private static final class Store implements ArchiveStore {
         boolean present;
@@ -33,6 +33,7 @@ class IsolatedArchivePublisherTest {
 
     @Test void calculatesMetadataFromTheOutput() throws Exception {
         Path archive = Files.writeString(tmp.resolve("app.jsa"), "trained output");
+        LIVE.withArchive(archive).write(tmp.resolve(ArchiveManifest.FILE_NAME));
         Store store = new Store();
         var result = new IsolatedArchivePublisher().publish(LIVE, store, TrainingLock.none(), archive, 100);
         assertEquals(TrainingOrchestrator.Status.TRAINED, result.status());
@@ -46,6 +47,7 @@ class IsolatedArchivePublisherTest {
 
     @Test void refusesMissingOversizedAndSymlinkOutputs() throws Exception {
         Path archive = Files.writeString(tmp.resolve("app.jsa"), "trained output");
+        LIVE.withArchive(archive).write(tmp.resolve(ArchiveManifest.FILE_NAME));
         Path link = tmp.resolve("link.jsa");
         Files.createSymbolicLink(link, archive);
         for (Path candidate : List.of(tmp.resolve("missing"), archive, link)) {
@@ -55,6 +57,20 @@ class IsolatedArchivePublisherTest {
             assertEquals(TrainingOrchestrator.Status.FAILED, result.status(), candidate.toString());
             assertEquals(null, store.published);
         }
+    }
+
+    @Test void refusesAChangedArchiveOrManifest() throws Exception {
+        Path archive = Files.writeString(tmp.resolve("app.jsa"), "trained output");
+        LIVE.withArchive(archive).write(tmp.resolve(ArchiveManifest.FILE_NAME));
+        Files.writeString(archive, "changed output");
+        Store store = new Store();
+        assertEquals(TrainingOrchestrator.Status.FAILED,
+                new IsolatedArchivePublisher().publish(LIVE, store, TrainingLock.none(), archive, 100).status());
+        assertEquals(null, store.published);
+        Files.writeString(tmp.resolve(ArchiveManifest.FILE_NAME), "not-json");
+        assertEquals(TrainingOrchestrator.Status.FAILED,
+                new IsolatedArchivePublisher().publish(LIVE, store, TrainingLock.none(), archive, 100).status());
+        assertEquals(null, store.published);
     }
 
     @Test void existingEntrySkipsTheHandoff() {

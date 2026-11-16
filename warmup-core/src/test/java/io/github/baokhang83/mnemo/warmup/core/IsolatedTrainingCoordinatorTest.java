@@ -18,7 +18,7 @@ class IsolatedTrainingCoordinatorTest {
     @TempDir Path tmp;
     private static final ArchiveManifest LIVE = new ArchiveManifest(ArchiveManifest.SCHEMA_VERSION, CacheStrategy.APP_CDS,
             new ArchiveManifest.Jdk("V", "21.0.5", "21.0.5+11", 21), null, List.of(),
-            List.of(new ArchiveManifest.ClasspathEntry("app.jar", 1, "ab".repeat(32), Instant.EPOCH)), null);
+            List.of(new ArchiveManifest.ClasspathEntry("app.jar", 1, "ab".repeat(32), Instant.EPOCH)), null, "/app");
     private static final class Store implements ArchiveStore {
         boolean present;
         @Override public boolean exists(String fingerprint) { return present; }
@@ -28,7 +28,10 @@ class IsolatedTrainingCoordinatorTest {
     @Test void checksTrainsPublishesAndCleansTheUniqueHandoff() {
         Store store = new Store();
         var result = new IsolatedTrainingCoordinator().run(LIVE, store, tmp, name -> {
-            try { Files.writeString(tmp.resolve(name).resolve("app.jsa"), "trained"); }
+            try {
+                Path archive = Files.writeString(tmp.resolve(name).resolve("app.jsa"), "trained");
+                LIVE.withArchive(archive).write(tmp.resolve(name).resolve(ArchiveManifest.FILE_NAME));
+            }
             catch (java.io.IOException e) { throw new IllegalStateException(e); }
             return new IsolatedTrainingPodRunner.Outcome(IsolatedTrainingPodRunner.Status.SUCCEEDED, "done", false);
         }, dir -> new IsolatedArchivePublisher().publish(LIVE, store, TrainingLock.none(), dir.resolve("app.jsa"), 100));

@@ -373,7 +373,7 @@ A slow, huge or broken registry must never keep a pod from starting, so the fetc
 
 The archives measured so far were 54 to 224 MiB. Raise the size limit for an application whose archive is larger, and the deadline for a slow network.
 
-**Where this applies today:** the native fetch (the common path). The Java fetch, which handles ECR, proxies, unknown certificate authorities and fat JARs, does not enforce these two limits yet.
+**Where this applies:** both fetches. The native fetch (the common path) and the Java fetch (ECR, proxies, unknown certificate authorities, fat JARs) read the same two variables and refuse in the same way. The Java fetch also refuses a manifest larger than 1 MiB, a manifest blob larger than 8 MiB and a token response larger than 1 MiB, and if it ever runs out of memory the pod still starts without a cache (unless `--strict`). The limits apply to pulls only: the trainer can still publish an archive larger than the cap, but pods will not fetch it until you raise `MNEMO_WARMUP_MAX_ARCHIVE_BYTES`.
 
 ## Not supported in this release
 

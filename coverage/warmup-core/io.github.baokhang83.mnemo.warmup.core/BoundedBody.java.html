@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>BoundedBody.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">coverage</a> &gt; <a href="../index.html" class="el_bundle">warmup-core</a> &gt; <a href="index.source.html" class="el_package">io.github.baokhang83.mnemo.warmup.core</a> &gt; <span class="el_source">BoundedBody.java</span></div><h1>BoundedBody.java</h1><pre class="source lang-java linenums">package io.github.baokhang83.mnemo.warmup.core;
+
+import java.io.ByteArrayOutputStream;
+import java.net.http.HttpResponse.BodyHandler;
+import java.net.http.HttpResponse.BodySubscriber;
+import java.nio.ByteBuffer;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Flow;
+
+/**
+ * A response body read into memory with a hard ceiling. {@code BodyHandlers.ofByteArray()} reads whatever the server sends, so a
+ * hostile or broken registry could exhaust the heap (an {@code OutOfMemoryError} is an Error, and would end the init container
+ * with a failure). This one refuses a declared length over the limit before reading anything, and cancels the stream the moment
+ * the bytes received pass it.
+ */
+final class BoundedBody {
+    private BoundedBody() {}
+
+    static BodyHandler&lt;byte[]&gt; bytes(long limit, String what) {
+<span class="fc" id="L22">        return info -&gt; new Collector(limit, what, info.headers().firstValueAsLong(&quot;Content-Length&quot;).orElse(-1));</span>
+    }
+
+    private static final class Collector implements BodySubscriber&lt;byte[]&gt; {
+<span class="fc" id="L26">        private final CompletableFuture&lt;byte[]&gt; result = new CompletableFuture&lt;&gt;();</span>
+<span class="fc" id="L27">        private final ByteArrayOutputStream buffer = new ByteArrayOutputStream();</span>
+        private final long limit;
+        private final String what;
+        private final long declared;
+        private Flow.Subscription subscription;
+
+<span class="fc" id="L33">        Collector(long limit, String what, long declared) {</span>
+<span class="fc" id="L34">            this.limit = limit;</span>
+<span class="fc" id="L35">            this.what = what;</span>
+<span class="fc" id="L36">            this.declared = declared;</span>
+<span class="fc" id="L37">        }</span>
+
+        @Override
+        public void onSubscribe(Flow.Subscription s) {
+<span class="fc" id="L41">            this.subscription = s;</span>
+<span class="fc bfc" id="L42" title="All 2 branches covered.">            if (declared &gt; limit) {</span>
+<span class="fc" id="L43">                refuse();</span>
+<span class="fc" id="L44">                return;</span>
+            }
+<span class="fc" id="L46">            s.request(Long.MAX_VALUE);</span>
+<span class="fc" id="L47">        }</span>
+
+        @Override
+        public void onNext(List&lt;ByteBuffer&gt; items) {
+<span class="pc bpc" id="L51" title="1 of 2 branches missed.">            if (result.isDone()) {</span>
+<span class="nc" id="L52">                return;</span>
+            }
+<span class="fc bfc" id="L54" title="All 2 branches covered.">            for (ByteBuffer item : items) {</span>
+<span class="fc bfc" id="L55" title="All 2 branches covered.">                if (buffer.size() + (long) item.remaining() &gt; limit) {</span>
+<span class="fc" id="L56">                    refuse();</span>
+<span class="fc" id="L57">                    return;</span>
+                }
+<span class="fc" id="L59">                byte[] chunk = new byte[item.remaining()];</span>
+<span class="fc" id="L60">                item.get(chunk);</span>
+<span class="fc" id="L61">                buffer.write(chunk, 0, chunk.length);</span>
+<span class="fc" id="L62">            }</span>
+<span class="fc" id="L63">        }</span>
+
+        private void refuse() {
+<span class="fc" id="L66">            subscription.cancel();</span>
+<span class="fc" id="L67">            result.completeExceptionally(new StoreException(&quot;The registry sent more than the &quot; + limit + &quot; bytes allowed for &quot; + what + &quot;; refusing it&quot;));</span>
+<span class="fc" id="L68">        }</span>
+
+        @Override
+        public void onError(Throwable throwable) {
+<span class="nc" id="L72">            result.completeExceptionally(throwable);</span>
+<span class="nc" id="L73">        }</span>
+
+        @Override
+        public void onComplete() {
+<span class="fc" id="L77">            result.complete(buffer.toByteArray());</span>
+<span class="fc" id="L78">        }</span>
+
+        @Override
+        public CompletionStage&lt;byte[]&gt; getBody() {
+<span class="fc" id="L82">            return result;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

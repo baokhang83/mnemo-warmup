@@ -108,6 +108,19 @@ To go back, remove the annotation or set it to `init-container` and render again
 
 The trainer copies what the application needs to start: environment variables and `envFrom` references, volumes and mounts, the image pull policy and security context, image pull secrets, node selector, tolerations and affinity. The preview lists these by **name only**; review it, because the trainer starts your application with that configuration.
 
+## Limits on the fetch
+
+A slow, huge or broken registry must never keep a pod from starting, so the fetch stops itself and the pod starts without a cache (exit code 0, the reason in the log). Two environment variables on the application container set the limits; a value that is not a positive whole number is ignored with a log line and the default applies.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MNEMO_WARMUP_FETCH_DEADLINE_SECONDS` | `120` | The whole fetch (login, manifest, download, check) must be over by then, however slowly bytes arrive. `--store-timeout-seconds` is separate: it only catches total silence for that long. |
+| `MNEMO_WARMUP_MAX_ARCHIVE_BYTES` | `1073741824` (1 GiB) | The largest archive the fetch will download. A larger declared size is refused before any of it is requested. The fetch also refuses an archive that does not fit in the free space of the cache volume. |
+
+The archives measured so far were 54 to 224 MiB. Raise the size limit for an application whose archive is larger, and the deadline for a slow network.
+
+**Where this applies today:** the native fetch (the common path). The Java fetch, which handles ECR, proxies, unknown certificate authorities and fat JARs, does not enforce these two limits yet.
+
 ## Not supported in this release
 
 - Workloads other than `Deployment`; launches with `-cp` and a main class; JVM options that start with `@` (argument files).

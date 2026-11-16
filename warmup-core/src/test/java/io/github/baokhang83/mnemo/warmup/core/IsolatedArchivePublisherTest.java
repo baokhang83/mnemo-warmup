@@ -21,8 +21,13 @@ class IsolatedArchivePublisherTest {
     private static final class Store implements ArchiveStore {
         boolean present;
         ArchiveManifest published;
+        byte[] uploaded;
+        Path uploadedPath;
         @Override public boolean exists(String fingerprint) { return present; }
-        @Override public void put(ArchiveManifest manifest, Path archive) { published = manifest; present = true; }
+        @Override public void put(ArchiveManifest manifest, Path archive) {
+            try { uploaded = Files.readAllBytes(archive); } catch (java.io.IOException e) { throw new IllegalStateException(e); }
+            uploadedPath = archive; published = manifest; present = true;
+        }
         @Override public Optional<StoredArchive> get(String fingerprint, Path target) { throw new UnsupportedOperationException(); }
     }
 
@@ -32,6 +37,8 @@ class IsolatedArchivePublisherTest {
         var result = new IsolatedArchivePublisher().publish(LIVE, store, TrainingLock.none(), archive, 100);
         assertEquals(TrainingOrchestrator.Status.TRAINED, result.status());
         assertEquals(LIVE.fingerprint(), store.published.fingerprint());
+        assertEquals("trained output", new String(store.uploaded, java.nio.charset.StandardCharsets.UTF_8));
+        org.junit.jupiter.api.Assertions.assertFalse(Files.exists(store.uploadedPath), "private copy is removed after publication");
         assertEquals(Files.size(archive), store.published.archive().sizeBytes());
         assertEquals(java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
                 .digest(Files.readAllBytes(archive))), store.published.archive().sha256());

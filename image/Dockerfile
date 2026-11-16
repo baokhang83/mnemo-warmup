@@ -41,7 +41,7 @@ RUN CGO_ENABLED=0 go test ./... \
  && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/mnemo-nodecache ./cmd/mnemo-nodecache
 
 # busybox gives the init-container pattern `cp` and the wrapper its `sh`; it is about 4 MB.
-FROM busybox:1.37
+FROM busybox:1.38
 ARG VERSION=dev
 LABEL org.opencontainers.image.title="mnemo-warmup-tools" \
       org.opencontainers.image.description="mnemo-warmup CLI, launcher and exec wrapper (no JDK); run inside the application image" \

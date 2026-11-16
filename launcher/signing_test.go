@@ -13,6 +13,7 @@ import (
 type signingVector struct {
 	Seed      string `json:"seed"`
 	PublicKey string `json:"publicKey"`
+	KeyID     string `json:"keyId"`
 	Statement struct {
 		Fingerprint string `json:"fingerprint"`
 		Manifest    string `json:"manifest"`
@@ -116,5 +117,18 @@ func TestSignedStatementRefusesWhatIsNotAStatement(t *testing.T) {
 		if _, err := mutate(base).text(); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// The key id is part of the contract: a signature names its key by this id, so both languages must derive the same one.
+func TestKeyIDMatchesTheFrozenVector(t *testing.T) {
+	v, _ := loadSigningVector(t)
+	pub, _ := hex.DecodeString(v.PublicKey)
+	if got := signingKeyID(pub); got != v.KeyID || len(got) != 16 {
+		t.Fatalf("key id %q, want %q", got, v.KeyID)
+	}
+	other := make([]byte, 32)
+	if signingKeyID(other) == v.KeyID {
+		t.Fatal("different keys must not share an id")
 	}
 }

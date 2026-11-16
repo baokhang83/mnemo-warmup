@@ -18,6 +18,7 @@ import io.github.baokhang83.mnemo.warmup.core.RegistryAuth;
 import io.github.baokhang83.mnemo.warmup.core.RegistryCredentials;
 import io.github.baokhang83.mnemo.warmup.core.KubernetesLeaseLock;
 import io.github.baokhang83.mnemo.warmup.core.RunPlanner;
+import io.github.baokhang83.mnemo.warmup.core.SigningKey;
 import io.github.baokhang83.mnemo.warmup.core.TrainingLock;
 import io.github.baokhang83.mnemo.warmup.core.TrainingOrchestrator;
 import io.github.baokhang83.mnemo.warmup.core.StoreException;
@@ -42,7 +43,7 @@ import picocli.CommandLine.Spec;
         mixinStandardHelpOptions = true,
         versionProvider = Main.VersionProvider.class,
         description = "Build, validate and benchmark AppCDS / Leyden AOT caches.",
-        subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class, Main.Fetch.class, Main.Run.class, Main.Train.class, Main.Inject.class})
+        subcommands = {Main.Build.class, Main.Bench.class, Main.Push.class, Main.Fetch.class, Main.Run.class, Main.Train.class, Main.Inject.class, Main.Keygen.class})
 public class Main implements Runnable {
 
     @Command(name = "inject", mixinStandardHelpOptions = true,
@@ -246,6 +247,66 @@ public class Main implements Runnable {
                 ? RegistryAuth.fixed(credentials)
                 : AwsRegistryAuth.fromEnvironment(host, env).orElse(RegistryAuth.anonymous());
         return OciArchiveStore.withAuth(store, plainHttp, login, Duration.ofSeconds(timeoutSeconds));
+    }
+
+    @Command(name = "keygen",
+            mixinStandardHelpOptions = true,
+            description = "Create an Ed25519 key pair for signing archives (docs/adr/0013-signed-archives.md). The private key goes to a "
+                    + "file that is created readable by you only and never overwritten; only the public key is printed.")
+    static class Keygen implements Callable<Integer> {
+
+        @Spec
+        CommandSpec spec;
+
+        @Option(names = "--out", defaultValue = "mnemo-warmup-signing.key",
+                description = "Where to write the private key file. It must not exist yet. Default: ${DEFAULT-VALUE}.")
+        Path out;
+
+        @Option(names = "--secret-name", defaultValue = "mnemo-warmup-signing",
+                description = "Name used in the printed kubectl command. Default: ${DEFAULT-VALUE}.")
+        String secretName;
+
+        @Override
+        public Integer call() {
+            var o = spec.commandLine().getOut();
+            var err = spec.commandLine().getErr();
+            if (!secretName.matches("[a-z0-9]([-a-z0-9.]*[a-z0-9])?")) {
+                err.println("error: --secret-name must be a valid Kubernetes name");
+                return 2;
+            }
+            SigningKey key = SigningKey.generate();
+            try {
+                createPrivateFile(out, key.fileText());
+            } catch (java.nio.file.FileAlreadyExistsException e) {
+                err.println("error: " + out + " already exists; it is never overwritten. Choose another --out, or remove it yourself.");
+                return 2;
+            } catch (java.io.IOException e) {
+                err.println("error: cannot write " + out + ": " + e.getMessage());
+                return 2;
+            }
+            o.println("Key id:      " + key.keyId());
+            o.println("Public key:  " + key.publicKeyEntry());
+            o.println();
+            o.println("The private key is in " + out + " (readable by you only). It is never printed; keep it secret and back it up.");
+            o.println("Losing it does not stop any pod: archives signed with it keep working until you roll out a new key.");
+            o.println();
+            o.println("Give the trainer the private key as a Secret:");
+            o.println("  kubectl -n <namespace> create secret generic " + secretName + " --from-file=signing.key=" + out);
+            o.println("Give the pods the public key (it may be shared freely):");
+            o.println("  MNEMO_WARMUP_SIGNING_PUBLIC_KEYS=" + key.publicKeyEntry());
+            return 0;
+        }
+
+        /** Creates the file with owner-only permissions from the start (never readable by others, not even briefly), and refuses to overwrite. */
+        static void createPrivateFile(Path file, String content) throws java.io.IOException {
+            try {
+                Files.createFile(file, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                        java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")));
+            } catch (UnsupportedOperationException notPosix) {
+                Files.createFile(file); // a file system without POSIX permissions: nothing finer is possible
+            }
+            Files.writeString(file, content, java.nio.charset.StandardCharsets.UTF_8);
+        }
     }
 
     @Command(name = "push",

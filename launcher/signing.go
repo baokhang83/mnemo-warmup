@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 )
 
@@ -34,4 +37,11 @@ func (s signedStatement) text() (string, error) {
 	}
 	return fmt.Sprintf("%s\nfingerprint: %s\nmanifest: %s\narchive: %s\nsize: %d\nrepository: %s\n",
 		statementHeader, s.fingerprint, s.manifest, s.archive, s.size, s.repository), nil
+}
+
+// signingKeyID is the first 8 bytes of the SHA-256 of the raw public key, as 16 lower-case hex characters. It names a key in an
+// archive's signature and in the list of public keys an operator gives a pod; Java derives the same id (SigningKey.keyId).
+func signingKeyID(pub ed25519.PublicKey) string {
+	sum := sha256.Sum256(pub)
+	return hex.EncodeToString(sum[:8])
 }

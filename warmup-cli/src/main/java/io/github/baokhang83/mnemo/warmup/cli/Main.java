@@ -4,6 +4,7 @@ import io.github.baokhang83.mnemo.warmup.core.CacheStrategy;
 import io.github.baokhang83.mnemo.warmup.core.AppTrainer;
 import io.github.baokhang83.mnemo.warmup.core.ArchiveFetcher;
 import io.github.baokhang83.mnemo.warmup.core.ArchiveManifest;
+import io.github.baokhang83.mnemo.warmup.core.ArchiveVerifier;
 import io.github.baokhang83.mnemo.warmup.core.BenchReport;
 import io.github.baokhang83.mnemo.warmup.core.StartupBench;
 import io.github.baokhang83.mnemo.warmup.core.CacheType;
@@ -249,6 +250,36 @@ public class Main implements Runnable {
         return OciArchiveStore.withAuth(store, plainHttp, login, Duration.ofSeconds(timeoutSeconds));
     }
 
+    /** The public keys a pod trusts, as {@code id=base64,id=base64} (docs/adr/0013-signed-archives.md). */
+    static final String ENV_SIGNING_PUBLIC_KEYS = "MNEMO_WARMUP_SIGNING_PUBLIC_KEYS";
+    /** The file {@code keygen} wrote, mounted for the trainer. */
+    static final String ENV_SIGNING_KEY_FILE = "MNEMO_WARMUP_SIGNING_KEY_FILE";
+
+    /**
+     * Pull side. A key list in the environment makes a valid signature mandatory: archives that are unsigned, signed by another key
+     * or altered are treated as missing. A list in which nothing is usable therefore refuses everything (never "checks nothing"), so a
+     * typo cannot switch the check off. Without the variable, archives are accepted on their digests alone.
+     */
+    static OciArchiveStore withSignatureCheck(OciArchiveStore store, java.util.Map<String, String> env, java.util.function.Consumer<String> note) {
+        String entries = env.get(ENV_SIGNING_PUBLIC_KEYS);
+        return entries == null || entries.isBlank() ? store : store.withVerifier(ArchiveVerifier.fromEntries(entries, note));
+    }
+
+    /**
+     * Publish side. With a key file in the environment the store signs everything it publishes, and the trainer also treats an entry
+     * that this key did not sign as incomplete (so it is re-published after a first rollout or a rotation). If the file cannot be used
+     * this throws: asked to sign, the trainer refuses to publish unsigned.
+     */
+    static OciArchiveStore withSigning(OciArchiveStore store, java.util.Map<String, String> env, boolean republishUnsigned) {
+        String file = env.get(ENV_SIGNING_KEY_FILE);
+        if (file == null || file.isBlank()) {
+            return store;
+        }
+        SigningKey key = SigningKey.fromFile(Path.of(file));
+        store.withSigningKey(key);
+        return republishUnsigned ? store.withVerifier(ArchiveVerifier.fromEntries(key.publicKeyEntry(), n -> { })) : store;
+    }
+
     @Command(name = "keygen",
             mixinStandardHelpOptions = true,
             description = "Create an Ed25519 key pair for signing archives (docs/adr/0013-signed-archives.md). The private key goes to a "
@@ -360,7 +391,7 @@ public class Main implements Runnable {
                 if (timeoutSeconds <= 0) {
                     throw new IllegalArgumentException("--timeout-seconds must be positive");
                 }
-                var target = openStore(store, registryAuth, plainHttp, timeoutSeconds);
+                var target = withSigning(openStore(store, registryAuth, plainHttp, timeoutSeconds), System.getenv(), false);
                 out.printf("Uploading %s (%.1f MB) to %s%n", archive, manifest.archive().sizeBytes() / 1_048_576.0, store);
                 target.put(manifest, archive);
                 out.printf("Stored fingerprint %s as tag %s%n", manifest.fingerprint(), OciArchiveStore.tagFor(manifest.fingerprint()));
@@ -461,8 +492,10 @@ public class Main implements Runnable {
                 }
                 timer.lap("extract-and-hash-classpath");
                 // The total deadline starts here, after the local hashing: it bounds what the registry can make the pod wait.
-                var archiveStore = openStore(store, registryAuth, plainHttp, storeTimeoutSeconds)
-                        .withFetchLimits(FetchLimits.fromEnvironment(System.getenv(), note -> e.println("fetch: " + note)));
+                var archiveStore = withSignatureCheck(
+                        openStore(store, registryAuth, plainHttp, storeTimeoutSeconds)
+                                .withFetchLimits(FetchLimits.fromEnvironment(System.getenv(), note -> e.println("fetch: " + note))),
+                        System.getenv(), note -> e.println("fetch: " + note));
                 var result = new ArchiveFetcher().fetch(archiveStore, live, out);
                 timer.lap("store-lookup-download-verify");
                 result.notes().forEach(n -> e.println("fetch: " + n));
@@ -800,7 +833,7 @@ public class Main implements Runnable {
                 try {
                     TrainingLock trainingLock = lock.equals("none") ? TrainingLock.none() : KubernetesLeaseLock.inCluster(Duration.ofSeconds(leaseSeconds));
                     outcome = new TrainingOrchestrator().ensure(
-                            live, openStore(store, registryAuth, plainHttp, storeTimeoutSeconds), trainingLock, training);
+                            live, withSigning(openStore(store, registryAuth, plainHttp, storeTimeoutSeconds), System.getenv(), true), trainingLock, training);
                 } catch (StoreException e) {
                     outcome = new TrainingOrchestrator.Outcome(TrainingOrchestrator.Status.FAILED, live.fingerprint(), e.getMessage());
                 }

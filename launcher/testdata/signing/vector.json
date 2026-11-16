@@ -7,6 +7,7 @@
   "seed": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
   "seedBase64": "nWGxne/9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A=",
   "signature": "0eeb75c1c4c5d0a8c54e61ee0f3020547584e73e7e0f5a654bafc1625388a1faea90dc49ed4faf035758171b933e77f1793be42a9cc24b022bff7e50ff26340c",
+  "signatureFile": "mnemo-warmup-signature-v1\nkeyid: 21fe31dfa154a261\nsignature: Dut1wcTF0KjFTmHuDzAgVHWE5z5+D1plS6/BYlOIofrqkNxJ7U+vA1dYFxuTPnfxeTvkKpzCSwIr/35Q/yY0DA==\nrepository: team/app\n",
   "statement": {
     "archive": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
     "fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111",

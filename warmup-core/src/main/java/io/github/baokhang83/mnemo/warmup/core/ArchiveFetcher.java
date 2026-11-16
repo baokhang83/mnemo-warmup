@@ -19,6 +19,7 @@ public final class ArchiveFetcher {
 
     /** One line of JVM options that make the JVM use the archive; empty or absent means "run plain". */
     public static final String FLAGS_FILE = "mnemo-warmup.flags";
+    public static final String SIGNATURE_FILE = SignatureFile.FILE_NAME;
 
     public enum Outcome {
         HIT,
@@ -56,6 +57,7 @@ public final class ArchiveFetcher {
         }
         try {
             Files.deleteIfExists(outDir.resolve(ArchiveManifest.FILE_NAME));
+            Files.deleteIfExists(outDir.resolve(SIGNATURE_FILE));
         } catch (IOException e) {
             throw new StoreException("Cannot remove the stale manifest in " + outDir + ": " + e.getMessage(), e);
         }
@@ -108,7 +110,13 @@ public final class ArchiveFetcher {
             }
             // The flags file is the commit point: it is written last, so every other file is in place
             // before anything can act on it.
-            write(outDir, ArchiveManifest.FILE_NAME, hit.manifest().toJson());
+            // The stored manifest is written byte for byte as the registry served it: a signature covers those bytes, and run
+            // checks them again from this file. (Re-serialising the parsed manifest would usually give the same bytes, not always.)
+            write(outDir, ArchiveManifest.FILE_NAME,
+                    hit.manifestBytes() != null ? hit.manifestBytes() : hit.manifest().toJson().getBytes(StandardCharsets.UTF_8));
+            if (hit.signature() != null) {
+                write(outDir, SIGNATURE_FILE, SignatureFile.text(hit.signature(), hit.repository()).getBytes(StandardCharsets.UTF_8));
+            }
             Path flags = write(outDir, FLAGS_FILE, live.cacheType().runtimeFlag(hit.archiveFile().toAbsolutePath().toString()) + "\n");
             return new Result(Outcome.HIT, fingerprint, live.cacheType(), hit.archiveFile(), flags, notes);
         }
@@ -116,9 +124,13 @@ public final class ArchiveFetcher {
     }
 
     private static Path write(Path dir, String name, String content) {
+        return write(dir, name, content.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static Path write(Path dir, String name, byte[] content) {
         try {
             Path tmp = Files.createTempFile(dir, name, ".part");
-            Files.writeString(tmp, content, StandardCharsets.UTF_8);
+            Files.write(tmp, content);
             Path target = dir.resolve(name);
             Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             return target;

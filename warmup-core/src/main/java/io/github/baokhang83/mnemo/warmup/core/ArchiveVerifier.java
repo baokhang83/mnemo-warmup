@@ -70,7 +70,7 @@ public final class ArchiveVerifier {
         return SigningKey.keyId(publicKey) + "=" + Base64.getEncoder().encodeToString(publicKey);
     }
 
-    /** No usable key: nothing is checked, and an archive is accepted on its digests alone (the opt-in default). */
+    /** No usable key. Handed to a store as its verifier, this refuses every archive (the key list was given, but nothing in it can be trusted). */
     public boolean isEmpty() {
         return keys.isEmpty();
     }

@@ -57,6 +57,17 @@ public interface ArchiveStore {
      */
     Optional<StoredArchive> get(String fingerprint, Path targetDir);
 
-    /** A downloaded, digest-verified archive and the manifest it was trained with. */
-    record StoredArchive(ArchiveManifest manifest, Path archiveFile) {}
+    /**
+     * A downloaded, digest-verified archive and the manifest it was trained with.
+     *
+     * @param manifestBytes the stored manifest exactly as the registry served it (what a signature covers), or null if unknown
+     * @param signature     the signature stored with the archive, or null if it is unsigned
+     * @param repository    the repository it came from, which a signature binds
+     */
+    record StoredArchive(ArchiveManifest manifest, Path archiveFile, byte[] manifestBytes, ArchiveSignature signature, String repository) {
+        /** An archive from a store that does not sign. */
+        public StoredArchive(ArchiveManifest manifest, Path archiveFile) {
+            this(manifest, archiveFile, null, null, null);
+        }
+    }
 }

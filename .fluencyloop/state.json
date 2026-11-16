@@ -3,7 +3,7 @@
   "feature": "signed-archives-stage-a",
   "branch": "feature/signed-archives-stage-a",
   "stage": "build",
-  "last_session": "001-slice-1-the-signed-statement-and-a-frozen-cross-language",
+  "last_session": "002-slice-2-signing-keys-the-verifier-and-keygen",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

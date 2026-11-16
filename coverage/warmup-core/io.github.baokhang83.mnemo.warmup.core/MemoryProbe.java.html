@@ -66,15 +66,15 @@ interface MemoryProbe {
 <span class="fc" id="L66">        Path status = Path.of(&quot;/proc&quot;, Long.toString(pid), &quot;status&quot;);</span>
 <span class="pc bpc" id="L67" title="1 of 2 branches missed.">        if (Files.isReadable(status)) {</span>
             try {
-<span class="fc bfc" id="L69" title="All 2 branches covered.">                for (String line : Files.readAllLines(status)) {</span>
+<span class="pc bpc" id="L69" title="1 of 2 branches missed.">                for (String line : Files.readAllLines(status)) {</span>
 <span class="fc bfc" id="L70" title="All 2 branches covered.">                    if (line.startsWith(&quot;VmHWM:&quot;)) {</span>
 <span class="fc" id="L71">                        return Long.parseLong(line.replaceAll(&quot;\\D+&quot;, &quot;&quot;));</span>
                     }
 <span class="fc" id="L73">                }</span>
 <span class="nc" id="L74">            } catch (IOException | NumberFormatException e) {</span>
 <span class="nc" id="L75">                return 0;</span>
-<span class="fc" id="L76">            }</span>
-<span class="fc" id="L77">            return 0;</span>
+<span class="nc" id="L76">            }</span>
+<span class="nc" id="L77">            return 0;</span>
         }
         try {
 <span class="nc" id="L80">            Process ps = new ProcessBuilder(&quot;ps&quot;, &quot;-o&quot;, &quot;rss=&quot;, &quot;-p&quot;, Long.toString(pid))</span>

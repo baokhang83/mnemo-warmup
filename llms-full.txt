@@ -25,7 +25,7 @@ unchanged JVM application. A pod starts from the cache when it fits its launch e
 <a href="https://github.com/baokhang83/mnemo-warmup/actions/workflows/build.yml"><img alt="build" src="https://github.com/baokhang83/mnemo-warmup/actions/workflows/build.yml/badge.svg"></a>
 <a href="https://baokhang83.github.io/mnemo-warmup/"><img alt="coverage" src="https://raw.githubusercontent.com/baokhang83/mnemo-warmup/refs/heads/gh-pages/badges/jacoco.svg"></a>
 <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-blue.svg"></a>
-<img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-yellow">
+<img alt="Status: beta" src="https://img.shields.io/badge/status-beta-yellow">
 <img alt="Java 21+" src="https://img.shields.io/badge/java-21%2B-informational">
 
 <p>

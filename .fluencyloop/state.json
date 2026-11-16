@@ -3,7 +3,7 @@
   "feature": "145-isolate-archive-signing-and-publishing-from-application",
   "branch": "feature/145-isolate-archive-signing-and-publishing-from-application",
   "stage": "build",
-  "last_session": "007-coordinate-the-isolated-training-handoff",
+  "last_session": "008-constrain-the-isolated-training-pod",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

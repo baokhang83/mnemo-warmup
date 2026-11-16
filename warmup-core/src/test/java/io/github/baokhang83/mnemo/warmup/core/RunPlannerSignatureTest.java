@@ -1,0 +1,186 @@
+package io.github.baokhang83.mnemo.warmup.core;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.security.MessageDigest;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Map;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.io.TempDir;
+
+/**
+ * {@code run} checks the files on disk again at every start (docs/adr/0013). The attacker here can write into the cache directory, which
+ * is shared inside the pod, and takes care to keep every digest check passing; only a signature they cannot make stops them.
+ */
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+class RunPlannerSignatureTest {
+
+    private static final JdkInfo JDK = JdkInfo.fromJavaHome(Path.of(System.getProperty("java.home")));
+    private static final CacheStrategy STRATEGY = CacheType.AUTO.resolve(JDK);
+    private static final String JAVA = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+    private static final String REPOSITORY = "team/app";
+
+    private Path templateJar;
+
+    @BeforeAll
+    void buildTemplate(@TempDir Path shared) throws IOException {
+        templateJar = TestApps.jar(shared, "template", TestApps.HELLO);
+    }
+
+    private record Cache(Path jar, Path cacheDir, Path archive, Path manifestFile, ArchiveManifest manifest) {}
+
+    /** What fetch leaves behind, without a signature file yet. */
+    private Cache cache(Path dir) throws IOException {
+        Path jar = Files.copy(templateJar, dir.resolve("app.jar"));
+        Files.setLastModifiedTime(jar, FileTime.from(Instant.parse("2026-01-01T00:00:00Z")));
+        Path cacheDir = Files.createDirectories(dir.resolve("cache"));
+        Path archive = Files.writeString(cacheDir.resolve("app." + STRATEGY.extension()), "the genuine archive");
+        var manifest = ArchiveManifest.describe(
+                        new JarExtractor.ExtractedApp(JarExtractor.Kind.EXECUTABLE_JAR, jar), JDK, STRATEGY, List.of("-Xmx512m"), Map.of(), null)
+                .withArchive(archive);
+        Path manifestFile = cacheDir.resolve(ArchiveManifest.FILE_NAME);
+        manifest.write(manifestFile);
+        Files.writeString(cacheDir.resolve(ArchiveFetcher.FLAGS_FILE), STRATEGY.runtimeFlag(archive.toAbsolutePath().toString()) + "\n");
+        return new Cache(jar, cacheDir, archive, manifestFile, manifest);
+    }
+
+    private static String sha256(byte[] bytes) throws Exception {
+        return "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+    }
+
+    /** Signs what is on disk now, as the trainer would have, and writes the signature file as fetch would. */
+    private static void sign(Cache c, SigningKey key, String repository) throws Exception {
+        var statement = new SignedStatement(c.manifest().fingerprint(), sha256(Files.readAllBytes(c.manifestFile())),
+                sha256(Files.readAllBytes(c.archive())), Files.size(c.archive()), repository);
+        Files.writeString(c.cacheDir().resolve(SignatureFile.FILE_NAME), SignatureFile.text(key.sign(statement), repository));
+    }
+
+    private static Map<String, String> trusting(SigningKey... keys) {
+        StringBuilder entries = new StringBuilder();
+        for (SigningKey k : keys) {
+            entries.append(entries.length() == 0 ? "" : ",").append(k.publicKeyEntry());
+        }
+        return Map.of(ArchiveVerifier.ENV_PUBLIC_KEYS, entries.toString());
+    }
+
+    private static List<String> launch(Cache c) {
+        List<String> command = new ArrayList<>(List.of(JAVA, "-Xmx512m"));
+        command.addAll(List.of("-jar", c.jar().toString(), "--server.port=8080"));
+        return command;
+    }
+
+    private static RunPlanner.Plan plan(Cache c, Map<String, String> env) {
+        return new RunPlanner().plan(launch(c), c.cacheDir(), env, null);
+    }
+
+    private static void assertPlainStart(Cache c, RunPlanner.Plan plan, String reason) {
+        assertFalse(plan.archiveUsed(), plan.notes().toString());
+        assertEquals(launch(c), plan.command(), "the command must be exactly what was given");
+        assertTrue(plan.notes().stream().anyMatch(n -> n.contains(reason)), reason + " expected in " + plan.notes());
+    }
+
+    @Test
+    void aSignedCacheDirectoryIsUsed(@TempDir Path dir) throws Exception {
+        Cache c = cache(dir);
+        SigningKey key = SigningKey.generate();
+        sign(c, key, REPOSITORY);
+        var plan = plan(c, trusting(key));
+        assertTrue(plan.archiveUsed(), plan.notes().toString());
+        assertTrue(plan.command().get(1).startsWith(STRATEGY.runtimeFlag("")), plan.command().toString());
+    }
+
+    @Test
+    void withoutAKeyListNothingIsRequired(@TempDir Path dir) throws Exception {
+        Cache c = cache(dir); // no signature file at all
+        assertTrue(plan(c, Map.of()).archiveUsed());
+        assertTrue(plan(c, Map.of(ArchiveVerifier.ENV_PUBLIC_KEYS, "   ")).archiveUsed());
+    }
+
+    @Test
+    void aMissingSignatureFileMeansAPlainStart(@TempDir Path dir) throws Exception {
+        Cache c = cache(dir);
+        assertPlainStart(c, plan(c, trusting(SigningKey.generate())), "no signature next to it");
+    }
+
+    // the attack in the design: swap the archive AND rewrite the manifest so its hash and size match the new archive
+    @Test
+    void aSwappedArchiveWithAMatchingManifestKeepsNoValidSignature(@TempDir Path dir) throws Exception {
+        Cache c = cache(dir);
+        SigningKey key = SigningKey.generate();
+        sign(c, key, REPOSITORY);
+        Files.writeString(c.archive(), "an archive the attacker built, of any size");
+        ArchiveManifest rewritten = c.manifest().withArchive(c.archive());
+        rewritten.write(c.manifestFile());
+        // every digest check still passes: the manifest says exactly what the new archive is
+        assertPlainStart(c, plan(c, trusting(key)), "signature does not match the files on disk");
+    }
+
+    // a signature covers the manifest file's exact bytes, so even a change that means nothing to the parser is caught
+    @Test
+    void aManifestEditedByAByteInvalidatesTheSignature(@TempDir Path dir) throws Exception {
+        Cache c = cache(dir);
+        SigningKey key = SigningKey.generate();
+        sign(c, key, REPOSITORY);
+        Files.writeString(c.manifestFile(), Files.readString(c.manifestFile()) + "\n ", StandardCharsets.UTF_8);
+        assertPlainStart(c, plan(c, trusting(key)), "signature does not match the files on disk");
+    }
+
+    @Test
+    void anArchiveSignedByAKeyThatIsNotTrustedIsRefused(@TempDir Path dir) throws Exception {
+        Cache c = cache(dir);
+        SigningKey attacker = SigningKey.generate();
+        sign(c, attacker, REPOSITORY);
+        var plan = plan(c, trusting(SigningKey.generate()));
+        assertPlainStart(c, plan, "not trusted");
+        assertTrue(plan.notes().stream().anyMatch(n -> n.contains(attacker.keyId())), plan.notes().toString());
+    }
+
+    // pointing the signature file at another repository changes the statement, so the signature no longer matches
+    @Test
+    void aSignatureFileNamingAnotherRepositoryIsRefused(@TempDir Path dir) throws Exception {
+        Cache c = cache(dir);
+        SigningKey key = SigningKey.generate();
+        sign(c, key, REPOSITORY);
+        Path file = c.cacheDir().resolve(SignatureFile.FILE_NAME);
+        Files.writeString(file, Files.readString(file).replace("repository: team/app", "repository: team/other"));
+        assertPlainStart(c, plan(c, trusting(key)), "signature does not match the files on disk");
+    }
+
+    @Test
+    void anUnreadableSignatureFileIsAPlainStartNotAnError(@TempDir Path dir) throws Exception {
+        Cache c = cache(dir);
+        Files.writeString(c.cacheDir().resolve(SignatureFile.FILE_NAME), "garbage");
+        assertPlainStart(c, plan(c, trusting(SigningKey.generate())), "unreadable");
+    }
+
+    @Test
+    void aKeyListWithNothingUsableRefusesEvenASignedDirectory(@TempDir Path dir) throws Exception {
+        Cache c = cache(dir);
+        sign(c, SigningKey.generate(), REPOSITORY);
+        var plan = plan(c, Map.of(ArchiveVerifier.ENV_PUBLIC_KEYS, "typo-not-a-key"));
+        assertFalse(plan.archiveUsed(), plan.notes().toString());
+        assertTrue(plan.notes().stream().anyMatch(n -> n.contains("ignoring a signing public key entry")), plan.notes().toString());
+    }
+
+    @Test
+    void severalTrustedKeysSupportRotation(@TempDir Path dir) throws Exception {
+        Cache c = cache(dir);
+        SigningKey oldKey = SigningKey.generate();
+        SigningKey newKey = SigningKey.generate();
+        sign(c, newKey, REPOSITORY);
+        assertTrue(plan(c, trusting(oldKey, newKey)).archiveUsed());
+        assertFalse(plan(c, trusting(oldKey)).archiveUsed());
+    }
+}

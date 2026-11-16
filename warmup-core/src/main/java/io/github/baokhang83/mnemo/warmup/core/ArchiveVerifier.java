@@ -22,6 +22,9 @@ public final class ArchiveVerifier {
         BAD_SIGNATURE
     }
 
+    /** The environment variable that lists the public keys a pod trusts, as {@code id=base64,id=base64}. Setting it makes a valid signature mandatory. */
+    public static final String ENV_PUBLIC_KEYS = "MNEMO_WARMUP_SIGNING_PUBLIC_KEYS";
+
     private final Map<String, byte[]> keys;
 
     private ArchiveVerifier(Map<String, byte[]> keys) {

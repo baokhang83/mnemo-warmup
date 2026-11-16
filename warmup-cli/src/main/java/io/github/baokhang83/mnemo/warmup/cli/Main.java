@@ -251,9 +251,9 @@ public class Main implements Runnable {
     }
 
     /** The public keys a pod trusts, as {@code id=base64,id=base64} (docs/adr/0013-signed-archives.md). */
-    static final String ENV_SIGNING_PUBLIC_KEYS = "MNEMO_WARMUP_SIGNING_PUBLIC_KEYS";
+    static final String ENV_SIGNING_PUBLIC_KEYS = ArchiveVerifier.ENV_PUBLIC_KEYS;
     /** The file {@code keygen} wrote, mounted for the trainer. */
-    static final String ENV_SIGNING_KEY_FILE = "MNEMO_WARMUP_SIGNING_KEY_FILE";
+    static final String ENV_SIGNING_KEY_FILE = SigningKey.ENV_KEY_FILE;
 
     /**
      * Pull side. A key list in the environment makes a valid signature mandatory: archives that are unsigned, signed by another key

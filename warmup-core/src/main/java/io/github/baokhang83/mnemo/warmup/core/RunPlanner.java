@@ -79,11 +79,22 @@ public final class RunPlanner {
         }
         // Verify before use (§2): the size alone would accept same-length corruption, so hash the bytes
         // that are about to be handed to the JVM.
-        boolean archiveDigestMatches = trained.archive().sha256().equals(sha256Hex(archive));
+        String archiveSha256 = sha256Hex(archive);
         timer.lap("archive-sha256");
-        if (!archiveDigestMatches) {
+        if (!trained.archive().sha256().equals(archiveSha256)) {
             notes.add("archive " + archive + " does not match the SHA-256 in its manifest; starting without it");
             return plain;
+        }
+        // Signed archives (docs/adr/0013): when the operator lists public keys, the files on disk must still carry a valid signature.
+        // Anything able to write into this directory can swap the files, but cannot make a signature for the swap.
+        String keys = env.get(ArchiveVerifier.ENV_PUBLIC_KEYS);
+        if (keys != null && !keys.isBlank()) {
+            String problem = signatureProblem(ArchiveVerifier.fromEntries(keys, notes::add), cacheDir, manifestFile, trained, archive, archiveSha256);
+            timer.lap("signature");
+            if (problem != null) {
+                notes.add("the archive is not trusted: " + problem + "; starting without it");
+                return plain;
+            }
         }
 
         JavaLaunch launch = JavaLaunch.parse(command);
@@ -131,6 +142,46 @@ public final class RunPlanner {
         withFlag.add(1, flag);
         notes.add("using " + trained.cacheType() + " archive " + archive);
         return new Plan(List.copyOf(withFlag), true, notes);
+    }
+
+    /**
+     * Why the files in the cache directory are not covered by a valid signature, or null when they are. The statement is rebuilt from the
+     * files as they are now (the manifest's fingerprint, the SHA-256 of the manifest file's bytes, the archive's SHA-256 and size) and the
+     * repository the signature file names, never from anything the signature file claims about them.
+     */
+    private static String signatureProblem(
+            ArchiveVerifier verifier, Path cacheDir, Path manifestFile, ArchiveManifest trained, Path archive, String archiveSha256) {
+        String text = readOrNull(cacheDir.resolve(SignatureFile.FILE_NAME));
+        if (text == null) {
+            return "there is no signature next to it";
+        }
+        SignatureFile.Contents contents;
+        try {
+            contents = SignatureFile.parse(text);
+        } catch (IllegalArgumentException e) {
+            return "the signature file is unreadable";
+        }
+        byte[] manifestBytes;
+        try {
+            manifestBytes = Files.readAllBytes(manifestFile);
+        } catch (IOException e) {
+            return "the manifest cannot be read again";
+        }
+        var statement = new SignedStatement(
+                trained.fingerprint(), "sha256:" + sha256Hex(manifestBytes), "sha256:" + archiveSha256, sizeOf(archive), contents.repository());
+        return switch (verifier.verify(statement, contents.signature())) {
+            case VALID -> null;
+            case UNKNOWN_KEY -> "it is signed by a key that is not trusted (" + contents.signature().keyId() + ")";
+            case BAD_SIGNATURE -> "its signature does not match the files on disk";
+        };
+    }
+
+    private static String sha256Hex(byte[] bytes) {
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private static String readOrNull(Path file) {

@@ -3,7 +3,7 @@
   "feature": "signed-archives-stage-a",
   "branch": "feature/signed-archives-stage-a",
   "stage": "build",
-  "last_session": "002-slice-2-signing-keys-the-verifier-and-keygen",
+  "last_session": "003-slice-3-the-store-signs-and-verifies-the-fetcher-keeps-t",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

@@ -26,6 +26,8 @@ import java.util.List;
  */
 public final class SigningKey {
 
+    /** The environment variable that names the key file the trainer signs with. */
+    public static final String ENV_KEY_FILE = "MNEMO_WARMUP_SIGNING_KEY_FILE";
     static final String FILE_HEADER = "mnemo-warmup-signing-key-v1";
     // the fixed wrappers (PKCS#8 and X.509) that put a raw 32-byte Ed25519 seed or public key into the encodings the JDK reads
     private static final byte[] PKCS8_PREFIX = HexFormat.of().parseHex("302e020100300506032b657004220420");

@@ -293,20 +293,28 @@ public final class RunPlanner {
 
     /** Runs {@code task} on a daemon thread, unless too many earlier readers are still stuck (see {@link #maxBlockedReaders}). */
     private static boolean startReader(Runnable task) {
-        if (LIVE_READERS.get() >= maxBlockedReaders) {
-            return false;
-        }
-        LIVE_READERS.incrementAndGet();
-        Thread reader = new Thread(() -> {
-            try {
-                task.run();
-            } finally {
-                LIVE_READERS.decrementAndGet();
+        int readers;
+        do {
+            readers = LIVE_READERS.get();
+            if (readers >= maxBlockedReaders) {
+                return false;
             }
-        }, "mnemo-warmup-read");
-        reader.setDaemon(true);
-        reader.start();
-        return true;
+        } while (!LIVE_READERS.compareAndSet(readers, readers + 1));
+        try {
+            Thread reader = new Thread(() -> {
+                try {
+                    task.run();
+                } finally {
+                    LIVE_READERS.decrementAndGet();
+                }
+            }, "mnemo-warmup-read");
+            reader.setDaemon(true);
+            reader.start();
+            return true;
+        } catch (RuntimeException | Error e) {
+            LIVE_READERS.decrementAndGet();
+            throw e;
+        }
     }
 
     private static long sizeOf(Path file) {

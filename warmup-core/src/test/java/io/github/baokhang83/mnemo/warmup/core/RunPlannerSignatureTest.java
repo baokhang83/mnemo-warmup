@@ -405,4 +405,49 @@ class RunPlannerSignatureTest {
         assertEquals(before, RunPlanner.liveReaders(), "stuck readers are released once someone opens the pipe");
         assertEquals(10, RunPlanner.snapshot(normal, 10).length, "and reads work again");
     }
+
+    @Test
+    void concurrentBlockedReadersCannotExceedTheCap(@TempDir Path dir) throws Exception {
+        Path pipe = dir.resolve("contended-pipe");
+        org.junit.jupiter.api.Assumptions.assumeTrue(makeFifo(pipe), "mkfifo is not available here");
+        int callers = 32;
+        var ready = new java.util.concurrent.CountDownLatch(callers);
+        var start = new java.util.concurrent.CountDownLatch(1);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(callers);
+        long savedTimeout = RunPlanner.readTimeoutMillis;
+        int savedCap = RunPlanner.maxBlockedReaders;
+        int before = RunPlanner.liveReaders();
+        RunPlanner.readTimeoutMillis = 500;
+        RunPlanner.maxBlockedReaders = before + 2;
+        try {
+            var results = new ArrayList<java.util.concurrent.Future<byte[]>>();
+            for (int i = 0; i < callers; i++) {
+                results.add(pool.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    return RunPlanner.snapshot(pipe, 10);
+                }));
+            }
+            assertTrue(ready.await(10, java.util.concurrent.TimeUnit.SECONDS));
+            start.countDown();
+            for (var result : results) {
+                assertEquals(null, result.get(10, java.util.concurrent.TimeUnit.SECONDS));
+            }
+            assertEquals(before + 2, RunPlanner.liveReaders(), "only two readers may block even under contention");
+        } finally {
+            start.countDown();
+            pool.shutdownNow();
+            for (int i = 0; i < 2; i++) {
+                unblock(pipe);
+            }
+            long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+            while (RunPlanner.liveReaders() > before && System.nanoTime() < deadline) {
+                unblock(pipe);
+                Thread.sleep(25);
+            }
+            RunPlanner.readTimeoutMillis = savedTimeout;
+            RunPlanner.maxBlockedReaders = savedCap;
+        }
+        assertEquals(before, RunPlanner.liveReaders(), "blocked readers release their permits");
+    }
 }

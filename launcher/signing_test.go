@@ -2,9 +2,11 @@ package main
 
 import (
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -21,8 +23,10 @@ type signingVector struct {
 		Size        int64  `json:"size"`
 		Repository  string `json:"repository"`
 	} `json:"statement"`
-	Text      string `json:"text"`
-	Signature string `json:"signature"`
+	PublicKeyEntry string `json:"publicKeyEntry"`
+	Text           string `json:"text"`
+	Signature      string `json:"signature"`
+	SignatureFile  string `json:"signatureFile"`
 }
 
 func loadSigningVector(t *testing.T) (signingVector, signedStatement) {
@@ -130,5 +134,106 @@ func TestKeyIDMatchesTheFrozenVector(t *testing.T) {
 	other := make([]byte, 32)
 	if signingKeyID(other) == v.KeyID {
 		t.Fatal("different keys must not share an id")
+	}
+}
+
+// ---- the signature file, trusted keys and verification: the Go twins of SignatureFile and ArchiveVerifier ----
+
+// The file text is part of the contract: Java writes and reads the same bytes.
+func TestSignatureFileMatchesTheFrozenVectorAndRoundTrips(t *testing.T) {
+	v, _ := loadSigningVector(t)
+	signature, _ := hex.DecodeString(v.Signature)
+	text, ok := signatureFileText(v.KeyID, signature, v.Statement.Repository)
+	if !ok || text != v.SignatureFile {
+		t.Fatalf("signature file %q, want %q", text, v.SignatureFile)
+	}
+	keyID, parsed, repository, ok := parseSignatureFile(text)
+	if !ok || keyID != v.KeyID || repository != v.Statement.Repository || !reflect.DeepEqual(parsed, signature) {
+		t.Fatalf("round trip: %v %q %q", ok, keyID, repository)
+	}
+}
+
+func TestSignatureFileRefusesAnythingThatIsNotExactlyTheFormat(t *testing.T) {
+	v, _ := loadSigningVector(t)
+	good := v.SignatureFile
+	for name, bad := range map[string]string{
+		"empty":                "",
+		"not a signature file": "hello\n",
+		"other version":        strings.Replace(good, "signature-v1", "signature-v2", 1),
+		"no final newline":     strings.TrimSuffix(good, "\n"),
+		"an extra line":        good + "extra: x\n",
+		"a wrong field name":   strings.Replace(good, "keyid: ", "id: ", 1),
+		"upper-case repo":      strings.Replace(good, "repository: team/app", "repository: Team/App", 1),
+		"bad base64":           strings.Replace(good, "signature: ", "signature: !!!", 1),
+		"short signature":      "mnemo-warmup-signature-v1\nkeyid: " + v.KeyID + "\nsignature: " + base64.StdEncoding.EncodeToString(make([]byte, 63)) + "\nrepository: team/app\n",
+		"newline in repo":      strings.Replace(good, "repository: team/app", "repository: team/app\nsize: 1", 1),
+		"carriage return":      strings.Replace(good, "\n", "\r\n", 1),
+		"short key id":         strings.Replace(good, "keyid: "+v.KeyID, "keyid: abcd", 1),
+	} {
+		if _, _, _, ok := parseSignatureFile(bad); ok {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if _, ok := signatureFileText(v.KeyID, make([]byte, 64), "bad\nrepo"); ok {
+		t.Error("a repository with a newline was written")
+	}
+}
+
+func TestSignatureKeysAreParsedLikeJavaDoes(t *testing.T) {
+	v, _ := loadSigningVector(t)
+	other := make([]byte, 32)
+	other[0] = 7
+	var notes []string
+	note := func(m string) { notes = append(notes, m) }
+	entries := strings.Join([]string{
+		"justtext",
+		"abcd=!!!notbase64",
+		"abcd=" + base64.StdEncoding.EncodeToString(make([]byte, 31)),
+		"0000000000000000=" + base64.StdEncoding.EncodeToString(other), // an id that is not that key's id
+		"",
+		v.PublicKeyEntry,
+	}, ",")
+	keys := parseSignatureKeys(entries, note)
+	if len(notes) != 4 {
+		t.Fatalf("notes %q", notes)
+	}
+	if len(keys) != 1 || keys[v.KeyID] == nil {
+		t.Fatalf("only the good entry may survive: %v", keys)
+	}
+	if got := parseSignatureKeys("", note); len(got) != 0 {
+		t.Fatal("an empty list has no keys")
+	}
+}
+
+func TestVerifyDistinguishesValidUnknownAndBad(t *testing.T) {
+	v, s := loadSigningVector(t)
+	signature, _ := hex.DecodeString(v.Signature)
+	keys := parseSignatureKeys(v.PublicKeyEntry, func(string) {})
+	if got := keys.verify(s, v.KeyID, signature); got != verifyValid {
+		t.Fatalf("the frozen signature must verify, got %v", got)
+	}
+	if got := keys.verify(s, "0000000000000000", signature); got != verifyUnknownKey {
+		t.Fatalf("an unlisted key id, got %v", got)
+	}
+	flipped := append([]byte{}, signature...)
+	flipped[5] ^= 1
+	if got := keys.verify(s, v.KeyID, flipped); got != verifyBadSignature {
+		t.Fatalf("a flipped bit, got %v", got)
+	}
+	if got := keys.verify(s, v.KeyID, signature[:63]); got != verifyBadSignature {
+		t.Fatalf("a short signature, got %v", got)
+	}
+	replay := s
+	replay.repository = "team/orders" // the design's example: the same signature does not cover another repository
+	if got := keys.verify(replay, v.KeyID, signature); got != verifyBadSignature {
+		t.Fatalf("a replay into another repository, got %v", got)
+	}
+	bad := s
+	bad.size = 0 // not even a statement
+	if got := keys.verify(bad, v.KeyID, signature); got != verifyBadSignature {
+		t.Fatalf("an invalid statement, got %v", got)
+	}
+	if keys.verify(s, v.KeyID, signature).problem(v.KeyID) != "" || verifyUnknownKey.problem("abc") == "" || verifyBadSignature.problem("abc") == "" {
+		t.Fatal("problem() must be empty for valid and set otherwise")
 	}
 }

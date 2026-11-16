@@ -194,6 +194,14 @@ func decide(cmd []string, env map[string]string, t *timer) (planResult, bool) {
 	if !ok || archiveErr != nil || archiveSum != m.Archive.SHA256 {
 		return planResult{}, false
 	}
+	// Signed archives (docs/adr/0013): with keys configured, the files on disk must still carry a valid signature. Anything that is not a
+	// clean pass goes to the Java planner, which repeats the check and says why in the log.
+	if entries := strings.TrimSpace(env[envSigningPublicKeys]); entries != "" {
+		if !signatureCoversFiles(entries, cacheDir, manifestBytes, fingerprint(m), archiveSum, info.Size()) {
+			return planResult{}, false
+		}
+		t.lap("signature")
+	}
 
 	home, ok := launch.javaHome(env)
 	if !ok {
@@ -228,6 +236,28 @@ func decide(cmd []string, env map[string]string, t *timer) (planResult, bool) {
 }
 
 var archiveOptions = []string{"-XX:SharedArchiveFile=", "-XX:AOTCache=", "-XX:ArchiveClassesAtExit=", "-XX:AOTCacheOutput="}
+
+// signatureCoversFiles reports whether a trusted key signed exactly these files: the statement is rebuilt from the manifest's
+// fingerprint, the SHA-256 of the manifest file's bytes, the archive's SHA-256 and size, and the repository the signature file names.
+func signatureCoversFiles(entries, cacheDir string, manifestBytes []byte, fp, archiveSum string, archiveSize int64) bool {
+	raw, err := os.ReadFile(filepath.Join(cacheDir, signatureFile))
+	if err != nil {
+		return false
+	}
+	keyID, signature, repository, ok := parseSignatureFile(string(raw))
+	if !ok {
+		return false
+	}
+	manifestSum := sha256.Sum256(manifestBytes)
+	statement := signedStatement{
+		fingerprint: fp,
+		manifest:    "sha256:" + hex.EncodeToString(manifestSum[:]),
+		archive:     "sha256:" + archiveSum,
+		size:        archiveSize,
+		repository:  repository,
+	}
+	return parseSignatureKeys(entries, func(string) {}).verify(statement, keyID, signature) == verifyValid
+}
 
 func runtimeFlag(cacheType, archivePath string) string {
 	switch cacheType {

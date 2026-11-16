@@ -35,6 +35,8 @@ type fakeRegistry struct {
 	redirect  *httptest.Server // when set, the layer is served from here via 307
 	trickle   time.Duration    // when set, the layer is sent one byte at a time with this pause between bytes
 	declared  int64            // when set, the manifest declares this layer size (the bytes sent are still the real ones)
+	// when set, the OCI manifest carries these annotations (a signature and its key id)
+	annotations map[string]string
 }
 
 func newFakeRegistry(t *testing.T, f fixture) *fakeRegistry {
@@ -52,27 +54,27 @@ func newFakeRegistry(t *testing.T, f fixture) *fakeRegistry {
 		t.Fatal(err)
 	}
 	sum := func(b []byte) string { s := sha256.Sum256(b); return "sha256:" + hex.EncodeToString(s[:]) }
-	image, _ := json.Marshal(map[string]any{
-		"schemaVersion": 2, "mediaType": ociManifestType, "artifactType": "application/vnd.mnemo.warmup.v1",
-		"config": map[string]any{"mediaType": ociConfigType, "digest": sum(cfg), "size": len(cfg)},
-		"layers": []any{map[string]any{"mediaType": ociLayerType, "digest": sum(archive), "size": len(archive)}},
-	})
 	tag := "fp-" + strings.TrimPrefix(m.Fingerprint, "sha256:")
 	fr := &fakeRegistry{layer: archive}
-	var declare func() []byte
-	declare = func() []byte {
+	// the manifest is built per request, so a test can change what the registry declares or annotates
+	declare := func() []byte {
 		fr.mu.Lock()
-		d := fr.declared
+		d, annotations := fr.declared, fr.annotations
 		fr.mu.Unlock()
-		if d == 0 {
-			return image
+		size := int64(len(archive))
+		if d != 0 {
+			size = d
 		}
-		oversized, _ := json.Marshal(map[string]any{
+		image := map[string]any{
 			"schemaVersion": 2, "mediaType": ociManifestType, "artifactType": "application/vnd.mnemo.warmup.v1",
 			"config": map[string]any{"mediaType": ociConfigType, "digest": sum(cfg), "size": len(cfg)},
-			"layers": []any{map[string]any{"mediaType": ociLayerType, "digest": sum(archive), "size": d}},
-		})
-		return oversized
+			"layers": []any{map[string]any{"mediaType": ociLayerType, "digest": sum(archive), "size": size}},
+		}
+		if len(annotations) > 0 {
+			image["annotations"] = annotations
+		}
+		b, _ := json.Marshal(image)
+		return b
 	}
 	fr.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fr.mu.Lock()

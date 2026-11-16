@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -73,6 +74,8 @@ func (l launcher) run(args []string) int {
 		return l.execApp(rest)
 	case "jar":
 		return l.jarTool(args[1:])
+	case "jar-isolated":
+		return l.jarIsolated(args[1:])
 	case "which-java":
 		if java := l.locator.find(""); java != "" {
 			fmt.Fprintln(l.stdout, java)
@@ -85,7 +88,7 @@ func (l launcher) run(args []string) int {
 }
 
 func (l launcher) usage() int {
-	fmt.Fprintln(l.stderr, "usage: mnemo-launcher install <dir> | fetch [options] | exec [fetch options] -- <command> [args...] | jar <args...> | which-java")
+	fmt.Fprintln(l.stderr, "usage: mnemo-launcher install <dir> | fetch [options] | exec [fetch options] -- <command> [args...] | jar <args...> | jar-isolated <trusted-java> <command> [args...] | which-java")
 	return 2
 }
 
@@ -151,6 +154,42 @@ func (l launcher) jarTool(args []string) int {
 		return 127
 	}
 	return l.replaceWith(append([]string{java, "-jar", l.jar()}, args...))
+}
+
+// jarIsolated launches the trusted coordinator JVM without inheriting application-controlled
+// startup options, dynamic-loader settings, or an application-controlled PATH. The image and java
+// executable supplied by the operator must themselves be trusted.
+func (l launcher) jarIsolated(args []string) int {
+	if len(args) < 2 || !filepath.IsAbs(args[0]) || filepath.Clean(args[0]) != args[0] ||
+		(args[1] != "publish-isolated" && args[1] != "coordinate-isolated") {
+		l.note("jar-isolated requires an absolute trusted java path and an isolated publisher command")
+		return 2
+	}
+	allowed := map[string]bool{
+		"POD_NAMESPACE": true, "POD_SERVICE_ACCOUNT": true,
+		"KUBERNETES_SERVICE_HOST": true, "KUBERNETES_SERVICE_PORT": true,
+		"MNEMO_WARMUP_SIGNING_KEY_FILE": true, "MNEMO_WARMUP_SIGNING_PUBLIC_KEYS": true,
+		"MNEMO_WARMUP_REGISTRY_AUTH": true, "MNEMO_WARMUP_AWS_ROLE_ARN": true,
+		"MNEMO_TARGET_JAVA_TOOL_OPTIONS": true, "MNEMO_TARGET_JDK_JAVA_OPTIONS": true,
+		"AWS_ROLE_ARN": true, "AWS_WEB_IDENTITY_TOKEN_FILE": true, "AWS_ROLE_SESSION_NAME": true,
+		"AWS_REGION": true, "AWS_DEFAULT_REGION": true,
+	}
+	env := []string{"PATH=/usr/bin:/bin"}
+	for _, item := range l.environ {
+		name, _, found := strings.Cut(item, "=")
+		if found && allowed[name] {
+			env = append(env, item)
+		}
+	}
+	argv := append([]string{args[0], "-jar", l.jar()}, args[1:]...)
+	if err := l.exec(args[0], argv, env); err != nil {
+		l.note("cannot start trusted java: %v", err)
+		if errors.Is(err, os.ErrPermission) {
+			return 126
+		}
+		return 127
+	}
+	return 0
 }
 
 // execApp replaces this process with the application. Replacing (not spawning) makes the JVM

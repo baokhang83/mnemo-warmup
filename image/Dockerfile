@@ -29,7 +29,7 @@ RUN if [ "$VERSION" != dev ]; then mvn -B -ntp -q versions:set -DnewVersion="$VE
 
 # The native launcher: a static Go binary for distroless images. Built on the build platform and
 # cross-compiled for the target, so the multi-arch image does not emulate a Go build under QEMU.
-FROM --platform=$BUILDPLATFORM golang:1.24 AS launcher
+FROM --platform=$BUILDPLATFORM golang:1.25 AS launcher
 ARG TARGETOS=linux
 ARG TARGETARCH
 WORKDIR /src/launcher

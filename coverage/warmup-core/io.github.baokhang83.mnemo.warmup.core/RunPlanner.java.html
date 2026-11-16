@@ -299,7 +299,7 @@ import java.util.Map;
 <span class="fc bfc" id="L299" title="All 2 branches covered.">            if (readers &gt;= maxBlockedReaders) {</span>
 <span class="fc" id="L300">                return false;</span>
             }
-<span class="fc bfc" id="L302" title="All 2 branches covered.">        } while (!LIVE_READERS.compareAndSet(readers, readers + 1));</span>
+<span class="pc bpc" id="L302" title="1 of 2 branches missed.">        } while (!LIVE_READERS.compareAndSet(readers, readers + 1));</span>
         try {
 <span class="fc" id="L304">            Thread reader = new Thread(() -&gt; {</span>
                 try {
@@ -390,4 +390,4 @@ import java.util.Map;
         }
     }
 }
-</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.16.202610240946</span></div></body></html>

@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HexFormat;
@@ -231,5 +232,91 @@ class RunPlannerSignatureTest {
         Files.delete(c.cacheDir().resolve(SignatureFile.FILE_NAME));
         Files.createDirectory(c.cacheDir().resolve(SignatureFile.FILE_NAME));
         assertPlainStart(c, plan(c, trusting(key)), "no usable signature");
+    }
+
+    // ---- the cache directory is a volume other processes may write: every read of it is bounded in size and in time ----
+
+    @Test
+    void aSnapshotIsOneBoundedReadAndRefusesWhatIsTooBigOrNotAFile(@TempDir Path dir) throws Exception {
+        Path exact = Files.write(dir.resolve("exact"), new byte[100]);
+        Path tooBig = Files.write(dir.resolve("big"), new byte[101]);
+        assertEquals(100, RunPlanner.snapshot(exact, 100).length, "exactly the limit is allowed");
+        assertEquals(null, RunPlanner.snapshot(tooBig, 100));
+        assertEquals(null, RunPlanner.snapshot(dir, 100), "a directory");
+        assertEquals(null, RunPlanner.snapshot(dir.resolve("missing"), 100));
+    }
+
+    private static boolean makeFifo(Path path) {
+        try {
+            return new ProcessBuilder("mkfifo", path.toString()).redirectErrorStream(true).start().waitFor() == 0;
+        } catch (IOException | InterruptedException e) {
+            return false;
+        }
+    }
+
+    // Java cannot open a file without blocking, and opening a named pipe waits for a writer: the time limit is what keeps it from hanging
+    @Test
+    void aNamedPipeIsGivenUpOnInsteadOfHangingTheStart(@TempDir Path dir) throws Exception {
+        Path pipe = dir.resolve("pipe");
+        org.junit.jupiter.api.Assumptions.assumeTrue(makeFifo(pipe), "mkfifo is not available here");
+        long saved = RunPlanner.readTimeoutMillis;
+        RunPlanner.readTimeoutMillis = 400;
+        try {
+            long started = System.nanoTime();
+            assertEquals(null, RunPlanner.snapshot(pipe, 100));
+            assertTrue(Duration.ofNanos(System.nanoTime() - started).toMillis() < 4_000, "it must give up quickly");
+
+            // and the whole plan: a signature file that is a pipe is a plain start, promptly
+            Cache c = cache(Files.createDirectory(dir.resolve("app")));
+            SigningKey key = SigningKey.generate();
+            sign(c, key, REPOSITORY);
+            Files.delete(c.cacheDir().resolve(SignatureFile.FILE_NAME));
+            org.junit.jupiter.api.Assumptions.assumeTrue(makeFifo(c.cacheDir().resolve(SignatureFile.FILE_NAME)));
+            started = System.nanoTime();
+            assertPlainStart(c, plan(c, trusting(key)), "no usable signature");
+            assertTrue(Duration.ofNanos(System.nanoTime() - started).toSeconds() < 10, "the plan must not hang");
+        } finally {
+            RunPlanner.readTimeoutMillis = saved;
+        }
+    }
+
+    // A writer that keeps growing and replacing the manifest while the planner runs. The manifest is read once, bounded, and that one
+    // snapshot is both parsed and hashed, so the planner never reads without a bound twice and never throws. An archive is used only if
+    // the bytes it actually read verified.
+    @Test
+    void aWriterRacingTheManifestCannotExhaustMemoryOrCrashThePlanner(@TempDir Path dir) throws Exception {
+        Cache c = cache(dir);
+        SigningKey key = SigningKey.generate();
+        sign(c, key, REPOSITORY);
+        byte[] genuine = Files.readAllBytes(c.manifestFile());
+        byte[] huge = new byte[(8 << 20) + 5_000_000]; // far past the limit
+        java.util.concurrent.atomic.AtomicBoolean stop = new java.util.concurrent.atomic.AtomicBoolean();
+        Thread writer = new Thread(() -> {
+            try {
+                boolean grow = true;
+                while (!stop.get()) {
+                    Files.write(c.manifestFile(), grow ? huge : genuine);
+                    grow = !grow;
+                }
+            } catch (IOException e) {
+                // the test ends
+            }
+        });
+        writer.setDaemon(true);
+        writer.start();
+        try {
+            int used = 0;
+            for (int i = 0; i < 40; i++) {
+                var plan = plan(c, trusting(key)); // must neither throw nor run out of memory
+                assertEquals(launch(c).size(), plan.archiveUsed() ? plan.command().size() - 1 : plan.command().size());
+                if (plan.archiveUsed()) {
+                    used++;
+                }
+            }
+            assertTrue(used >= 0); // either outcome is fine; what matters is that every call returned a valid plan
+        } finally {
+            stop.set(true);
+            writer.join(5_000);
+        }
     }
 }

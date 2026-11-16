@@ -66,11 +66,14 @@ public final class RunPlanner {
             notes.add("no manifest next to the flags; starting without an archive");
             return plain;
         }
-        if (sizeOf(manifestFile) > MAX_MANIFEST_BYTES) {
-            notes.add("the manifest next to the flags is larger than anything fetch writes; starting without an archive");
+        // One bounded snapshot, read once: it is parsed here and hashed for the signature below, so both see the same bytes even if a
+        // writer grows or replaces the file after this point. (A size check followed by two reads would let it change in between.)
+        byte[] manifestBytes = snapshot(manifestFile, MAX_MANIFEST_BYTES);
+        if (manifestBytes == null) {
+            notes.add("the manifest next to the flags is unreadable or larger than anything fetch writes; starting without an archive");
             return plain;
         }
-        ArchiveManifest trained = ArchiveManifest.read(manifestFile);
+        ArchiveManifest trained = ArchiveManifest.fromJson(new String(manifestBytes, StandardCharsets.UTF_8));
         timer.lap("read-manifest");
         if (!flag.equals(trained.cacheType().runtimeFlag(flag.substring(flag.indexOf('=') + 1)))) {
             notes.add("flags (" + flag + ") do not match the manifest's cache type " + trained.cacheType() + "; starting without an archive");
@@ -95,7 +98,7 @@ public final class RunPlanner {
         // A list with nothing usable then trusts nothing, which only costs the cache.
         String keys = env.get(ArchiveVerifier.ENV_PUBLIC_KEYS);
         if (keys != null) {
-            String problem = signatureProblem(ArchiveVerifier.fromEntries(keys, notes::add), cacheDir, manifestFile, trained, archive, archiveSha256);
+            String problem = signatureProblem(ArchiveVerifier.fromEntries(keys, notes::add), cacheDir, manifestBytes, trained, archive, archiveSha256);
             timer.lap("signature");
             if (problem != null) {
                 notes.add("the archive is not trusted: " + problem + "; starting without it");
@@ -156,7 +159,7 @@ public final class RunPlanner {
      * repository the signature file names, never from anything the signature file claims about them.
      */
     private static String signatureProblem(
-            ArchiveVerifier verifier, Path cacheDir, Path manifestFile, ArchiveManifest trained, Path archive, String archiveSha256) {
+            ArchiveVerifier verifier, Path cacheDir, byte[] manifestBytes, ArchiveManifest trained, Path archive, String archiveSha256) {
         String text = readOrNull(cacheDir.resolve(SignatureFile.FILE_NAME), MAX_SIGNATURE_BYTES);
         if (text == null) {
             return "there is no usable signature next to it";
@@ -166,12 +169,6 @@ public final class RunPlanner {
             contents = SignatureFile.parse(text);
         } catch (IllegalArgumentException e) {
             return "the signature file is unreadable";
-        }
-        byte[] manifestBytes;
-        try {
-            manifestBytes = Files.readAllBytes(manifestFile);
-        } catch (IOException e) {
-            return "the manifest cannot be read again";
         }
         var statement = new SignedStatement(
                 trained.fingerprint(), "sha256:" + sha256Hex(manifestBytes), "sha256:" + archiveSha256, sizeOf(archive), contents.repository());
@@ -196,17 +193,39 @@ public final class RunPlanner {
     private static final int MAX_SIGNATURE_BYTES = 4 << 10;
     private static final long MAX_MANIFEST_BYTES = 8L << 20;
 
-    /** The file's text, or null when it is missing, is not a regular file, or is larger than {@code max} bytes. */
+    /** How long a read of one of these small files may take before it is given up on (a named pipe never finishes). */
+    static volatile long readTimeoutMillis = 5_000;
+
+    /** The file's text, or null when it is missing, unreadable, larger than {@code max} bytes, or does not answer in time. */
     private static String readOrNull(Path file, int max) {
-        try {
-            if (!Files.isRegularFile(file)) {
-                return null;
-            }
+        byte[] bytes = snapshot(file, max);
+        return bytes == null ? null : new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * The file's bytes read once, or null when it is missing, is a directory, is larger than {@code max} bytes, or does not finish within
+     * {@link #readTimeoutMillis}. The cache directory is a volume other processes may be able to write, so a file here is never read
+     * without a bound. The read runs on a daemon thread: opening a named pipe blocks until someone writes to it, and Java cannot open a
+     * file without blocking, so the time limit is what keeps the application's start from hanging (the thread dies with the process).
+     */
+    static byte[] snapshot(Path file, long max) {
+        var result = new java.util.concurrent.CompletableFuture<byte[]>();
+        Thread reader = new Thread(() -> {
             try (var in = Files.newInputStream(file)) {
-                byte[] bytes = in.readNBytes(max + 1);
-                return bytes.length > max ? null : new String(bytes, StandardCharsets.UTF_8);
+                byte[] bytes = in.readNBytes((int) (max + 1));
+                result.complete(bytes.length > max ? null : bytes);
+            } catch (IOException | RuntimeException e) {
+                result.complete(null);
             }
-        } catch (IOException e) {
+        }, "mnemo-warmup-read");
+        reader.setDaemon(true);
+        reader.start();
+        try {
+            return result.get(readTimeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (java.util.concurrent.TimeoutException | java.util.concurrent.ExecutionException e) {
+            return null;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             return null;
         }
     }

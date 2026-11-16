@@ -3,7 +3,7 @@
   "feature": "signed-archives-stage-a",
   "branch": "feature/signed-archives-stage-a",
   "stage": "build",
-  "last_session": "004-slice-4-run-checks-the-signature-on-the-files-on-disk",
+  "last_session": "005-slice-5-the-go-launcher-verifies-like-java-does",
   "base_ref": "main",
   "feature_dir": "",
   "plan": "",

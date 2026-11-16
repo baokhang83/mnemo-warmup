@@ -168,6 +168,7 @@ that mounts the Secret, so application code never can (the same rule as the inje
     - name: MNEMO_WARMUP_REGISTRY_AUTH
       value: /var/run/mnemo-warmup/registry/config.json
     {{- end }}
+    {{- include "mnemo-warmup.signingEnv" . | nindent 4 }}
   volumeMounts:
     - name: mnemo-tools
       mountPath: /mnemo-tools
@@ -209,6 +210,16 @@ so it writes the cache and has the scratch volume. */}}
 {{- if .app.image.digest }}
 - name: MNEMO_WARMUP_IMAGE_DIGEST
   value: {{ .app.image.digest | quote }}
+{{- end }}
+{{- include "mnemo-warmup.signingEnv" . }}
+{{- end -}}
+
+{{/* The public keys pods trust, for every container that fetches or runs (docs/adr/0013). Nothing when signing is off. */}}
+{{- define "mnemo-warmup.signingEnv" -}}
+{{- $signing := .signing | default dict }}
+{{- if $signing.publicKeys }}
+- name: MNEMO_WARMUP_SIGNING_PUBLIC_KEYS
+  value: {{ $signing.publicKeys | quote }}
 {{- end }}
 {{- end -}}
 

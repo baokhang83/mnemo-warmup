@@ -1,5 +1,6 @@
 package io.github.baokhang83.mnemo.warmup.cli;
 
+import io.github.baokhang83.mnemo.warmup.core.ArchiveVerifier;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
@@ -14,7 +15,8 @@ final class WorkloadDiscovery {
     record Workload(String name, String namespace, String container, String image, String store,
                     String exitMode, String probeUrl, String pullSecret, String pushSecret, boolean plainHttp,
                     List<String> command, List<String> jvmArgs, String jar, String toolsDelivery,
-                    String nodeCacheUrl, String nodeCacheCAConfigMap, String nodeCacheAudience) {
+                    String nodeCacheUrl, String nodeCacheCAConfigMap, String nodeCacheAudience,
+                    String signingPublicKeys, String signingKeySecret) {
         /** The tools arrive as an image volume and the fetch runs in the application container (docs/adr/0012). */
         boolean imageVolume() { return IMAGE_VOLUME.equals(toolsDelivery); }
     }
@@ -90,6 +92,10 @@ final class WorkloadDiscovery {
         if (delivery == null) delivery = INIT_CONTAINER;
         if (!delivery.equals(INIT_CONTAINER) && !delivery.equals(IMAGE_VOLUME))
             throw new IllegalArgumentException("tools-delivery must be " + INIT_CONTAINER + " or " + IMAGE_VOLUME + ", got: " + delivery);
+        String signingPublicKeys = signingPublicKeys(optionalString(annotations, PREFIX + "signing-public-keys"));
+        String signingKeySecret = optionalString(annotations, PREFIX + "signing-key-secret");
+        if (signingKeySecret != null && (signingKeySecret.length() > 253 || !signingKeySecret.matches("[a-z0-9]([-a-z0-9.]*[a-z0-9])?")))
+            throw new IllegalArgumentException("signing-key-secret must be a Kubernetes Secret name");
         String nodeCacheUrl = optionalString(annotations, PREFIX + "node-cache-url");
         String nodeCacheCA = optionalString(annotations, PREFIX + "node-cache-ca-configmap");
         String nodeCacheAudience = optionalString(annotations, PREFIX + "node-cache-audience");
@@ -104,7 +110,31 @@ final class WorkloadDiscovery {
                 throw new IllegalArgumentException("node-cache-url must be an HTTPS origin without credentials or a path");
         }
         return new Workload(name, namespace, containerName, image, store, mode, probe, pullSecret, pushSecret, "true".equals(plainHttp),
-                List.copyOf(command), List.copyOf(jvm), command.get(jarIndex + 1), delivery, nodeCacheUrl, nodeCacheCA, nodeCacheAudience);
+                List.copyOf(command), List.copyOf(jvm), command.get(jarIndex + 1), delivery, nodeCacheUrl, nodeCacheCA, nodeCacheAudience,
+                signingPublicKeys, signingKeySecret);
+    }
+
+    /**
+     * The public keys pods trust (docs/adr/0013-signed-archives.md). They are checked here with the very parser the pods use, so a typo
+     * is an error at preview time instead of a key that silently trusts nothing. Returns the entries with blanks and spaces removed.
+     */
+    private static String signingPublicKeys(String value) {
+        if (value == null) return null;
+        List<String> problems = new ArrayList<>();
+        ArchiveVerifier verifier = ArchiveVerifier.fromEntries(value, problems::add);
+        if (!problems.isEmpty() || verifier.isEmpty())
+            throw new IllegalArgumentException("signing-public-keys: " + (problems.isEmpty() ? "no key is listed" : String.join("; ", problems))
+                    + " (expected id=base64 entries separated by commas, as printed by mnemo-warmup keygen)");
+        List<String> entries = new ArrayList<>();
+        for (String entry : value.split(",")) if (!entry.isBlank()) entries.add(entry.trim());
+        return String.join(",", entries);
+    }
+
+    /** The key ids in a validated {@code signing-public-keys} value. */
+    static List<String> keyIds(String signingPublicKeys) {
+        List<String> ids = new ArrayList<>();
+        for (String entry : signingPublicKeys.split(",")) ids.add(entry.substring(0, entry.indexOf('=')));
+        return ids;
     }
 
     private static String optionalString(Map<String, Object> values, String key) {

@@ -151,6 +151,31 @@ check "$app_part" "- exec" "pull Secret + image volume: the app still starts thr
 absent "$app_part" "- --store" "pull Secret + image volume: no fetch options in the application's args"
 if helm template rel "$CHART" "${BASE[@]}" --set tools.delivery=sidecar >/dev/null 2>&1; then fail "an unknown tools.delivery must be refused"; else ok "an unknown tools.delivery is refused"; fi
 
+echo "== signed archives (docs/adr/0013)"
+SIGKEYS="0123456789abcdef=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+out=$(helm template rel "$CHART" -n default "${BASE[@]}")
+absent "$out" "SIGNING" "signing is off by default: no trace of it in the chart"
+out=$(helm template rel "$PARENT" -n default)
+absent "$out" "SIGNING" "signing is off by default: no trace of it in the parent chart"
+absent "$out" "mnemo-signing-key" "signing is off by default: no key volume"
+out=$(helm template rel "$PARENT" -n default --set warmup.signing.publicKeys="$SIGKEYS" --set warmup.signing.keySecret=demo-signing)
+validate "signed archives (parent chart)" "$out"
+app_part=$(awk '/- name: app$/{f=1} f; /^---/{f=0}' <<<"$out")
+fetch_part=$(awk '/name: mnemo-warmup-fetch/,/name: app/' <<<"$out")
+trainer_part=$(awk '/kind: CronJob/,0' <<<"$out")
+check "$app_part" "MNEMO_WARMUP_SIGNING_PUBLIC_KEYS" "the application container gets the public keys (run checks again at every start)"
+check "$fetch_part" "MNEMO_WARMUP_SIGNING_PUBLIC_KEYS" "the fetch container gets the public keys"
+check "$app_part$fetch_part" "$SIGKEYS" "the key list is passed through as given"
+absent "$app_part$fetch_part" "demo-signing" "the private key's Secret is not mounted into the application or the fetch container"
+absent "$app_part$fetch_part" "MNEMO_WARMUP_SIGNING_KEY_FILE" "the application and fetch containers have no path to a private key"
+check "$trainer_part" "MNEMO_WARMUP_SIGNING_KEY_FILE" "the trainer is told where its signing key is"
+check "$trainer_part" "secretName: \"demo-signing\"" "the trainer mounts the key Secret"
+check "$trainer_part" "defaultMode: 0400" "the key file is readable by its owner only"
+absent "$trainer_part" "MNEMO_WARMUP_SIGNING_PUBLIC_KEYS" "the trainer signs, it does not check"
+# with an image volume there is no init container and the application's own entrypoint fetches, so it carries the keys
+out=$(helm template rel "$PARENT" -n default --set tools.delivery=image-volume --set warmup.tools.delivery=image-volume --set warmup.signing.publicKeys="$SIGKEYS")
+check "$(awk '/- name: app$/{f=1} f; /^---/{f=0}' <<<"$out")" "MNEMO_WARMUP_SIGNING_PUBLIC_KEYS" "image volume: the application container carries the public keys"
+
 echo "== example workload chart (examples/helm/example-app)"
 EXAMPLE="$WORK/examples/helm/example-app"
 helm dependency build "$EXAMPLE" >/dev/null 2>&1 || helm dependency update "$EXAMPLE" >/dev/null

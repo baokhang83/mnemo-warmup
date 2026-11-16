@@ -11,7 +11,9 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.regex.Pattern;
 import io.github.baokhang83.mnemo.warmup.core.AwsRegistryAuth;
+import io.github.baokhang83.mnemo.warmup.core.ArchiveVerifier;
 import io.github.baokhang83.mnemo.warmup.core.OciImageConfigReader;
+import io.github.baokhang83.mnemo.warmup.core.SigningKey;
 import io.github.baokhang83.mnemo.warmup.core.RegistryAuth;
 import io.github.baokhang83.mnemo.warmup.core.RegistryCredentials;
 
@@ -136,8 +138,10 @@ final class OfflineInjector {
             String launcher = launcherPath(imageVolume);
             List<String> appMounts = appMountNames(inline);
             requireFree(app, "volumeMounts", appMounts);
-            requireFree(app, "env", List.of("MNEMO_WARMUP_CACHE_DIR"));
+            List<String> appEnv = appEnvNames(w);
+            requireFree(app, "env", appEnv);
             requireFree(app, "env", List.of("POD_NAMESPACE"));
+            if (w.signingKeySecret() != null) requireFree(pod, "volumes", List.of(SIGNING_VOLUME));
             requireFreePaths(app, List.of("/mnemo-tools", "/mnemo-cache", "/tmp/mnemo-warmup", "/var/run/mnemo-warmup/registry"));
             if (w.nodeCacheUrl() != null) requireFreePaths(app, List.of("/var/run/mnemo-warmup/nodecache/identity", "/var/run/mnemo-warmup/nodecache/ca"));
             String copies = describeCopies(pod, app, w);
@@ -170,6 +174,7 @@ final class OfflineInjector {
                     "volumeMounts", new ArrayList<>(List.of(mount("mnemo-tools", "/mnemo-tools", true), mount("mnemo-cache", "/mnemo-cache", false), mount("mnemo-work", "/tmp/mnemo-warmup", false))));
                 copyMounts(app, fetch);
                 copyIfPresent(app, fetch, "env", "envFrom", "imagePullPolicy", "securityContext");
+                if (w.signingPublicKeys() != null) append(fetch, "env", publicKeysEnv(w));
                 if (w.pullSecret() != null) {
                     requireFree(fetch, "env", List.of("MNEMO_WARMUP_REGISTRY_AUTH"));
                     append(fetch, "env", obj("name", "MNEMO_WARMUP_REGISTRY_AUTH", "value", "/var/run/mnemo-warmup/registry/config.json"));
@@ -191,12 +196,14 @@ final class OfflineInjector {
                 append(app, "volumeMounts", mount("mnemo-tools", "/mnemo-tools", true), mount("mnemo-cache", "/mnemo-cache", false), mount("mnemo-work", "/tmp/mnemo-warmup", false));
             }
             append(app, "env", obj("name", "MNEMO_WARMUP_CACHE_DIR", "value", "/mnemo-cache"));
+            if (w.signingPublicKeys() != null) append(app, "env", publicKeysEnv(w));
             app.put("command", List.of(launcher)); app.put("args", launcherExecArgs(w.command(), inlineFetch));
             saved.put("volumeNames", managedVolumes);
             saved.put("volumesManaged", managed(pod, "volumes", managedVolumes));
             if (!inline) saved.put("initContainersManaged", managed(pod, "initContainers", imageVolume ? List.of("mnemo-warmup-fetch") : List.of("mnemo-warmup-install", "mnemo-warmup-fetch")));
             saved.put("volumeMountsManaged", managed(app, "volumeMounts", appMounts));
-            saved.put("envManaged", managed(app, "env", List.of("MNEMO_WARMUP_CACHE_DIR")));
+            saved.put("envNames", appEnv);
+            saved.put("envManaged", managed(app, "env", appEnv));
             String savedYaml = ManifestStream.render(List.of(saved));
             ann.put(MARKER, Base64.getEncoder().encodeToString(savedYaml.getBytes(StandardCharsets.UTF_8)));
             output.add(doc);
@@ -205,6 +212,7 @@ final class OfflineInjector {
                     + ", tools-delivery=" + w.toolsDelivery());
             if (imageVolume) notes.add("  image-volume support cannot be verified offline; check the feature gate and runtime on every eligible node, or use init-container");
             if (w.nodeCacheUrl() != null) notes.add("  node cache uses a projected service-account token in the fetch init container; cache failure falls back to the registry");
+            notes.addAll(signingNotes(w));
             notes.add("  trainer " + trainerName(w.name()) + " (CronJob, ServiceAccount, Role: leases only) copies from the workload, names only: " + copies);
         }
         output.addAll(generated);
@@ -241,13 +249,18 @@ final class OfflineInjector {
         copyIfPresent(app, trainer, "envFrom", "imagePullPolicy", "securityContext");
         List<Object> env = new ArrayList<>();
         if (app.get("env") instanceof List<?> existing) for (Object e : existing) {
-            if (e instanceof Map<?, ?> m && !"MNEMO_WARMUP_CACHE_DIR".equals(m.get("name"))) env.add(e);
+            if (e instanceof Map<?, ?> m && !appEnvNames(w).contains(m.get("name"))) env.add(e);
         }
         env.add(obj("name", "POD_NAMESPACE", "valueFrom", obj("fieldRef", obj("fieldPath", "metadata.namespace")))); trainer.put("env", env);
         if (w.pushSecret() != null) {
             requireFree(trainer, "env", List.of("MNEMO_WARMUP_REGISTRY_AUTH"));
             append(trainer, "env", obj("name", "MNEMO_WARMUP_REGISTRY_AUTH", "value", "/var/run/mnemo-warmup/registry/config.json"));
             append(trainer, "volumeMounts", mount("mnemo-registry-push", "/var/run/mnemo-warmup/registry", true));
+        }
+        if (w.signingKeySecret() != null) {
+            requireFree(trainer, "env", List.of(SigningKey.ENV_KEY_FILE));
+            append(trainer, "env", obj("name", SigningKey.ENV_KEY_FILE, "value", SIGNING_KEY_PATH));
+            append(trainer, "volumeMounts", mount(SIGNING_VOLUME, SIGNING_KEY_DIR, true));
         }
         Map<String, Object> trainerPod = obj("restartPolicy", "Never", "serviceAccountName", name, "automountServiceAccountToken", true,
             "containers", List.of(trainer), "volumes", new ArrayList<>(List.of(toolsVolume(w.imageVolume(), tools), obj("name", "mnemo-work", "emptyDir", obj()))));
@@ -256,6 +269,8 @@ final class OfflineInjector {
             if (volume instanceof Map<?, ?> v && !List.of("mnemo-tools", "mnemo-work", "mnemo-cache", "mnemo-registry-pull", "mnemo-nodecache-identity", "mnemo-nodecache-ca").contains(v.get("name"))) append(trainerPod, "volumes", volume);
         }
         if (w.pushSecret() != null) append(trainerPod, "volumes", secretVolume("mnemo-registry-push", w.pushSecret()));
+        if (w.signingKeySecret() != null) append(trainerPod, "volumes", obj("name", SIGNING_VOLUME, "secret",
+                obj("secretName", w.signingKeySecret(), "defaultMode", 0400, "items", List.of(obj("key", "signing.key", "path", "signing.key")))));
         copyIfPresent(pod, trainerPod, "imagePullSecrets", "nodeSelector", "tolerations", "affinity", "securityContext");
         Map<String, Object> metadata = obj("name", name, "namespace", w.namespace(), "labels", labels, "annotations", obj(MARKER, "generated"));
         Map<String, Object> cron = obj("apiVersion", "batch/v1", "kind", "CronJob", "metadata", metadata, "spec", obj("schedule", "*/10 * * * *", "concurrencyPolicy", "Forbid", "jobTemplate", obj("spec", obj("backoffLimit", 0, "activeDeadlineSeconds", 3600, "template", obj("spec", trainerPod)))));
@@ -271,6 +286,30 @@ final class OfflineInjector {
             marked.add(copy);
         }
         return marked;
+    }
+    /** Signed archives (docs/adr/0013): the key list goes to the pods, the private key only to the trainer. */
+    private static final String SIGNING_VOLUME = "mnemo-signing-key";
+    private static final String SIGNING_KEY_DIR = "/var/run/mnemo-warmup/signing";
+    private static final String SIGNING_KEY_PATH = SIGNING_KEY_DIR + "/signing.key";
+    /** The environment variables on the application container that this tool owns. */
+    private static List<String> appEnvNames(WorkloadDiscovery.Workload w) {
+        return w.signingPublicKeys() == null ? List.of("MNEMO_WARMUP_CACHE_DIR") : List.of("MNEMO_WARMUP_CACHE_DIR", ArchiveVerifier.ENV_PUBLIC_KEYS);
+    }
+    private static Map<String, Object> publicKeysEnv(WorkloadDiscovery.Workload w) {
+        return obj("name", ArchiveVerifier.ENV_PUBLIC_KEYS, "value", w.signingPublicKeys());
+    }
+    private static List<String> signingNotes(WorkloadDiscovery.Workload w) {
+        List<String> notes = new ArrayList<>();
+        if (w.signingPublicKeys() != null && w.signingKeySecret() != null) {
+            notes.add("  signing: pods require archives signed by key " + WorkloadDiscovery.keyIds(w.signingPublicKeys())
+                    + "; the trainer signs with secret/" + w.signingKeySecret());
+            notes.add("  signing: until the trainer is split (ADR 0013, stage B), application code running in the trainer can read that key");
+        } else if (w.signingPublicKeys() != null) {
+            notes.add("  signing: pods require signed archives, but no signing-key-secret is given, so the trainer publishes unsigned archives and every archive is refused");
+        } else if (w.signingKeySecret() != null) {
+            notes.add("  signing: the trainer signs with secret/" + w.signingKeySecret() + ", but no signing-public-keys is given, so pods do not check signatures");
+        }
+        return notes;
     }
     private static String trainerName(String name) { return (name.length() > 42 ? name.substring(0, 42).replaceAll("-+$", "") : name) + "-mw-" + Integer.toUnsignedString(name.hashCode(), 36); }
     private static List<Object> commonArgs(WorkloadDiscovery.Workload w) {
@@ -352,12 +391,13 @@ final class OfflineInjector {
         verifyManaged(pod, saved, "volumes", volumeNames);
         if (!inline) verifyManaged(pod, saved, "initContainers", initNames);
         verifyManaged(app, saved, "volumeMounts", appMounts);
-        verifyManaged(app, saved, "env", List.of("MNEMO_WARMUP_CACHE_DIR"));
+        List<String> envNames = saved.containsKey("envNames") ? WorkloadDiscovery.strings(saved.get("envNames"), "managed env names") : List.of("MNEMO_WARMUP_CACHE_DIR");
+        verifyManaged(app, saved, "env", envNames);
         restoreField(app, saved, "command"); restoreField(app, saved, "args");
         removeNamed(pod, "volumes", volumeNames, Boolean.TRUE.equals(saved.get("volumesPresent")));
         if (!inline) removeNamed(pod, "initContainers", initNames, Boolean.TRUE.equals(saved.get("initContainersPresent")));
         removeNamed(app, "volumeMounts", appMounts, Boolean.TRUE.equals(saved.get("volumeMountsPresent")));
-        removeNamed(app, "env", List.of("MNEMO_WARMUP_CACHE_DIR"), Boolean.TRUE.equals(saved.get("envPresent")));
+        removeNamed(app, "env", envNames, Boolean.TRUE.equals(saved.get("envPresent")));
     }
     private static void restoreField(Map<String, Object> target, Map<String, Object> saved, String key) { if (Boolean.TRUE.equals(saved.get(key + "Present"))) target.put(key, saved.get(key)); else target.remove(key); }
     private static List<Object> managed(Map<String, Object> owner, String key, List<String> names) {

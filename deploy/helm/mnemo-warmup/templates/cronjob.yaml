@@ -81,6 +81,10 @@ spec:
                 - name: MNEMO_WARMUP_REGISTRY_AUTH
                   value: /var/run/mnemo-warmup/registry/config.json
                 {{- end }}
+                {{- if (default dict $v.signing).keySecret }}
+                - name: MNEMO_WARMUP_SIGNING_KEY_FILE
+                  value: /var/run/mnemo-warmup/signing/signing.key
+                {{- end }}
                 {{- with $v.app.env }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}
@@ -110,6 +114,11 @@ spec:
                   mountPath: /var/run/mnemo-warmup/registry
                   readOnly: true
                 {{- end }}
+                {{- if (default dict $v.signing).keySecret }}
+                - name: mnemo-signing-key
+                  mountPath: /var/run/mnemo-warmup/signing
+                  readOnly: true
+                {{- end }}
                 {{- with $v.trainer.volumeMounts }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}
@@ -131,6 +140,15 @@ spec:
                 items:
                   - key: .dockerconfigjson
                     path: config.json
+            {{- end }}
+            {{- if (default dict $v.signing).keySecret }}
+            - name: mnemo-signing-key
+              secret:
+                secretName: {{ $v.signing.keySecret | quote }}
+                defaultMode: 0400
+                items:
+                  - key: signing.key
+                    path: signing.key
             {{- end }}
             {{- with $v.trainer.volumes }}
             {{- toYaml . | nindent 12 }}

@@ -47,6 +47,18 @@ store:
   pullSecret: ""
   pushSecret: ""
 
+# Signed archives (docs/adr/0013-signed-archives.md). Off unless publicKeys is set. Create the key pair with
+# `mnemo-warmup keygen`; it prints both values.
+signing:
+  # The public keys pods trust, "id=base64" separated by commas (several during a key rotation). Setting it makes every pod
+  # require a valid signature: an unsigned archive, an untrusted key or an altered archive is ignored and the pod starts without
+  # a cache. A list with nothing usable refuses every archive, so a typo cannot switch the check off.
+  publicKeys: ""
+  # A Secret holding the private key under the key signing.key (kubectl create secret generic NAME --from-file=signing.key=FILE).
+  # It is mounted into the trainer only, which then signs everything it publishes. Until the trainer is split (ADR 0013, stage B),
+  # application code that runs during training can read this key.
+  keySecret: ""
+
 # The trainer (ADR 0002): a CronJob, not a Helm hook, so a failing trainer can never fail a release. Each run
 # computes the fingerprint, exits if the store has it, otherwise takes a Lease, trains, uploads, and exits 0.
 trainer:

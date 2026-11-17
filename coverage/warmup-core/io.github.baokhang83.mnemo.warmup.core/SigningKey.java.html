@@ -152,7 +152,7 @@ public final class SigningKey {
 <span class="fc bfc" id="L152" title="All 2 branches covered.">        for (int i = 1; i &lt; 31; i++) {</span>
 <span class="fc bfc" id="L153" title="All 2 branches covered.">            allFf &amp;= y[i] == (byte) 0xff;</span>
         }
-<span class="pc bpc" id="L155" title="1 of 6 branches missed.">        if (y[31] == 0x7f &amp;&amp; allFf &amp;&amp; (y[0] &amp; 0xff) &gt;= 0xed) {</span>
+<span class="fc bfc" id="L155" title="All 6 branches covered.">        if (y[31] == 0x7f &amp;&amp; allFf &amp;&amp; (y[0] &amp; 0xff) &gt;= 0xed) {</span>
 <span class="fc" id="L156">            return &quot;its encoding is not canonical&quot;;</span>
         }
 <span class="fc bfc" id="L158" title="All 2 branches covered.">        for (byte[] bad : SMALL_ORDER_Y) {</span>

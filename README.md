@@ -49,8 +49,6 @@ unchanged JVM application. A pod starts from the cache when it fits its launch e
 - The **trainer** is a CronJob that runs your application image once per new fingerprint, stores the cache in the registry, and takes a Kubernetes Lease so only one trainer works at a time.
 - Each **pod** gets its tools (two init containers, or a read-only `image` volume on clusters that support it) and starts through a small static launcher. When the image or JVM options change, a new fingerprint is trained.
 
-> **Status: beta.** Command-line options, annotations, chart values and the manifest format may still change. Validate both the benefit and the deployment behaviour with your own workload before you rely on it. [What has and has not been verified](docs/operations.md#known-limitations).
-
 ## Try the example
 
 Run the bundled Spring Boot application through the whole annotated path on a throw-away [kind](https://kind.sigs.k8s.io/) cluster, on a Temurin and on a distroless Java image:
@@ -138,11 +136,11 @@ kubectl -n my-namespace rollout restart deployment/my-app
 kubectl -n my-namespace logs <new-pod> -c mnemo-warmup-fetch               # Archive: ... (APP_CDS)
 ```
 
-A selected archive shows the integration works. It does **not** show that pods became ready faster: [measure the whole start](docs/operations.md#measure-the-benefit).
+A selected archive shows the integration works. To see how much sooner your pods become ready, [measure the whole start](docs/operations.md#measure-the-benefit).
 
 ## Registry authentication
 
-The trainer needs read and write access to the archive repository, the pods read-only access. Use Docker-config Secrets (`warmup.mnemo.io/pull-secret`, `push-secret`) for registries with Basic or Bearer login. On **Amazon EKS**, pods can use IAM roles for service accounts to get an ECR login with no stored password. Both are in [registry authentication](docs/registry-auth.md) and the [EKS and ECR guide](docs/aws-workload-identity.md); the ECR path has not yet been verified on a live cluster.
+The trainer needs read and write access to the archive repository, the pods read-only access. Use Docker-config Secrets (`warmup.mnemo.io/pull-secret`, `push-secret`) for registries with Basic or Bearer login. On **Amazon EKS**, pods can use IAM roles for service accounts to get an ECR login with no stored password. Both are in [registry authentication](docs/registry-auth.md) and the [EKS and ECR guide](docs/aws-workload-identity.md).
 
 ## Minimal and distroless images
 
@@ -160,6 +158,7 @@ Details and what is not supported: [configuration](docs/configuration.md#require
 
 ## Operational considerations
 
+- **It is beta.** Command-line options, annotations, chart values and the manifest format may still change. Validate both the benefit and the deployment behaviour with your own workload before you rely on it: [what has and has not been verified](docs/operations.md#known-limitations). The EKS and ECR path has not yet been verified on a live cluster.
 - **Training starts a real instance of your application.** Connections, migrations and scheduled jobs may run. Review the preview.
 - **The first pods start uncached.** Training is asynchronous; later pods use the archive.
 - **Caches use registry storage, and nothing deletes them.** Set a [retention policy](docs/archive-retention.md) on the archive repository.

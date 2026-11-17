@@ -20,7 +20,7 @@ unchanged JVM application. A pod starts from the cache when it fits its launch e
 <img alt="Java 21+" src="https://img.shields.io/badge/java-21%2B-informational">
 
 <p>
-<a href="#try-the-example">Try the example</a> &middot;
+<a href="#try-it-on-your-own-jar">Try it</a> &middot;
 <a href="#quick-start-in-three-steps">Quick start</a> &middot;
 <a href="#why-not-x">Why not X?</a> &middot;
 <a href="#measurements">Measurements</a> &middot;
@@ -98,7 +98,19 @@ Each of these makes Java start faster. They differ in what you have to change an
 
 mnemo-warmup uses the same JVM feature as Spring Boot's CDS support. The difference is where training happens: in your cluster, with your workload's configuration, and again by itself whenever the image or JVM options change, with no change to your build pipeline. It is not limited to Spring Boot. If you need the fastest possible start and can take on a native build, Native Image goes further.
 
-## Try the example
+## Try it on your own JAR
+
+All you need is Java 21 or newer. No Docker, no cluster. Install the CLI and point it at a Spring Boot JAR you already have:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/baokhang83/mnemo-warmup/main/scripts/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+mnemo-warmup bench --jar path/to/app.jar
+```
+
+It trains an AppCDS cache, plus an AOT cache on JDK 25, then starts your app in fresh JVMs and prints the median start time with each. It starts your app about 15 times, so it takes about 15 of your app's startups: 7 seconds for the bundled example on JDK 25, which went from 507 ms with no cache to 283 ms with the AOT cache on one laptop. For other frameworks, add `--exit-mode http-probe --url http://localhost:8080/health`. [All options](docs/reference.md#measure-the-savings-bench).
+
+## Try the full Kubernetes path
 
 Run the bundled Spring Boot application through the whole annotated path on a throw-away [kind](https://kind.sigs.k8s.io/) cluster, on a Temurin and on a distroless Java image:
 

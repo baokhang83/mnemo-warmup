@@ -30,9 +30,44 @@ unchanged JVM application. A pod starts from the cache when it fits its launch e
 
 </div>
 
+## Results
+
+In our [GKE study](benchmarks/workload-tiers/results/gke-repaired.md) on JDK 25 with the Leyden AOT cache, pods of four Spring Boot workloads reached Ready **31%–58% faster after application start**:
+
+| Workload | Archive size | Uncached app-start to Ready | Cached app-start to Ready | Improvement |
+| :--- | ---: | ---: | ---: | ---: |
+| **Minimal service** (37 JARs) | 54.3 MiB | 4.5 s | 2.0–2.1 s | **53%–56%** |
+| **Standard service** (70 JARs) | 103.9 MiB | 7.4 s | 3.1–4.2 s | **44%–58%** |
+| **Larger service** (98 JARs) | 116.0 MiB | 8.7 s | 3.9–5.0 s | **42%–55%** |
+| **ThingsBoard CE** (458 JARs) | 223.5 MiB | 30.8 s | 21.2–21.4 s | **~31%** |
+
+Single-pod trials; scheduling and archive fetch are excluded. [Method, limits and other workloads](#measurements).
+
+## How simple it is
+
+Add three annotations to the pod template of a Deployment that starts with `java ... -jar`:
+
+```diff
+ spec:
+   template:
+     metadata:
++      annotations:
++        warmup.mnemo.io/enabled: "true"
++        warmup.mnemo.io/store: "oci://registry.example.com/team/my-app-warmup"
++        warmup.mnemo.io/exit-mode: "spring-refresh"     # or http-probe, with warmup.mnemo.io/probe-url
+     spec:
+       containers:
+         - name: app
+           image: registry.example.com/team/my-app:1.4.2
+           command: ["java"]
+           args: ["-Xmx512m", "-jar", "/app/app.jar"]
+```
+
+Deploy it through the injector, and it adds the trainer, the init containers and the launcher for you. Your source code does not change; a Spring Boot image only needs its [JAR extracted](docs/configuration.md#spring-boot). [Quick start](#quick-start-in-three-steps).
+
 ## Key benefits
 
-- **Shorter JVM start-up, no rewrite.** Keep your JDK, your frameworks and your JAR. Pods start from a ready-made class cache instead of loading every class from scratch. In our [GKE study](#measurements), Spring Boot workloads reached Ready 31%–58% faster after application start in single-pod trials; [measure](docs/operations.md#measure-the-benefit) yours.
+- **Shorter JVM start-up, no rewrite.** Keep your JDK, your frameworks and your JAR. Pods start from a ready-made class cache instead of loading every class from scratch; [measure](docs/operations.md#measure-the-benefit) the gain for yours.
 - **Three annotations, no source changes.** An injector adds the init containers, the launcher and the trainer to a plain Deployment, and you can preview every change first.
 - **A cache problem never stops a pod.** A missing, outdated, damaged or unreachable cache means an ordinary start, and the log says why.
 - **Optional node-local archive cache.** Reuse verified archive bytes across pods on the same node; if the cache is unavailable, fetch directly from the registry. [Setup and trust requirements](deploy/helm/mnemo-nodecache/README.md).
@@ -59,7 +94,7 @@ Each of these makes Java start faster. They differ in what you have to change an
 | **GraalVM Native Image** | A native build, plus reachability metadata for reflection, proxies and resources | A native executable, not a JVM | None | Typically the largest |
 | **CRaC** | A CRaC-enabled JDK, and code that closes and reopens files and sockets around the checkpoint | A restored process snapshot | CRIU needs `CAP_CHECKPOINT_RESTORE` and `CAP_SYS_PTRACE`, or a privileged pod | Large |
 | **Spring Boot CDS / AOT cache** | A training run in your image build, kept in step with the runtime JDK, JARs and JVM options | Your JVM | None | Moderate |
-| **mnemo-warmup** | Three annotations and an explicit `java -jar` command (Spring Boot: an [extracted JAR](docs/configuration.md#spring-boot)); no source changes | Your JVM | None: training pods run under Pod Security `restricted` | Moderate: [31%–58% in our GKE study](#measurements) |
+| **mnemo-warmup** | Three annotations and an explicit `java -jar` command (Spring Boot: an [extracted JAR](docs/configuration.md#spring-boot)); no source changes | Your JVM | None: training pods run under Pod Security `restricted` | Moderate: [31%–58% in our GKE study](#results) |
 
 mnemo-warmup uses the same JVM feature as Spring Boot's CDS support. The difference is where training happens: in your cluster, with your workload's configuration, and again by itself whenever the image or JVM options change, with no change to your build pipeline. It is not limited to Spring Boot. If you need the fastest possible start and can take on a native build, Native Image goes further.
 
@@ -96,23 +131,7 @@ exec mnemo-warmup inject "$@"
 
 ### Step 1: annotate the Deployment
 
-Add three annotations to the Deployment's **pod template**, and give the container an explicit Java command (`java [options] -jar <jar> [args]`):
-
-```yaml
-spec:
-  template:
-    metadata:
-      annotations:
-        warmup.mnemo.io/enabled: "true"
-        warmup.mnemo.io/store: "oci://registry.example.com/team/my-app-warmup"
-        warmup.mnemo.io/exit-mode: "spring-refresh"     # or http-probe, with warmup.mnemo.io/probe-url
-    spec:
-      containers:
-        - name: app
-          image: registry.example.com/team/my-app:1.4.2
-          command: ["java"]
-          args: ["-Xmx512m", "-jar", "/app/app.jar"]
-```
+Add the three annotations from [How simple it is](#how-simple-it-is) to the Deployment's **pod template**, and give the container an explicit Java command (`java [options] -jar <jar> [args]`).
 
 The store is a repository for caches, not for your application image. [Every annotation and override](docs/configuration.md#annotations).
 
@@ -183,16 +202,7 @@ Details and what is not supported: [configuration](docs/configuration.md#require
 
 **Will it make my pods start faster?** Startup gains depend on your application's architecture.
 
-In our [GKE JDK 25 Leyden AOT workload-tier study](benchmarks/workload-tiers/results/gke-repaired.md), cached single-pod trials reached Ready **31%–58% faster after application start** across four Spring Boot tiers:
-
-| Workload | Archive size | Uncached app-start to Ready | Cached app-start to Ready | Improvement |
-| :--- | ---: | ---: | ---: | ---: |
-| **Minimal service** (37 JARs) | 54.3 MiB | 4.5 s | 2.0–2.1 s | **53%–56%** |
-| **Standard service** (70 JARs) | 103.9 MiB | 7.4 s | 3.1–4.2 s | **44%–58%** |
-| **Larger service** (98 JARs) | 116.0 MiB | 8.7 s | 3.9–5.0 s | **42%–55%** |
-| **ThingsBoard CE** (458 JARs) | 223.5 MiB | 30.8 s | 21.2–21.4 s | **~31%** |
-
-These are reductions in app-start-to-Ready time; scheduling and archive fetch are excluded. Each cell was measured once, and the original watch observations have limitations described in the report.
+The [results at the top](#results) come from our [GKE JDK 25 Leyden AOT workload-tier study](benchmarks/workload-tiers/results/gke-repaired.md). They are reductions in app-start-to-Ready time; scheduling and archive fetch are excluded. Each cell was measured once, and the original watch observations have limitations described in the report.
 
 **Key takeaways:**
 

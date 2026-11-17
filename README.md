@@ -22,6 +22,7 @@ unchanged JVM application. A pod starts from the cache when it fits its launch e
 <p>
 <a href="#try-the-example">Try the example</a> &middot;
 <a href="#quick-start-in-three-steps">Quick start</a> &middot;
+<a href="#why-not-x">Why not X?</a> &middot;
 <a href="#measurements">Measurements</a> &middot;
 <a href="docs/reference.md">Reference</a> &middot;
 <a href="https://baokhang83.github.io/mnemo-warmup/">Docs site</a>
@@ -48,6 +49,19 @@ unchanged JVM application. A pod starts from the cache when it fits its launch e
 - A **fingerprint** identifies what a cache is valid for: the JDK build, the classpath JAR contents and the JVM options.
 - The **trainer** is a CronJob that runs your application image once per new fingerprint, stores the cache in the registry, and takes a Kubernetes Lease so only one trainer works at a time.
 - Each **pod** gets its tools (two init containers, or a read-only `image` volume on clusters that support it) and starts through a small static launcher. When the image or JVM options change, a new fingerprint is trained.
+
+## Why not X?
+
+Each of these makes Java start faster. They differ in what you have to change and what your cluster has to allow.
+
+| | What you change | What runs | Extra pod privileges | Startup gain |
+| :--- | :--- | :--- | :--- | :--- |
+| **GraalVM Native Image** | A native build, plus reachability metadata for reflection, proxies and resources | A native executable, not a JVM | None | Typically the largest |
+| **CRaC** | A CRaC-enabled JDK, and code that closes and reopens files and sockets around the checkpoint | A restored process snapshot | CRIU needs `CAP_CHECKPOINT_RESTORE` and `CAP_SYS_PTRACE`, or a privileged pod | Large |
+| **Spring Boot CDS / AOT cache** | A training run in your image build, kept in step with the runtime JDK, JARs and JVM options | Your JVM | None | Moderate |
+| **mnemo-warmup** | Three annotations and an explicit `java -jar` command (Spring Boot: an [extracted JAR](docs/configuration.md#spring-boot)); no source changes | Your JVM | None: training pods run under Pod Security `restricted` | Moderate: [31%–58% in our GKE study](#measurements) |
+
+mnemo-warmup uses the same JVM feature as Spring Boot's CDS support. The difference is where training happens: in your cluster, with your workload's configuration, and again by itself whenever the image or JVM options change, with no change to your build pipeline. It is not limited to Spring Boot. If you need the fastest possible start and can take on a native build, Native Image goes further.
 
 ## Try the example
 

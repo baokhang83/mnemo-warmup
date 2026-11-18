@@ -145,29 +145,7 @@ exec mnemo-warmup inject "$@"
 
 Add the three annotations from [How simple it is](#how-simple-it-is) to the Deployment's **pod template**, and give the container an explicit Java command (`java [options] -jar <jar> [args]`).
 
-The store is a repository for caches, not for your application image. [Every annotation and override](docs/configuration.md#annotations).
-
-#### Choosing the store
-
-`warmup.mnemo.io/store` is `oci://` followed by a registry repository path, written like an image reference without a tag. mnemo-warmup adds the tags itself, one `fp-<fingerprint>` tag per JDK, JARs and JVM options combination.
-
-- **Use the registry you already have.** You only need a new repository in it, not a new registry.
-- **Use one repository per application, holding only caches.** If your image is `registry.example.com/team/my-app`, use `oci://registry.example.com/team/my-app-warmup`. Each cache is typically hundreds of MB and nothing deletes old ones, so give this repository its own lifecycle policy on `fp-` tags. That policy must never touch your application images ([archive retention](docs/archive-retention.md)).
-- **Make sure the repository exists, or that the registry creates it on first push.**
-
-| Registry | Example `store` value | Create it first? |
-| :--- | :--- | :--- |
-| GitHub Container Registry | `oci://ghcr.io/my-org/my-app-warmup` | No, created on first push |
-| Docker Hub | `oci://registry-1.docker.io/my-org/my-app-warmup` | No, created on first push |
-| Harbor | `oci://harbor.example.com/my-project/my-app-warmup` | The project must exist |
-| Amazon ECR | `oci://123456789012.dkr.ecr.eu-west-1.amazonaws.com/my-app-warmup` | Yes, unless create-on-push is enabled |
-| Google Artifact Registry | `oci://europe-west1-docker.pkg.dev/my-project/my-repo/my-app-warmup` | The Artifact Registry repository must exist |
-
-These rows show each registry's usual conventions. They are illustrative, not each one tested with mnemo-warmup.
-
-- **Give the tool credentials for it.** Your cluster's image-pull credentials are not used, because the tool talks to the registry from inside pods. The trainer needs pull and push, the application pods pull only. See [Registry authentication](#registry-authentication).
-
-A wrong store or a refused login does not fail the deployment. The pod starts without a cache and the trainer exits 0, so check the trainer's log (`train: TRAINED ...`) after the first run, as shown in [Then: train and check that it works](#then-train-and-check-that-it-works).
+The store is a repository for caches, not for your application image: for `registry.example.com/team/my-app`, use `oci://registry.example.com/team/my-app-warmup`. [Choosing the store](docs/configuration.md#choosing-the-store) and [every annotation and override](docs/configuration.md#annotations).
 
 ### Step 2: preview
 

@@ -63,6 +63,28 @@ Set these on the Deployment's **pod template** (`spec.template.metadata.annotati
 
 The injector also needs a namespace for the trainer resources. If your rendered Deployment has no `metadata.namespace` (Helm output usually has none), pass `--namespace` ([guide](offline-injector.md)).
 
+## Choosing the store
+
+`warmup.mnemo.io/store` is `oci://` followed by a registry repository path, written like an image reference without a tag. mnemo-warmup adds the tags itself, one `fp-<fingerprint>` tag per fingerprint.
+
+- **Use the registry you already have,** with a new repository in it.
+- **Use one repository per application, holding only caches.** Each cache is typically hundreds of MB and nothing deletes old ones, so give this repository its own lifecycle policy on `fp-` tags, one that never touches application images ([archive retention](archive-retention.md)). Keep tag immutability off for it.
+- **Make sure the repository exists, or that the registry creates it on first push.**
+
+| Registry | Example `store` value | Create it first? |
+| :--- | :--- | :--- |
+| GitHub Container Registry | `oci://ghcr.io/my-org/my-app-warmup` | No, created on first push |
+| Docker Hub | `oci://registry-1.docker.io/my-org/my-app-warmup` | No, created on first push |
+| Harbor | `oci://harbor.example.com/my-project/my-app-warmup` | The project must exist |
+| Amazon ECR | `oci://123456789012.dkr.ecr.eu-west-1.amazonaws.com/my-app-warmup` | Yes, unless create-on-push is enabled |
+| Google Artifact Registry | `oci://europe-west1-docker.pkg.dev/my-project/my-repo/my-app-warmup` | The Artifact Registry repository must exist |
+
+These rows follow each registry's usual conventions. They are illustrative and have not each been tested with mnemo-warmup.
+
+- **Give the tool credentials for it.** Image-pull credentials are not used, because the tool talks to the registry from inside pods. The trainer needs pull and push, the application pods pull only ([registry authentication](registry-auth.md)).
+
+A wrong store or a refused login does not fail the deployment: pods start without a cache and the trainer exits 0. After the first training run, check the trainer's log for `train: TRAINED ...` ([README](../README.md#then-train-and-check-that-it-works)).
+
 ## How the launch command is read
 
 The selected container must have an explicit `command` and optional `args` that form:

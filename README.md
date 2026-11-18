@@ -53,7 +53,7 @@ Add three annotations to the pod template of a Deployment that starts with `java
      metadata:
 +      annotations:
 +        warmup.mnemo.io/enabled: "true"
-+        warmup.mnemo.io/store: "oci://registry.example.com/team/my-app-warmup"
++        warmup.mnemo.io/store: "oci://registry.example.com/team/my-app-warmup"   # a cache-only repository
 +        warmup.mnemo.io/exit-mode: "spring-refresh"     # or http-probe, with warmup.mnemo.io/probe-url
      spec:
        containers:
@@ -63,7 +63,7 @@ Add three annotations to the pod template of a Deployment that starts with `java
            args: ["-Xmx512m", "-jar", "/app/app.jar"]
 ```
 
-Deploy it through the injector, and it adds the trainer, the init containers and the launcher for you. Your source code does not change; a Spring Boot image only needs its [JAR extracted](docs/configuration.md#spring-boot). [Quick start](#quick-start-in-three-steps).
+Deploy it through the injector, and it adds the trainer, the init containers and the launcher for you. Your source code does not change; a Spring Boot image only needs its [JAR extracted](docs/configuration.md#spring-boot). The store is a repository in your registry that holds only caches ([choosing the store](docs/configuration.md#choosing-the-store)). [Quick start](#quick-start-in-three-steps).
 
 ## Key benefits
 

@@ -1,5 +1,5 @@
 <div align="center">
-  <img width="300" height="300" alt="output_logo" src="https://github.com/user-attachments/assets/499bcc3b-e8cc-4794-93c5-62348af12181" />
+  <img width="300" height="262" alt="beastron_avatar_light" src="https://github.com/user-attachments/assets/3b3cf394-cae3-4553-a850-fcb2ad74b315" />
   <h1>mnemo-warmup</h1>
 </div>
 
